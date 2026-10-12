@@ -164,7 +164,7 @@ add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_text_data.inc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_LOCALES} VERBATIM)
 target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_text_data.inc)
 target_include_directories(bbgpu PRIVATE ${BB_TEXT_DIR})
-target_include_directories(bbgpu PRIVATE . fsr4_metal/include shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
+target_include_directories(bbgpu PRIVATE . fsr4_metal shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Native arm64 (docs/ARM64_NATIVE.md): x86 cycle-count and spin-wait intrinsics for the GPU library.
@@ -178,6 +178,28 @@ if (APPLE)
         COMPILE_FLAGS "-fobjc-arc")
     target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+
+    # Precompile Metal kernels for FSR 4.1.1 at build time (.metallib)
+    find_program(XCRUN xcrun)
+    if (XCRUN)
+        set(METALLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal)
+        add_custom_command(
+            OUTPUT ${METALLIB_DIR}/fsr411_helpers.metallib
+            COMMAND ${XCRUN} -sdk macosx metal -std=macos-metal2.3 -c ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_helpers.metal -o ${CMAKE_CURRENT_BINARY_DIR}/fsr411_helpers.air
+            COMMAND ${XCRUN} -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/fsr411_helpers.air -o ${METALLIB_DIR}/fsr411_helpers.metallib
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_helpers.metal
+            VERBATIM
+        )
+        add_custom_command(
+            OUTPUT ${METALLIB_DIR}/fsr411_simd.metallib
+            COMMAND ${XCRUN} -sdk macosx metal -std=metal3.0 -I${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal -DFSR411_SPECIALIZE=1 -c ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_simd.metal -o ${CMAKE_CURRENT_BINARY_DIR}/fsr411_simd.air
+            COMMAND ${XCRUN} -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/fsr411_simd.air -o ${METALLIB_DIR}/fsr411_simd.metallib
+            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_simd.metal ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_model.h
+            VERBATIM
+        )
+        add_custom_target(fsr4_metal_metallibs DEPENDS ${METALLIB_DIR}/fsr411_helpers.metallib ${METALLIB_DIR}/fsr411_simd.metallib)
+        add_dependencies(bbgpu fsr4_metal_metallibs)
+    endif()
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)
 else()

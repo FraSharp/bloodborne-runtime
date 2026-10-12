@@ -6,9 +6,10 @@
 #import <Metal/Metal.h>
 #include <vulkan/vulkan_metal.h>
 
+#include "bbport_toggles.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "fsr4_metal/include/fsr411_runtime.h"
+#include "fsr4_metal/fsr411_runtime.h"
 
 namespace Vulkan {
 
@@ -29,6 +30,88 @@ id<MTLTexture> ExportTexture(VkDevice device, PFN_vkExportMetalObjectsEXT export
     return tex_info.mtlTexture;
 }
 
+std::string ResolveFsr4AssetDir() {
+    if (const char* env = std::getenv("BB_FSR4_NATIVE_DIR")) {
+        if (env[0] && [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:env]]) {
+            return env;
+        }
+    }
+    if (const char* env = std::getenv("BB_FSR411_DIR")) {
+        if (env[0] && [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:env]]) {
+            return env;
+        }
+    }
+    NSMutableArray<NSString*>* candidates = [NSMutableArray array];
+    NSString* p1 = [[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil inDirectory:@"game"];
+    if (p1) [candidates addObject:p1];
+    NSString* p2 = [[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil];
+    if (p2) [candidates addObject:p2];
+    [candidates addObject:@"fsr4_metal"];
+    [candidates addObject:@"gpu/fsr4_metal"];
+    [candidates addObject:@"../gpu/fsr4_metal"];
+    [candidates addObject:@"runtime/gpu/fsr4_metal"];
+    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
+        if (env[0]) [candidates addObject:[NSString stringWithFormat:@"%s/fsr4_metal", env]];
+    }
+    for (NSString* path in candidates) {
+        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            return [path UTF8String];
+        }
+    }
+    return "gpu/fsr4_metal";
+}
+
+std::string ResolveFsr4CacheDir() {
+    std::string cache_dir;
+    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
+        if (env[0]) cache_dir = std::string(env) + "/fsr4_cache";
+    }
+    if (cache_dir.empty()) {
+        if (const char* env = std::getenv("BB_DATA_DIR")) {
+            if (env[0]) cache_dir = std::string(env) + "/user/fsr4_cache";
+        }
+    }
+    if (cache_dir.empty()) {
+        NSArray<NSString*>* paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
+        NSString* base = paths.count ? paths.firstObject : [NSString stringWithUTF8String:"/tmp"];
+        cache_dir = [[base stringByAppendingPathComponent:@"bloodborne_mac/fsr4_cache"] UTF8String];
+    }
+    [[NSFileManager defaultManager] createDirectoryAtPath:[NSString stringWithUTF8String:cache_dir.c_str()]
+                              withIntermediateDirectories:YES attributes:nil error:nil];
+    return cache_dir;
+}
+
+bool HasFsr4Initializer(const std::string& asset_dir) {
+    std::vector<std::string> candidates;
+    if (const char* env = std::getenv("BB_FSR411_DIR")) {
+        if (env[0]) {
+            candidates.push_back(std::string(env) + "/initializers.bin");
+            candidates.push_back(std::string(env) + "/t1080_m0/initializer.bin");
+            candidates.push_back(std::string(env) + "/initializer.bin");
+        }
+    }
+    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
+        if (env[0]) {
+            candidates.push_back(std::string(env) + "/fsr4_411/initializers.bin");
+            candidates.push_back(std::string(env) + "/fsr4_411/t1080_m0/initializer.bin");
+            candidates.push_back(std::string(env) + "/fsr4_411/initializer.bin");
+        }
+    }
+    candidates.push_back(asset_dir + "/initializers.bin");
+    candidates.push_back(asset_dir + "/fsr411/initializers.bin");
+    candidates.push_back(asset_dir + "/t1080_m0/initializer.bin");
+    candidates.push_back("fsr4_411/initializers.bin");
+    candidates.push_back("fsr4_411/t1080_m0/initializer.bin");
+    candidates.push_back("fsr4_411/initializer.bin");
+    for (const auto& path : candidates) {
+        NSDictionary* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:[NSString stringWithUTF8String:path.c_str()] error:nil];
+        if (attrs && [attrs fileSize] == 131072) {
+            return true;
+        }
+    }
+    return false;
+}
+
 class Fsr4MetalBackendImpl final : public Fsr4MetalBackend {
 public:
     Fsr4MetalBackendImpl(const Instance& instance, Scheduler& scheduler)
@@ -43,6 +126,9 @@ public:
             problem_ = "FSR 4.1.1 Metal backend not initialized";
             return false;
         }
+
+        // bbport: Flush Vulkan commands recorded up to this point so Metal reads the current frame
+        scheduler_.Flush();
 
         // Export underlying Metal textures from MoltenVK Vulkan images
         id<MTLTexture> color_tex = ExportTexture(vk_device_, export_objects_, frame.color.image);
@@ -75,7 +161,7 @@ public:
         desc.jitterX = frame.jitter[0];
         desc.jitterY = frame.jitter[1];
         desc.mvScaleX = 1.0f;
-        desc.mvScaleY = 1.0f;
+        desc.mvScaleY = BbToggle::Disabled(BbToggle::Fsr4MotionYFlip) ? -1.0f : 1.0f;
         desc.preExposure = 1.0f;
         desc.reset = frame.reset ? 1 : 0;
         desc.depthReversed = 1; // Bloodborne/shadps4 uses reversed depth (1 -> near, 0 -> far)
@@ -92,8 +178,8 @@ public:
         options.backend = fsr411::Backend::Auto;
         options.profile = fsr411::Profile::Lossy; // Default high-performance Lossy profile
         options.sharpness = frame.sharpen ? frame.sharpness : 0.0f;
-        options.rcas = frame.sharpen;
-        options.allowCompile = true;
+        options.rcas = frame.sharpen && frame.sharpness > 0.0f;
+        options.ultraPerformance = frame.preset >= 4;
 
         std::string err;
         if (!runtime_->encode(cmd_buf, *view_, mtl_frame, options, err)) {
@@ -102,6 +188,8 @@ public:
         }
 
         [cmd_buf commit];
+        // bbport: wait for Metal upscaler pass to complete before subsequent Vulkan passes execute
+        [cmd_buf waitUntilCompleted];
         problem_.clear();
         return true;
     }
@@ -147,32 +235,8 @@ private:
             return;
         }
 
-        const char* root_env = std::getenv("BB_FSR4_NATIVE_DIR");
-        std::string root;
-        if (root_env && root_env[0]) {
-            root = root_env;
-        } else {
-            NSMutableArray* candidates = [NSMutableArray array];
-            NSString* p1 = [[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil inDirectory:@"game"];
-            if (p1) [candidates addObject:p1];
-            NSString* p2 = [[NSBundle mainBundle] pathForResource:@"fsr4-native-macos" ofType:nil inDirectory:@"game"];
-            if (p2) [candidates addObject:p2];
-            [candidates addObject:@"/Users/vitao/Documents/GitHub/fsr4-native-macos"];
-            [candidates addObject:@"/Users/vitao/Documents/GitHub/bloodborne-mac/runtime/gpu/fsr4_metal"];
-            [candidates addObject:@"gpu/fsr4_metal"];
-            [candidates addObject:@"runtime/gpu/fsr4_metal"];
-
-            for (NSString* path in candidates) {
-                if (path && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
-                    root = [path UTF8String];
-                    break;
-                }
-            }
-            if (root.empty()) {
-                root = "/Users/vitao/Documents/GitHub/fsr4-native-macos";
-            }
-        }
-        std::string build_dir = "/tmp/fsr4_cache";
+        std::string root = ResolveFsr4AssetDir();
+        std::string build_dir = ResolveFsr4CacheDir();
 
         runtime_ = std::make_unique<fsr411::Runtime>(device_, root, build_dir);
         view_ = std::make_unique<fsr411::View>();
@@ -194,7 +258,25 @@ private:
 } // namespace
 
 bool Fsr4MetalBackend::IsSupported(const Instance& instance) {
-    return instance.IsMetalObjectsSupported();
+    if (!instance.IsMetalObjectsSupported()) {
+        return false;
+    }
+    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+    if (!device || ![device supportsFamily:MTLGPUFamilyApple7]) {
+        return false;
+    }
+    std::string root = ResolveFsr4AssetDir();
+    bool has_helpers = [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_helpers.metallib").c_str()]] ||
+                       [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_helpers.metal").c_str()]];
+    bool has_simd = [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_simd.metallib").c_str()]] ||
+                    [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_simd.metal").c_str()]];
+    if (!has_helpers || !has_simd) {
+        return false;
+    }
+    if (!HasFsr4Initializer(root)) {
+        return false;
+    }
+    return true;
 }
 
 std::unique_ptr<Fsr4MetalBackend> Fsr4MetalBackend::Create(const Instance& instance, Scheduler& scheduler) {

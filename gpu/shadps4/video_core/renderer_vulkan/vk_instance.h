@@ -325,7 +325,8 @@ public:
     /// products, linear compute derivatives, extended storage image formats).
     bool IsFsr4Int8Supported() const {
 #ifdef __APPLE__
-        return metal_objects;
+        // FSR 4.0 INT8 is not supported on macOS; only FSR 4.1.1 Metal native backend is supported.
+        return false;
 #else
         return vk12_features.shaderFloat16 && vk12_features.shaderInt8 && features.shaderInt16 &&
                vk13_features.shaderIntegerDotProduct && compute_shader_derivatives &&
@@ -335,13 +336,7 @@ public:
     }
 
     /// bbport: FSR 4.1.1 (INT8 model passes and VK_VALVE_shader_mixed_float_dot_product).
-    bool IsFsr411Supported() const {
-#ifdef __APPLE__
-        return metal_objects;
-#else
-        return IsFsr4Int8Supported() && mixed_float_dot_product;
-#endif
-    }
+    bool IsFsr411Supported() const;
 
     /// bbport: FSR 4.1.1's FP8 matrix variant (RDNA4): FP8 cooperative matrices, the Vulkan
     /// memory model, wave32 in full subgroups.

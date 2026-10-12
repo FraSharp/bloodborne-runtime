@@ -303,7 +303,11 @@ struct Fsr4Upscaler::Impl {
 
     bool Record(const Frame& f) {
 #ifdef __APPLE__
-        return Record411(f);
+        if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
+            return Record411(f);
+        }
+        Fail("FSR 4.0 is not supported on macOS (use FSR 4.1.1)", true);
+        return false;
 #endif
         if (BbSettings::Get().upscaler == BbSettings::UpscalerFsr411) {
             return Record411(f);

@@ -1,0 +1,27 @@
+Vendored from https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos commit 15a475513307f84bbac00f9161f8c6587acd5fc0 (MIT License).
+Files: fsr411_helpers.metal, fsr411_simd.metal, fsr411_mpp.metal, fsr411_model.h, fsr411_runtime.h, fsr4_device.h, fsr4_input.h, fsr4_log.h.
+Local changes are marked with "// bbport:" comments.
+
+MIT License
+
+Copyright © 2025 Advanced Micro Devices, Inc.
+Copyright © 2026 int3rrobang
+Copyright © 2026 PoZiTiV4ik (UzenUPoZiTiV4ik)
+
+Permission is hereby granted, free of charge, to any person obtaining a copy
+of this software and associated documentation files (the "Software"), to deal
+in the Software without restriction, including without limitation the rights
+to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+copies of the Software, and to permit persons to whom the Software is
+furnished to do so, subject to the following conditions:
+
+The above copyright notice and this permission notice shall be included in
+all copies or substantial portions of the Software.
+
+THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+THE SOFTWARE.

@@ -68,7 +68,7 @@ struct Options {
     Backend backend = Backend::Auto;
     Profile profile = Profile::Lossy;
     int tier = 0, colorspace = 0, optimize = 1;
-    bool rcas = false, allowCompile = true, ultraPerformance = false;
+    bool rcas = false, ultraPerformance = false;
     // Tests only: Exact Fast/Lossy PRE/POST with ordered arithmetic, so their
     // optimized graph can be compared bit for bit with the imported HLSL.
     bool strictMath = false;
@@ -575,11 +575,25 @@ private:
     bool ensure_helpers(std::string &error) {
         if (!helpers_.empty()) return true;
         NSError *e=nil;
-        NSString *source=[NSString stringWithContentsOfFile:ns(root_+"/src/fsr411_helpers.metal") encoding:NSUTF8StringEncoding error:&e];
-        if (!source) { error=metal_error(e); return false; }
-        MTLCompileOptions *co=[MTLCompileOptions new]; co.languageVersion=MTLLanguageVersion2_3;
-        id<MTLLibrary> lib=[device_ newLibraryWithSource:source options:co error:&e];
-        if (!lib) { error=metal_error(e); return false; }
+        id<MTLLibrary> lib = nil;
+        // bbport: look for precompiled helpers metallib, else load source
+        NSString *libPath = ns(root_ + "/fsr411_helpers.metallib");
+        if ([[NSFileManager defaultManager] fileExistsAtPath:libPath]) {
+            lib = [device_ newLibraryWithURL:[NSURL fileURLWithPath:libPath] error:&e];
+        }
+        if (!lib) {
+            NSString *srcPath = ns(root_ + "/fsr411_helpers.metal");
+            if (![[NSFileManager defaultManager] fileExistsAtPath:srcPath]) {
+                srcPath = ns(root_ + "/src/fsr411_helpers.metal");
+            }
+            NSString *source = [NSString stringWithContentsOfFile:srcPath encoding:NSUTF8StringEncoding error:&e];
+            if (source) {
+                MTLCompileOptions *co = [MTLCompileOptions new];
+                co.languageVersion = MTLLanguageVersion2_3;
+                lib = [device_ newLibraryWithSource:source options:co error:&e];
+            }
+        }
+        if (!lib) { error = metal_error(e); return false; }
         const char *names[]={"fsr411_copy","fsr411_copy_depth","fsr411_clear_texture","fsr411_clear_buffer",
                              "fsr411_snapshot","fsr411_exposure","fsr411_init_exposure","fsr411_retire"};
         std::map<std::string,id<MTLComputePipelineState>> next;
@@ -603,30 +617,6 @@ private:
         helpers_=std::move(next);
         return true;
     }
-    bool run(NSArray<NSString *> *args, std::string &error) {
-        // Keep stderr in a file: waiting with unread pipes can deadlock a cold
-        // shader build. The executable and every argument are passed directly.
-        NSString *log=[NSTemporaryDirectory() stringByAppendingPathComponent:[[NSUUID UUID].UUIDString stringByAppendingString:@"-fsr411.log"]];
-        [[NSFileManager defaultManager] createFileAtPath:log contents:nil attributes:nil];
-        NSFileHandle *handle=[NSFileHandle fileHandleForWritingAtPath:log];
-        NSTask *task=[NSTask new]; task.executableURL=[NSURL fileURLWithPath:@"/usr/bin/env"];
-        task.arguments=args; task.currentDirectoryURL=[NSURL fileURLWithPath:ns(root_)];
-        task.standardOutput=handle; task.standardError=handle;
-        NSError *e=nil;
-        const double started=[NSDate timeIntervalSinceReferenceDate];
-        fsr4_logf("4.1.1 prepare begin: %s",utf8([args componentsJoinedByString:@" "]).c_str());
-        if (![task launchAndReturnError:&e]) { [handle closeFile]; error=metal_error(e); return false; }
-        [task waitUntilExit]; [handle closeFile];
-        if (task.terminationStatus) {
-            NSString *text=[NSString stringWithContentsOfFile:log encoding:NSUTF8StringEncoding error:nil];
-            error="FSR 4.1.1 shader build failed: "+utf8(text);
-            fsr4_logf("%s (build log: %s)",error.c_str(),log.UTF8String);
-            return false;
-        }
-        fsr4_logf("4.1.1 prepare complete cpuMs=%.3f",([NSDate timeIntervalSinceReferenceDate]-started)*1000);
-        [[NSFileManager defaultManager] removeItemAtPath:log error:nil];
-        return true;
-    }
     NSDictionary *json(const std::string &path, std::string &error) {
         NSError *e=nil; NSData *data=[NSData dataWithContentsOfFile:ns(path) options:0 error:&e];
         id result=data?[NSJSONSerialization JSONObjectWithData:data options:0 error:&e]:nil;
@@ -634,13 +624,14 @@ private:
         return result;
     }
     bool load_native(Session &s, bool compile, Kernels kind, std::string &error) {
+        (void)compile;
         const bool useMpp=kind==Kernels::Mpp, useSimd=kind==Kernels::Simd;
-        const std::string dir=buildDir_+"/fsr411_native_"+std::to_string(s.tier)+(s.ultraPerformance?"_ultraperformance":"")
+        std::string dir=buildDir_+"/fsr411_native_"+std::to_string(s.tier)+(s.ultraPerformance?"_ultraperformance":"")
             +(s.profile==Profile::Lossy?"_lossy":"");
-        // ExactFast differs only in PRE/POST math and shares Exact's network.
-        if (compile && !run(@[@"python3",ns(root_+"/tools/gen_fsr411_native.py"),@"--tier",ns(std::to_string(s.tier)),
-            @"--preset",s.ultraPerformance?@"ultraperformance":@"normal",@"--profile",s.profile==Profile::Lossy?@"lossy":@"exact",
-            @"--outdir",ns(dir)],error)) return false;
+        if (![[NSFileManager defaultManager] fileExistsAtPath:ns(dir + "/fsr411_native_manifest.json")]) {
+            dir=root_+"/fsr411_native_"+std::to_string(s.tier)+(s.ultraPerformance?"_ultraperformance":"")
+                +(s.profile==Profile::Lossy?"_lossy":"");
+        }
         auto manifest=json(dir+"/fsr411_native_manifest.json",error);
         if (!manifest || [manifest[@"abi_version"] unsignedIntValue]!=kAbiVersion
             || [manifest[@"parameter_size"] unsignedIntValue]!=sizeof(PassParams)) { if(error.empty()) error="native 4.1.1 ABI mismatch"; return false; }
@@ -655,28 +646,40 @@ private:
         }
         s.nativeWeights=[device_ newBufferWithBytes:weights.bytes length:weights.length options:MTLResourceStorageModeShared];
         if (useSimd) {
-            // Same element indices as the INT8 blob; bias words become unused
-            // halves (biases are read as int32 from nativeWeights).
             std::vector<_Float16> widened(weights.length);
             const int8_t *bytes=(const int8_t *)weights.bytes;
             for (size_t i=0;i<widened.size();++i) widened[i]=(_Float16)bytes[i];
             s.halfWeights=[device_ newBufferWithBytes:widened.data() length:widened.size()*sizeof(_Float16) options:MTLResourceStorageModeShared];
             if (!s.halfWeights) { error="cannot allocate simd half weights"; return false; }
         }
-        // Native sources include only the ABI header. Compile the saved source
-        // as a real Metal library; no half-network substitution is possible.
-        const char *file=useMpp?"/src/fsr411_mpp.metal":useSimd?"/src/fsr411_simd.metal":"/src/fsr411_reference.metal";
-        NSString *source=[NSString stringWithContentsOfFile:ns(root_+file) encoding:NSUTF8StringEncoding error:nil];
-        NSString *header=[NSString stringWithContentsOfFile:ns(root_+"/src/fsr411_model.h") encoding:NSUTF8StringEncoding error:nil];
-        if (!source || !header) { error="missing native 4.1.1 Metal source"; return false; }
-        source=[source stringByReplacingOccurrencesOfString:@"#include \"fsr411_model.h\"" withString:header];
-        NSError *e=nil; MTLCompileOptions *co=[MTLCompileOptions new];
-        co.languageVersion=MTLLanguageVersion3_0;
-        if(useMpp) if (@available(macOS 26.0,*)) co.languageVersion=MTLLanguageVersion4_0;
         const bool specialize=useMpp||useSimd;
-        co.preprocessorMacros=@{@"FSR411_MAXW":@(s.tier*8/9),@"FSR411_MAXH":@(s.tier/2),
-                               @"FSR411_SPECIALIZE":@(specialize)};
-        id<MTLLibrary> lib=[device_ newLibraryWithSource:source options:co error:&e];
+        // bbport: try precompiled metallib first, else load source
+        id<MTLLibrary> lib = nil;
+        NSError *e=nil;
+        NSString *metallibPath = ns(root_ + (useMpp ? "/fsr411_mpp.metallib" : useSimd ? "/fsr411_simd.metallib" : "/fsr411_reference.metallib"));
+        if ([[NSFileManager defaultManager] fileExistsAtPath:metallibPath]) {
+            lib = [device_ newLibraryWithURL:[NSURL fileURLWithPath:metallibPath] error:&e];
+        }
+        if (!lib) {
+            std::string srcFile = root_ + (useMpp ? "/fsr411_mpp.metal" : useSimd ? "/fsr411_simd.metal" : "/fsr411_reference.metal");
+            if (![[NSFileManager defaultManager] fileExistsAtPath:ns(srcFile)]) {
+                srcFile = root_ + (useMpp ? "/src/fsr411_mpp.metal" : useSimd ? "/src/fsr411_simd.metal" : "/src/fsr411_reference.metal");
+            }
+            std::string hdrFile = root_ + "/fsr411_model.h";
+            if (![[NSFileManager defaultManager] fileExistsAtPath:ns(hdrFile)]) {
+                hdrFile = root_ + "/src/fsr411_model.h";
+            }
+            NSString *source=[NSString stringWithContentsOfFile:ns(srcFile) encoding:NSUTF8StringEncoding error:nil];
+            NSString *header=[NSString stringWithContentsOfFile:ns(hdrFile) encoding:NSUTF8StringEncoding error:nil];
+            if (!source || !header) { error="missing native 4.1.1 Metal source"; return false; }
+            source=[source stringByReplacingOccurrencesOfString:@"#include \"fsr411_model.h\"" withString:header];
+            MTLCompileOptions *co=[MTLCompileOptions new];
+            co.languageVersion=MTLLanguageVersion3_0;
+            if(useMpp) if (@available(macOS 26.0,*)) co.languageVersion=MTLLanguageVersion4_0;
+            co.preprocessorMacros=@{@"FSR411_MAXW":@(s.tier*8/9),@"FSR411_MAXH":@(s.tier/2),
+                                   @"FSR411_SPECIALIZE":@(specialize)};
+            lib=[device_ newLibraryWithSource:source options:co error:&e];
+        }
         if (!lib) { error=metal_error(e); return false; }
         if (useSimd && !verify_simd(lib,error)) return false;
         std::map<std::string,id<MTLComputePipelineState>> states;
@@ -736,14 +739,12 @@ private:
             +(externalPost?"_pc1":"")+(o.strictMath&&o.profile!=Profile::Exact?"_sm1":"");
         const std::string cacheKey=key+(kind==Kernels::Mpp?"_mpp":kind==Kernels::Simd?"_simd":kind==Kernels::Scalar?"_scalar":"_ref");
         auto existing=sessions_.find(cacheKey); if(existing!=sessions_.end()) return existing->second.get();
-        if (o.allowCompile && !run(@[@"python3",ns(root_+"/tools/compile_fsr411.py"),@"--root",ns(root_),@"--builddir",ns(buildDir_),
-            @"--res",ns(std::to_string(tier)),@"--depth-inverted",ns(std::to_string(p.depthReversed)),
-            @"--low-res-mv",ns(std::to_string(p.lowResMV)),@"--jittered-mv",ns(std::to_string(p.jitteredMV)),
-            @"--colorspace",ns(std::to_string(o.colorspace)),@"--auto-exposure",ns(std::to_string(p.autoExposure)),
-            @"--optimize",ns(std::to_string(o.optimize)),@"--ultra-performance",o.ultraPerformance?@"1":@"0",
-            @"--profile",@(profile_name(o.profile)),@"--external-post-cnb",externalPost?@"1":@"0",
-            @"--strict-math",o.strictMath&&o.profile!=Profile::Exact?@"1":@"0"],error)) return nullptr;
-        auto manifest=json(buildDir_+"/"+key+"/bindings.json",error);
+        // bbport: look for precompiled bindings in buildDir_ or root_
+        std::string manifestPath = buildDir_ + "/" + key + "/bindings.json";
+        if (![[NSFileManager defaultManager] fileExistsAtPath:ns(manifestPath)]) {
+            manifestPath = root_ + "/" + key + "/bindings.json";
+        }
+        auto manifest=json(manifestPath,error);
         if (!manifest || ![manifest[@"version"] isEqual:@"4.1.1"] || [manifest[@"order"] count]!=27) return nullptr;
         auto s=std::make_unique<Session>(); s->key=cacheKey; s->tier=tier;
         s->postPixelsPerGroup=manifest[@"post_pixels_per_group"]?[manifest[@"post_pixels_per_group"] unsignedIntValue]:32;
@@ -751,13 +752,44 @@ private:
         s->splitAutoExposure=[manifest[@"auto_exposure_dispatches"] unsignedIntValue]==2;
         s->ultraPerformance=o.ultraPerformance;s->externalPostCnb=externalPost;s->profile=o.profile;
         s->scratchBytes=[manifest[@"scratch_bytes"] unsignedLongLongValue];
-        NSData *init=[NSData dataWithContentsOfFile:ns(root_+"/third_party/fsr411/"+
-            (o.ultraPerformance?"initializers-ultraperformance.bin":"initializers.bin"))];
-        if (init.length!=131072 || !s->scratchBytes) { error="missing real FSR 4.1.1 initializer"; return nullptr; }
+        // bbport: load AMD's initializer from player's data / BB_FSR411_DIR / asset directory
+        NSData *init = nil;
+        const std::string initName = o.ultraPerformance ? "initializers-ultraperformance.bin" : "initializers.bin";
+        std::vector<std::string> initCandidates;
+        if (const char* env = std::getenv("BB_FSR411_DIR")) {
+            if (env[0]) {
+                initCandidates.push_back(std::string(env) + "/" + initName);
+                initCandidates.push_back(std::string(env) + "/t" + std::to_string(tier) + "_m" + (o.ultraPerformance ? "1" : "0") + "/initializer.bin");
+                initCandidates.push_back(std::string(env) + "/initializer.bin");
+            }
+        }
+        if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
+            if (env[0]) {
+                initCandidates.push_back(std::string(env) + "/fsr4_411/" + initName);
+                initCandidates.push_back(std::string(env) + "/fsr4_411/t" + std::to_string(tier) + "_m" + (o.ultraPerformance ? "1" : "0") + "/initializer.bin");
+            }
+        }
+        initCandidates.push_back(buildDir_ + "/" + initName);
+        initCandidates.push_back(root_ + "/" + initName);
+        initCandidates.push_back(root_ + "/fsr411/" + initName);
+        initCandidates.push_back("fsr4_411/" + initName);
+        initCandidates.push_back("fsr4_411/t" + std::to_string(tier) + "_m" + (o.ultraPerformance ? "1" : "0") + "/initializer.bin");
+        initCandidates.push_back("fsr4_411/initializer.bin");
+        for (const auto& path : initCandidates) {
+            NSData* d = [NSData dataWithContentsOfFile:ns(path)];
+            if (d && d.length == 131072) {
+                init = d;
+                break;
+            }
+        }
+        if (!init || init.length!=131072 || !s->scratchBytes) {
+            error="missing real FSR 4.1.1 initializer (" + initName + ") in BB_FSR411_DIR or " + root_;
+            return nullptr;
+        }
         s->initializer=[device_ newBufferWithBytes:init.bytes length:init.length options:MTLResourceStorageModeShared];
         if (!s->initializer) { error="cannot allocate FSR 4.1.1 initializer"; return nullptr; }
         for (NSString *stage in manifest[@"order"]) s->order.push_back(utf8(stage));
-        if (externalPost && !load_native(*s,o.allowCompile,kind,error)) return nullptr;
+        if (externalPost && !load_native(*s,false,kind,error)) return nullptr;
         NSDictionary *entries=manifest[@"kernels"];
         for (NSString *name in entries) {
             NSDictionary *entry=entries[name]; NSError *e=nil;
@@ -766,7 +798,11 @@ private:
             const std::string stage=utf8(name);
             const int logical=stage.rfind("pass",0)==0?std::atoi(stage.c_str()+4):0;
             if(portable && logical && s->native.count(logical)) {s->kernels.emplace(stage,Kernel{});continue;}
-            auto url=[NSURL fileURLWithPath:ns(buildDir_+"/"+key+"/"+utf8(entry[@"library"]))];
+            std::string libPath = buildDir_ + "/" + key + "/" + utf8(entry[@"library"]);
+            if (![[NSFileManager defaultManager] fileExistsAtPath:ns(libPath)]) {
+                libPath = root_ + "/" + key + "/" + utf8(entry[@"library"]);
+            }
+            auto url=[NSURL fileURLWithPath:ns(libPath)];
             auto lib=[device_ newLibraryWithURL:url error:&e];
             if (!lib) { error=metal_error(e); return nullptr; }
             auto fn=[lib newFunctionWithName:entry[@"entry"]];
@@ -774,7 +810,11 @@ private:
             if (!pso) { error="pipeline "+utf8(name)+": "+metal_error(e); return nullptr; }
             Kernel k; k.pso=pso; NSArray *wg=entry[@"wgsize"];
             if(NSString *tables=entry[@"literal_tables"]) {
-                NSData *bytes=[NSData dataWithContentsOfFile:ns(buildDir_+"/"+key+"/"+utf8(tables))];
+                std::string tablePath = buildDir_ + "/" + key + "/" + utf8(tables);
+                if (![[NSFileManager defaultManager] fileExistsAtPath:ns(tablePath)]) {
+                    tablePath = root_ + "/" + key + "/" + utf8(tables);
+                }
+                NSData *bytes=[NSData dataWithContentsOfFile:ns(tablePath)];
                 if(!bytes.length) {error="missing shader literal tables for "+stage;return nullptr;}
                 k.literalTables=[device_ newBufferWithBytes:bytes.bytes length:bytes.length options:MTLResourceStorageModeShared];
                 if(!k.literalTables) {error="cannot allocate shader literal tables";return nullptr;}
