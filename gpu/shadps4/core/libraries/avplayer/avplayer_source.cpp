@@ -663,17 +663,21 @@ Frame AvPlayerSource::PrepareVideoFrame(GuestBuffer buffer, const AVFrame& frame
     ASSERT(frame.format == AV_PIX_FMT_NV12);
 
     auto p_buffer = buffer.GetBuffer();
+    const auto width = Common::AlignUp<u32>(frame.width, 16);
+    const auto pitch = Common::AlignUp<u32>(frame.width, 64);
+    const auto height = Common::AlignUp<u32>(frame.height, 16);
+    // Bloodborne-Android bf1e6cf: CopyNV12Data writes pitch-wide rows; unprotect the
+    // full NV12 allocation before the copy to avoid a fault for each tracked page.
+    const auto written = u64(pitch) * height * 3 / 2;
+    Core::Memory::Instance()->InvalidateMemory(reinterpret_cast<VAddr>(p_buffer), written);
     Videodec::CopyNV12Data(p_buffer, buffer.Size(), frame);
 
     const auto stream_index = m_streams[m_video_stream_index.value()].ffmpeg_index;
     const auto stream = m_avformat_context->streams[stream_index];
     const auto timestamp = FrameTimestampMillis(frame, stream->time_base);
 
-    const auto width = Common::AlignUp<u32>(frame.width, 16);
-    const auto pitch = Common::AlignUp<u32>(frame.width, 64);
-    const auto height = Common::AlignUp<u32>(frame.height, 16);
     Core::Memory::Instance()->InvalidateMemory(reinterpret_cast<VAddr>(p_buffer),
-                                               (width * height * 3) / 2);
+                                               written);
 
     return Frame{
         .buffer = std::move(buffer),

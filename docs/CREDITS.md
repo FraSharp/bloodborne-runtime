@@ -26,6 +26,12 @@ Changes taken from other ports of bbport, with thanks:
   - the Retina-resolution window (`gpu/shim/window.cpp`, `BB_RETINA`);
   - the texture cache hashing whole images when checking a possibly changed one (the item
     picture on the loading screen).
+- [**MaSieS4Fun/ARM_bloodborne_pc**](https://github.com/MaSieS4Fun/ARM_bloodborne_pc/commit/3d56243)
+  (GPL-2.0, commit `3d56243`): the portable SRT walker and its `SrtOp` program for non-x86 hosts.
+- [**ducvd89/Bloodborne-Android**](https://github.com/ducvd89/Bloodborne-Android/commit/bf1e6cf)
+  (GPL-2.0, commit `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization
+  and host-architecture separation; also supplied delayed condition-variable retirement and
+  pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
 
 ## Libraries
 

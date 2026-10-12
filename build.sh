@@ -118,6 +118,9 @@ if (( macos )); then
     probe_flags=()
     warnings=(-Wno-unknown-warning-option -Wno-unused-but-set-global)
     gpu+=(-framework Foundation) # platform.c: NSProcessInfo (bb_latency_critical)
+else
+    # Strict C11 hides POSIX rwlocks and clocks in glibc without a feature level.
+    warnings=(-D_POSIX_C_SOURCE=200809L)
 fi
 runtime=(src/runtime*.c src/platform.c)
 # Third-party decoders: compiled once, without this project's -Werror policy.
@@ -161,7 +164,15 @@ if [[ ${1:-} == --test ]]; then
     out/online-test
     "$CC" "${arch[@]}" -std=c11 -D_GNU_SOURCE -O2 -g -Wall -Wextra -Werror -I. -Isrc -Irecomp/src tests/test_content.c src/runtime_content.c src/platform.c -o out/content-test
     out/content-test
-    "$CC" "${arch[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror -pthread -Isrc -Irecomp/src tests/test_guest_tls.c src/platform.c -o out/guest-tls-test
-    out/guest-tls-test
-    "${PYTHON:-python3}" tests/test_loader.py out/bb-probe
+    if (( !macos )) || [[ $macarch == x86_64 ]]; then
+        "$CC" "${arch[@]}" -std=c11 -O2 -g -Wall -Wextra -Werror "${warnings[@]}" -pthread -Isrc -Irecomp/src tests/test_guest_tls.c src/platform.c -o out/guest-tls-test
+        out/guest-tls-test
+    else
+        echo "SKIP: guest-tls-test executes x86-64 instructions"
+    fi
+    if (( macos )); then
+        echo "SKIP: loader test uses 4 KiB-aligned segments; macOS requires 16 KiB"
+    else
+        "${PYTHON:-python3}" tests/test_loader.py out/bb-probe
+    fi
 fi

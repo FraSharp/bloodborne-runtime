@@ -142,43 +142,60 @@ static ABI int32_t cond_init(GuestCond **out, void **attr, const char *name) {
     if (e) { free(c); return orbis_error(e); }
     *out = c; ++conds; return 0;
 }
-static int32_t ensure_cond(GuestCond **cond) {
+/* Bloodborne-Android bf1e6cf: read each cond handle once per call and retain recently
+ * destroyed conds while other guest threads may still be signaling them. */
+#define COND_DESTROYED ((GuestCond *)(uintptr_t)2)
+static int32_t ensure_cond(GuestCond **cond, GuestCond **out) {
     if (!cond) return orbis_error(EINVAL);
-    if (__atomic_load_n((uintptr_t *)cond, __ATOMIC_ACQUIRE) >= 2) return 0;
+    GuestCond *c = __atomic_load_n(cond, __ATOMIC_ACQUIRE);
+    if (c == COND_DESTROYED) return orbis_error(EINVAL);
+    if ((uintptr_t)c > 2) { *out = c; return 0; }
     pthread_mutex_lock(&static_init);
     int32_t e = 0;
-    if ((uintptr_t)*cond < 2) {
-        GuestCond *c = NULL;
+    c = __atomic_load_n(cond, __ATOMIC_ACQUIRE);
+    if (c == COND_DESTROYED) e = orbis_error(EINVAL);
+    else if ((uintptr_t)c < 2) {
         e = cond_init(&c, NULL, NULL);
         if (!e) __atomic_store_n(cond, c, __ATOMIC_RELEASE);
     }
     pthread_mutex_unlock(&static_init);
+    if (!e) *out = c;
     return e;
 }
+static GuestCond *retired_conds[1024];
+static size_t retired_cond_next;
 static ABI int32_t cond_destroy(GuestCond **cond) {
     if (!cond) return orbis_error(EINVAL);
-    if ((uintptr_t)*cond < 2) return 0;
-    int e = pthread_cond_destroy(&(*cond)->native);
-    if (!e) { free(*cond); *cond = NULL; }
-    return orbis_error(e);
+    GuestCond *c = __atomic_exchange_n(cond, COND_DESTROYED, __ATOMIC_ACQ_REL);
+    if (c == COND_DESTROYED) return orbis_error(EINVAL);
+    if ((uintptr_t)c < 2) return 0;
+    pthread_mutex_lock(&static_init);
+    GuestCond *old = retired_conds[retired_cond_next];
+    retired_conds[retired_cond_next] = c;
+    retired_cond_next = (retired_cond_next + 1) % (sizeof(retired_conds) / sizeof(retired_conds[0]));
+    pthread_mutex_unlock(&static_init);
+    if (old) { pthread_cond_destroy(&old->native); free(old); }
+    return 0;
 }
 static ABI int32_t cond_wait(GuestCond **cond, GuestMutex **mutex) {
-    int32_t e = ensure_cond(cond);
+    GuestCond *c;
+    int32_t e = ensure_cond(cond, &c);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3) return orbis_error(EINVAL);
     ++waits;
     const uint64_t start = runtime_wait_clock();
-    const int e2 = pthread_cond_wait(&(*cond)->native, &(*mutex)->native);
+    const int e2 = pthread_cond_wait(&c->native, &(*mutex)->native);
     runtime_wait_note(0, runtime_wait_clock() - start);
     return orbis_error(e2);
 }
 static int32_t cond_wait_until(GuestCond **cond, GuestMutex **mutex, const struct timespec *end) {
-    int32_t e = ensure_cond(cond);
+    GuestCond *c;
+    int32_t e = ensure_cond(cond, &c);
     if (e) return e;
     if (!mutex || (uintptr_t)*mutex < 3 || !end) return orbis_error(EINVAL);
     ++waits;
     const uint64_t start = runtime_wait_clock();
-    const int e2 = pthread_cond_timedwait(&(*cond)->native, &(*mutex)->native, end);
+    const int e2 = pthread_cond_timedwait(&c->native, &(*mutex)->native, end);
     runtime_wait_note(0, runtime_wait_clock() - start);
     return timed_error(e2);
 }
@@ -188,14 +205,16 @@ static ABI int32_t cond_timedwait(GuestCond **cond, GuestMutex **mutex, uint32_t
     return cond_wait_until(cond, mutex, &end);
 }
 static ABI int32_t cond_signal(GuestCond **cond) {
-    int32_t e = ensure_cond(cond);
+    GuestCond *c;
+    int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_signal(&(*cond)->native));
+    ++wakeups; return orbis_error(pthread_cond_signal(&c->native));
 }
 static ABI int32_t cond_broadcast(GuestCond **cond) {
-    int32_t e = ensure_cond(cond);
+    GuestCond *c;
+    int32_t e = ensure_cond(cond, &c);
     if (e) return e;
-    ++wakeups; return orbis_error(pthread_cond_broadcast(&(*cond)->native));
+    ++wakeups; return orbis_error(pthread_cond_broadcast(&c->native));
 }
 /* PS4 struct timespec is {int64 sec, int64 nsec}, identical to Linux x86-64. */
 typedef struct { int64_t sec, nsec; } GuestTimespec;

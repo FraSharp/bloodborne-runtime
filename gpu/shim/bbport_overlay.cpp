@@ -258,7 +258,7 @@ void Menu() {
             ImGui::EndDisabled();
             if (!supported) {
                 ImGui::SameLine();
-                ImGui::TextDisabled(T("upscaler.unsupported"));
+                ImGui::TextDisabled("%s", T("upscaler.unsupported"));
             }
         }
         for (const char* name : later) {
@@ -266,7 +266,7 @@ void Menu() {
             ImGui::Selectable(name, false);
             ImGui::EndDisabled();
             ImGui::SameLine();
-            ImGui::TextDisabled(T("upscaler.inProgress"));
+            ImGui::TextDisabled("%s", T("upscaler.inProgress"));
         }
         ImGui::EndCombo();
     }
@@ -328,7 +328,7 @@ void Menu() {
     }
     ImGui::EndDisabled();
     if (taa) {
-        ImGui::TextWrapped(T("preset.taaNote"));
+        ImGui::TextWrapped("%s", T("preset.taaNote"));
     }
     ImGui::Text(T("preset.active"), s.active_render_width.load(),
                 s.active_render_height.load());
@@ -430,8 +430,7 @@ void Menu() {
         restart |= s.effects[e] != s.startup_effects[e];
     }
     if (restart) {
-        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f),
-                           T("restart.note"));
+        ImGui::TextColored(ImVec4(1.0f, 0.75f, 0.3f, 1.0f), "%s", T("restart.note"));
         if (ImGui::Button(T("restart.button"))) {
             BbSettings::Save();
             runtime_restart();
@@ -460,7 +459,7 @@ void Menu() {
     if (quit_armed && !ImGui::IsItemFocused() && !ImGui::IsItemHovered()) {
         quit_armed = false;
     }
-    ImGui::TextDisabled(T("menu.savedIn"));
+    ImGui::TextDisabled("%s", T("menu.savedIn"));
     ImGui::End();
     if (!keep_open) {
         SetOpen(false);

@@ -9,10 +9,10 @@ void runtime_restart(void) { abort(); }
 #include <signal.h>
 #include <stdio.h>
 #include <string.h>
-#include <stdlib.h>
 #include <pthread.h>
 #include <stdatomic.h>
 #include <time.h>
+#include <unistd.h>
 
 typedef int (ABI *Register)(GuestCallback);
 typedef int (ABI *RegisterCxa)(void (ABI *)(void *), void *, void *);
@@ -142,6 +142,18 @@ static void mutexes(void) {
     assert((uint32_t)trylock(&mutex)==0x80020010);
     assert(unlock(&mutex)==0 && destroy(&mutex)==0);
 }
+static void conditions(void) {
+    typedef int32_t (ABI *CondInit)(void **, void **, const char *);
+    CondInit init=GET(CondInit,"2Tb92quprl0#p#J");
+    HandleOp signal=GET(HandleOp,"kDh-NfxgMtE#p#J");
+    HandleOp destroy=GET(HandleOp,"g+PZd2hiacg#p#J");
+    void *cond=NULL;
+    assert(init(&cond,NULL,"retirement-test")==0);
+    assert(signal(&cond)==0);
+    assert(destroy(&cond)==0);
+    assert((uint32_t)signal(&cond)==0x80020016);
+    assert((uint32_t)destroy(&cond)==0x80020016);
+}
 static void posix_mutexes(void) {
     AttrInit init=GET(AttrInit,"dQHWEsJtoE4#I#J");
     AttrType type=GET(AttrType,"mDmgMOGVUqg#I#J");
@@ -211,25 +223,29 @@ unsigned runtime_memory_trap_reasons(uintptr_t address);
 static sigjmp_buf trap_jump;
 static void trap_fault(int sig) { (void)sig; siglongjmp(trap_jump,1); }
 static int write_faults(volatile unsigned char *p) {
-    struct sigaction action={0}, old;
+    struct sigaction action={0}, old_segv, old_bus;
     action.sa_handler=trap_fault;
     sigemptyset(&action.sa_mask);
-    sigaction(SIGSEGV,&action,&old);
+    sigaction(SIGSEGV,&action,&old_segv);
+    sigaction(SIGBUS,&action,&old_bus);
     int faulted=0;
     if (sigsetjmp(trap_jump,1)) faulted=1;
     else *p=0x5a;
-    sigaction(SIGSEGV,&old,NULL);
+    sigaction(SIGBUS,&old_bus,NULL);
+    sigaction(SIGSEGV,&old_segv,NULL);
     return faulted;
 }
 static int read_faults(volatile unsigned char *p) {
-    struct sigaction action={0}, old;
+    struct sigaction action={0}, old_segv, old_bus;
     action.sa_handler=trap_fault;
     sigemptyset(&action.sa_mask);
-    sigaction(SIGSEGV,&action,&old);
+    sigaction(SIGSEGV,&action,&old_segv);
+    sigaction(SIGBUS,&action,&old_bus);
     int faulted=0;
     if (sigsetjmp(trap_jump,1)) faulted=1;
     else (void)*p;
-    sigaction(SIGSEGV,&old,NULL);
+    sigaction(SIGBUS,&old_bus,NULL);
+    sigaction(SIGSEGV,&old_segv,NULL);
     return faulted;
 }
 typedef int32_t (ABI *Protect)(const void *, uint64_t, int);
@@ -239,28 +255,33 @@ static void write_traps(void) {
     Unmap unmap=GET(Unmap,"cQke9UuBQOk#p#J");
     Release release=GET(Release,"MBuItvba6z8#p#J");
     Protect protect=GET(Protect,"vSMAm3cxYTY#p#J");
-    const uint64_t pool=536870912, length=16384;
+    const uint64_t pool=536870912;
+    const long page_size=sysconf(_SC_PAGESIZE);
+    assert(page_size>=4096 && page_size%4096==0);
+    const uint64_t host_page=(uint64_t)page_size;
+    /* Trap ownership is tracked per guest 4 KiB page, but mprotect acts on host pages. */
+    const uint64_t length=host_page*2 < 16384 ? 16384 : host_page*2;
     int64_t a=-1;
     void *x=NULL;
     assert(alloc(0,pool,length,0,0,&a)==0 && map(&x,length,3,0,a,0)==0);
     unsigned char *p=x;
     const uintptr_t page=(uintptr_t)p;
-    runtime_memory_trap(page,4096,1,1);
-    runtime_memory_trap(page,4096,2,1);
-    assert(runtime_memory_trap_reasons(page)==3 && runtime_memory_trap_reasons(page+4096)==0);
-    assert(write_faults(p) && !write_faults(p+4096));
-    runtime_memory_trap(page,4096,1,0); /* one owner lifts its trap: the other's holds */
+    runtime_memory_trap(page,host_page,1,1);
+    runtime_memory_trap(page,host_page,2,1);
+    assert(runtime_memory_trap_reasons(page)==3 && runtime_memory_trap_reasons(page+host_page)==0);
+    assert(write_faults(p) && !write_faults(p+host_page));
+    runtime_memory_trap(page,host_page,1,0); /* one owner lifts its trap: the other's holds */
     assert(runtime_memory_trap_reasons(page)==2 && write_faults(p));
     assert(protect(x,length,3)==0 && write_faults(p)); /* the game's mprotect keeps it */
-    runtime_memory_trap(page,4096,2,0);
+    runtime_memory_trap(page,host_page,2,0);
     assert(runtime_memory_trap_reasons(page)==0 && !write_faults(p) && p[0]==0x5a);
-    runtime_memory_trap(page,4096,2,1);
-    runtime_memory_trap(page,4096,16,1); /* from 16 up reads fault too */
-    assert(read_faults(p) && write_faults(p) && !read_faults(p+4096));
+    runtime_memory_trap(page,host_page,2,1);
+    runtime_memory_trap(page,host_page,16,1); /* from 16 up reads fault too */
+    assert(read_faults(p) && write_faults(p) && !read_faults(p+host_page));
     assert(protect(x,length,3)==0 && read_faults(p));
-    runtime_memory_trap(page,4096,16,0); /* back to the write trap left */
+    runtime_memory_trap(page,host_page,16,0); /* back to the write trap left */
     assert(!read_faults(p) && write_faults(p));
-    runtime_memory_trap(page,4096,2,0);
+    runtime_memory_trap(page,host_page,2,0);
     assert(!write_faults(p));
     runtime_memory_trap(page,length,2,1);
     assert(unmap(x,length)==0 && runtime_memory_trap_reasons(page)==0); /* gone with the mapping */
@@ -438,8 +459,8 @@ int main(int argc,char **argv) {
     if (argc>1 && !strcmp(argv[1],"--rwlock-lifecycle")) { rw_lifecycle(); return 0; }
     if (argc>1 && !strcmp(argv[1],"--rwlock-concurrency")) { rw_concurrency(); return 0; }
     if (argc>1 && !strcmp(argv[1],"--rwlock-timeouts")) { rw_timeouts(); return 0; }
-    libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); direct_memory(); write_traps(); memory_primitives();
+    libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); conditions(); direct_memory(); write_traps(); memory_primitives();
     rw_lifecycle(); rw_concurrency(); rw_timeouts();
-    puts("PASS: callback lifecycle, guard ABI, mutex errors, shared direct memory, memory primitives, resolver scope");
+    puts("PASS: callback lifecycle, guard ABI, mutex and condition errors, shared direct memory, memory primitives, resolver scope");
     return 0;
 }

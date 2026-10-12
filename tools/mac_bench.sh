@@ -47,8 +47,9 @@ if [[ ${TRACE:-0} == 1 ]]; then
     sleep 8
     DEVELOPER_DIR=${DEVELOPER_DIR:-/Applications/Xcode.app/Contents/Developer} xcrun xctrace record \
         --template 'Metal System Trace' --attach "$(pgrep -x bb-probe | head -1)" \
-        --time-limit "${TRACE_SECONDS:-5}s" --output "$base.trace" > /dev/null 2>&1 &&
-        echo "trace: $base.trace" || echo "trace failed"
+        --time-limit "${TRACE_SECONDS:-5}s" \
+        --no-prompt --output "$base.trace" > "$base.xctrace.log" 2>&1 &&
+        echo "trace: $base.trace" || { echo "trace failed: $base.xctrace.log"; tail -5 "$base.xctrace.log"; }
 fi
 # SAMPLE=1: call stacks of every thread (macOS sample), $base.sample.txt: SAMPLE_SECONDS (5) long,
 # SAMPLE_DELAY (5) s after the level loaded.

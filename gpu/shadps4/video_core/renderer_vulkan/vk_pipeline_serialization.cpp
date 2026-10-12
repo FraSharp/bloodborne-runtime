@@ -507,7 +507,8 @@ void PersistentSrtInfo::Serialize(Serialization::Archive& ar) const {
 
     srt.Write(this, sizeof(*this));
     if (walker_func_size) {
-        srt.Write(reinterpret_cast<void*>(walker_func), walker_func_size);
+        // Bloodborne-Android bf1e6cf: the cached walker may be an SRT program.
+        srt.Write(static_cast<const u8*>(SrtWalkerCode(walker_func)), walker_func_size);
     }
 }
 
@@ -522,6 +523,7 @@ bool PersistentSrtInfo::Deserialize(Serialization::Archive& ar) {
         const auto code = ar.CurrPtr();
         ar.Advance(walker_func_size);
         walker_func = RegisterWalkerCode(code, walker_func_size);
+        if (!walker_func) return false;
     }
 
     return true;

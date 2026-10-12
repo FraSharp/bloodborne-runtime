@@ -2,10 +2,12 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "common/elf_info.h"
+#include "common/arch.h"
 #include "common/io_file.h"
 #include "common/polyfill_thread.h"
 #include "common/thread.h"
 #include "core/emulator_settings.h"
+#include "shader_recompiler/ir/passes/srt.h"
 
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -95,11 +97,19 @@ void DataBase::Open() {
     const auto& game_info = Common::ElfInfo::Instance();
 
     using namespace Common::FS;
+    // Bloodborne-Android bf1e6cf: walkers in shader metadata are host-specific.
+    // Arm64 also separates the SrtOp format from translated x86 code.
+    std::string cache_name{game_info.GameSerial()};
+#ifdef ARCH_ARM64
+    cache_name += Shader::UsePortableSrtWalker() ? "-arm64-srt" : "-arm64-x86srt";
+#elif !defined(ARCH_X86_64)
+    cache_name += "-portable-srt";
+#endif
     if (EmulatorSettings.IsPipelineCacheArchived()) {
         mz_zip_zero_struct(&zip_ar);
 
         cache_path = GetUserPath(PathType::CacheDir) /
-                     std::filesystem::path{game_info.GameSerial()}.replace_extension(".zip");
+                     std::filesystem::path{cache_name}.replace_extension(".zip");
 
         if (!mz_zip_reader_init_file(&zip_ar, cache_path.string().c_str(),
                                      MZ_ZIP_FLAG_READ_ALLOW_WRITING) ||
@@ -110,7 +120,7 @@ void DataBase::Open() {
             mz_zip_writer_init_file(&zip_ar, cache_path.string().c_str(), 0);
         }
     } else {
-        cache_path = GetUserPath(PathType::CacheDir) / game_info.GameSerial();
+        cache_path = GetUserPath(PathType::CacheDir) / cache_name;
         if (!std::filesystem::exists(cache_path)) {
             std::filesystem::create_directories(cache_path);
         }

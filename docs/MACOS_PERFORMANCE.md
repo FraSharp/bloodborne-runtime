@@ -61,6 +61,65 @@ small increase should be checked again if later renderer changes affect CPU cost
 captures from the same place showed no visible difference. The default remains on, and
 `BB_DEFER_CLEARS=0` disables it.
 
+### Portable SRT walker (2026-10-12)
+
+On arm64, shader resource table (SRT) walks now run as a portable `SrtOp` program. The former
+path generated x86 walker code and ran it through bbcpu. The program and serialized shader
+cache follow ARM_bloodborne_pc `3d56243` and Bloodborne-Android `bf1e6cf`, adapted to this
+runtime. Cache directories differ by host architecture and walker mode. The portable walker is
+the arm64 default; `BB_SRT_INTERP=0` selects the translated x86 walker for comparison. x86-64
+keeps its native walker.
+
+Three alternating untraced pairs in Central Yharnam used 90-second holds at the same carriage:
+
+| Pair | Translated FPS / p90 / game CPU | Portable FPS / p90 / game CPU |
+|---|---|---|
+| 1 | 45.3 / 24.1 ms / 496% | 43.9 / 27.0 ms / 495% |
+| 2 | 44.9 / 25.4 ms / 510% | 46.7 / 23.1 ms / 513% |
+| 3 | 47.1 / 22.6 ms / 508% | 48.3 / 21.7 ms / 503% |
+
+The means were 45.8 versus 46.3 FPS, 24.0 versus 23.9 ms p90, and 505% versus 504% game CPU
+for translated versus portable. The first pair favored translated; the next two favored portable.
+Game-frame captures at the same place showed no visible difference. Separate eight-second
+samples found 67 JIT-code samples among 706 busy DrawPrep-thread samples with the translated
+walker (9.5%), and zero among 775 with the portable walker. The total DrawPrep busy share was
+0.572 versus 0.562 core; the sample lengths differed, so raw counts are not CPU-time deltas.
+These Central Yharnam holds showed similar overall performance. A later isolated new-save
+opening-video check ran five translated and five portable trials in alternating order, with
+`BB_CB_PROBE=1` in two trials each way. All ten entered the movie path. The same null-pointer
+read faulted in 2/5 translated and 3/5 portable trials, on the main or graphics thread. A
+separate `ExecuteCopyShaderHLE` assertion stopped one trial each way; two translated and one
+portable trial completed the video. The command-buffer probe saw the main and graphics threads
+using the same buffer close together, but no third movie-thread writer or overlapping buffer
+memory. Two additional guard placements did not remove the fault, and one coincided with a
+stall, so neither was retained. The data do not support a walker-specific failure. The portable
+walker is the arm64 default because its measured speed is equal and it removes translated code
+from renderer preparation; the opening-video fault remains open for investigation.
+
+### N4 Vulkan reference (2026-10-12)
+
+One copied-save Central Yharnam hold completed 1,880 frames in 45 seconds: 43.7 FPS by frame
+times, 21.4 ms median, 26.2 ms p90, 494% game CPU, 1,268 draws/frame, and 4.89 µs stage-B
+GPU-thread CPU time per draw (last nine frame-stat windows). A game-frame capture showed the
+expected scene. A separate Metal trace of the same scene counted about 9.0 separate color-clear,
+36.2 tessellation compute and 47.6 buffer-copy encoders per frame; it measured 11.6 ms/frame
+busy, 3.8 ms idle inside command buffers and 5.4 ms between them. That traced run later stopped
+on a new `Unknown data_format=15 and num_format=4` GPU assertion. A second trace stalled in
+`xctrace` after its three-second limit and was stopped so the game hold could finish. The trace
+counts are a baseline inventory; they do not establish a performance change.
+
+The first N4 buffer-description slice (`BB_N4_BUFFER_DESC=1`, opt-in) completed two alternating
+untraced 45-second pairs at this location. Existing/description paths measured 43.6/46.1 and
+45.5/45.7 FPS; p90 was 24.3/23.1 and 24.2/24.0 ms. Game CPU was 473/486% and 491/496%;
+stage-B GPU-thread time was 4.75/4.48 and 4.63/4.66 µs/draw at about 1,268 draws/frame.
+All runs completed without faults or assertions and game-frame captures showed no visible
+difference. The allocation-only seam does not establish an FPS gain. CPU was higher in both
+uncapped pairs. Two more alternating pairs capped at 40 FPS measured matching CPU (405/405%
+and 409/409%) and 25.0 ms p90; stage-B time was 4.20/3.98 and 4.12/4.08 µs/draw. The first
+capped reference had one long frame (38.8 FPS overall); the other three held 40.0 FPS. All
+completed without faults or assertions. The CPU gate passes at equal throughput in this scene;
+the slice stays opt-in while the resource boundary is incomplete.
+
 | Change | Effect |
 |---|---|
 | Color clears deferred to the next render pass's load action (`BB_DEFER_CLEARS`) | After narrowing the upscaler check: 46.4–47.2 → 47.5–49.1 FPS in three untraced pairs; 3–4 fewer clear encoders per frame before this refinement |
@@ -97,23 +156,25 @@ captures from the same place showed no visible difference. The default remains o
 Measuring: the GPU timestamp profiler does not work on MoltenVK, and `ioreg`'s "Device
 Utilization" overstates how busy the GPU is; use Metal System Traces (`TRACE=1` in
 `tools/mac_bench.sh`, read with `tools/mst_summary.py` / `tools/mst_passes.py` /
-`tools/mst_shaders.py`; `xctrace` needs `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`).
+`tools/mst_shaders.py`; `xctrace` needs
+`DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`). Three-second recordings took over
+a minute to finalize after the time limit; wait for the saved-output message before reading the
+trace.
 
 ## Where more could be gained
 
 1. **Idle time between Metal encoders, 6–8 ms a frame at 1080p.** Each switch between render,
    compute and blit work leaves the GPU idle (~630 encoders a frame).
-   - The game's tessellated light draws (~48 a frame) become a compute pass plus a render-pass
-     restart each on MoltenVK: ~2–3 ms (removing them entirely: 31 → 34 FPS). Their hull shader
-     uses constant factors (outer 3, inner 1), so they could be pre-tessellated into ordinary
-     triangles (merging the LS, HS and DS stages in the recompiler). An opt-in fixed-quad
-     triangle path (`BB_FIXED_QUAD_TRIANGLES=1`) converted the observed draws and improved
-     mean FPS in two alternating 60-second pairs, but p90 worsened in both and game CPU use
-     rose by 30–38 percentage points. It remains off by default pending a CPU fix and a valid
-     Metal trace.
-   - Deferred color clears initially removed 3–4 separate clear encoders a frame in the clinic.
-     The narrowed upscaler check removes more, but encoder counts have not been retraced.
-   - Small buffer copies between passes (~1–1.5 ms): batch further.
+   - A three-second off/on trace pair for the opt-in fixed-quad triangle path removed 27.4
+     light-draw tessellation compute encoders per frame (0.188 ms of compute work); 22.0 other
+     tessellation encoders remained. Total idle was 6.0/5.3 ms per frame, but between-command-
+     buffer idle rose from 0.6 to 1.2 ms. Two untraced pairs had worse p90 and 30–38 percentage
+     points more game CPU use with the switch on. Leave `BB_FIXED_QUAD_TRIANGLES=1` opt-in;
+     native Metal tessellation is planned for N5.
+   - With deferred clears enabled by default, a later three-second clinic trace measured 11.9
+     separate `vkCmdClearColorImage` encoders per frame (0.33 ms of GPU work). The earlier
+     default-off clear traces had 17.8 and 16.8; this later trace is not a controlled pair.
+   - Buffer-copy grouping had no measured gain; the existing copy hoist remains.
 2. **Vertex work, ~6 ms a frame at native.** Vertex shaders read constants from storage buffers
    one value at a time; uniformly indexed read-only buffers declared as constant buffers might
    let Metal preload them. Some tiny passes (32×32, 64×64, 256×256 targets) are almost only

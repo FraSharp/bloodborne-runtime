@@ -1219,7 +1219,8 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         if (eligible) {
             const u32 outer = hs->fixed_quad_outer;
             sel.runtime_infos[ds_index].InitFromTessConstants(tess_constants);
-            const size_t module_key = HashCombine(key.stage_hashes[ds_index], outer);
+            const size_t module_key = HashCombine(static_cast<u64>(key.stage_hashes[ds_index]),
+                                                  static_cast<u64>(outer));
             auto module = fixed_quad_modules.find(module_key);
             if (module == fixed_quad_modules.end()) {
                 const auto params = AmdGpu::GetParams(regs.vs_program);

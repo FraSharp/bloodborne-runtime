@@ -2,6 +2,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <bit>
+#include <array>
+#include <cstdlib>
 #include <numeric>
 
 #include "bbport_metal_residency.h"
@@ -11,6 +13,7 @@
 #include "bbport_guest_memory.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 #include <vk_mem_alloc.h>
@@ -31,132 +34,6 @@ std::string_view BufferTypeName(MemoryType type) {
         return "Sparse";
     default:
         return "Invalid";
-    }
-}
-
-[[nodiscard]] VkMemoryPropertyFlags MemoryUsagePreferredVmaFlags(MemoryType type) {
-    return type != MemoryType::DeviceLocal ? VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
-                                           : VkMemoryPropertyFlagBits{};
-}
-
-[[nodiscard]] VmaAllocationCreateFlags MemoryUsageVmaFlags(MemoryType type) {
-    switch (type) {
-    case MemoryType::HostUncached:
-    case MemoryType::Stream:
-        return VMA_ALLOCATION_CREATE_MAPPED_BIT |
-               VMA_ALLOCATION_CREATE_HOST_ACCESS_SEQUENTIAL_WRITE_BIT;
-    case MemoryType::HostCached:
-        return VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT;
-    case MemoryType::DeviceLocal:
-    default:
-        return {};
-    }
-}
-
-[[nodiscard]] VmaMemoryUsage MemoryUsageVma(MemoryType type) {
-    switch (type) {
-    case MemoryType::DeviceLocal:
-    case MemoryType::Stream:
-        return VMA_MEMORY_USAGE_AUTO_PREFER_DEVICE;
-    case MemoryType::HostUncached:
-    case MemoryType::HostCached:
-        return VMA_MEMORY_USAGE_AUTO_PREFER_HOST;
-    default:
-        return VMA_MEMORY_USAGE_UNKNOWN;
-    }
-}
-
-UniqueBuffer::UniqueBuffer(vk::Device device_, VmaAllocator allocator_)
-    : device{device_}, allocator{allocator_} {}
-
-UniqueBuffer::~UniqueBuffer() {
-    Destroy();
-}
-
-void UniqueBuffer::Destroy() {
-    if (allocation) {
-        vmaDestroyBuffer(allocator, buffer, allocation);
-    } else if (buffer) {
-        device.destroyBuffer(buffer);
-    }
-    buffer = VK_NULL_HANDLE;
-    allocation = VK_NULL_HANDLE;
-    bda_addr = 0;
-}
-
-void UniqueBuffer::Create(vk::BufferCreateInfo& buffer_ci, MemoryType mem_type,
-                          VmaAllocationInfo* out_alloc_info) {
-    const bool with_bda = bool(buffer_ci.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress);
-    if (mem_type != MemoryType::Sparse) {
-        const VmaAllocationCreateFlags bda_flag =
-            with_bda ? VMA_ALLOCATION_CREATE_DEDICATED_MEMORY_BIT : 0;
-        const VmaAllocationCreateInfo alloc_ci = {
-            .flags =
-                VMA_ALLOCATION_CREATE_WITHIN_BUDGET_BIT | bda_flag | MemoryUsageVmaFlags(mem_type),
-            .usage = MemoryUsageVma(mem_type),
-            .requiredFlags = 0,
-            .preferredFlags = MemoryUsagePreferredVmaFlags(mem_type),
-            .pool = VK_NULL_HANDLE,
-            .pUserData = nullptr,
-        };
-
-        const VkBufferCreateInfo buffer_ci_unsafe = static_cast<VkBufferCreateInfo>(buffer_ci);
-        VkBuffer unsafe_buffer{};
-        VkResult result = vmaCreateBuffer(allocator, &buffer_ci_unsafe, &alloc_ci, &unsafe_buffer,
-                                          &allocation, out_alloc_info);
-        ASSERT_MSG(result == VK_SUCCESS, "Failed allocating buffer with error {}",
-                   vk::to_string(vk::Result{result}));
-        buffer = vk::Buffer{unsafe_buffer};
-    } else {
-        buffer_ci.flags |=
-            vk::BufferCreateFlagBits::eSparseBinding | vk::BufferCreateFlagBits::eSparseResidency;
-        // Bound to exported guest memory chunks (BB_GUEST_IN_PLACE) as well as VRAM blocks.
-        const vk::ExternalMemoryBufferCreateInfo external{
-            .handleTypes = BbGuestMemory::HandleType(),
-        };
-        if (GuestInPlace()) {
-            buffer_ci.pNext = &external;
-            if (const auto [result, created] = device.createBuffer(buffer_ci);
-                result == vk::Result::eSuccess) {
-                buffer = created;
-                // bbport: VRAM blocks are bound into it too: the external memory type must not
-                // keep device-local memory out (a driver may restrict it).
-                const auto reqs = device.getBufferMemoryRequirements(created);
-                const VkPhysicalDeviceMemoryProperties* props = nullptr;
-                vmaGetMemoryProperties(allocator, &props);
-                bool vram = false;
-                for (u32 i = 0; i < props->memoryTypeCount; ++i) {
-                    vram |= (reqs.memoryTypeBits & (1u << i)) &&
-                            (props->memoryTypes[i].propertyFlags &
-                             VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT);
-                }
-                if (!vram) {
-                    std::printf("Guest memory: the arena for guest memory cannot take VRAM; the GPU "
-                                "uses copies in VRAM as before\n");
-                    device.destroyBuffer(created);
-                    buffer = vk::Buffer{};
-                    DisableGuestInPlace();
-                }
-            } else {
-                std::printf("Guest memory: the arena cannot take exported memory (%s); the GPU "
-                            "uses copies in VRAM as before\n",
-                            vk::to_string(result).c_str());
-                DisableGuestInPlace();
-            }
-            buffer_ci.pNext = nullptr;
-        }
-        if (!buffer) {
-            buffer = Vulkan::Check(device.createBuffer(buffer_ci));
-        }
-    }
-
-    if (with_bda) {
-        const vk::BufferDeviceAddressInfo bda_info = {
-            .buffer = buffer,
-        };
-        auto bda_result = device.getBufferAddress(bda_info);
-        ASSERT_MSG(bda_result != 0, "Failed to get buffer device address");
-        bda_addr = bda_result;
     }
 }
 
@@ -255,22 +132,37 @@ Buffer::Buffer(const Vulkan::Instance& instance, VAddr cpu_addr_, u64 size_bytes
                MemoryType mem_type_, std::string_view debug_name)
     : cpu_addr{cpu_addr_}, size_bytes{size_bytes_}, mem_type{mem_type_},
       buffer{instance.GetDevice(), instance.GetAllocator()} {
-
-    vk::BufferCreateInfo buffer_ci = {
-        .size = size_bytes,
-        .usage = AllFlags,
-        .sharingMode = vk::SharingMode::eExclusive,
-    };
-    // bbport: arenas are also read by the readback queue (BufferCache::DownloadMemory).
-    const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
-                                         instance.GetReadbackQueueFamilyIndex()};
-    if (mem_type == MemoryType::Sparse && instance.GetReadbackQueue()) {
-        buffer_ci.sharingMode = vk::SharingMode::eConcurrent;
-        buffer_ci.queueFamilyIndexCount = static_cast<u32>(families.size());
-        buffer_ci.pQueueFamilyIndices = families.data();
-    }
     VmaAllocationInfo alloc_info{};
-    buffer.Create(buffer_ci, mem_type, &alloc_info);
+    static const bool use_resource_desc = [] {
+        const char* value = std::getenv("BB_N4_BUFFER_DESC");
+        return value && value[0] == '1';
+    }();
+    if (use_resource_desc) {
+        using Backend::BufferUse;
+        constexpr auto uses = BufferUse::TransferSource | BufferUse::TransferDestination |
+                              BufferUse::Uniform | BufferUse::Storage | BufferUse::Vertex |
+                              BufferUse::Index | BufferUse::Indirect | BufferUse::DeviceAddress;
+        const Backend::BufferDesc desc{.size_bytes = size_bytes,
+                                       .uses = uses,
+                                       .memory = mem_type,
+                                       .concurrent_readback = mem_type == MemoryType::Sparse};
+        Vulkan::CreateBufferFromDesc(instance, buffer, desc, &alloc_info);
+    } else {
+        vk::BufferCreateInfo buffer_ci = {
+            .size = size_bytes,
+            .usage = AllFlags,
+            .sharingMode = vk::SharingMode::eExclusive,
+        };
+        // bbport: arenas are also read by the readback queue (BufferCache::DownloadMemory).
+        const std::array<u32, 2> families = {instance.GetGraphicsQueueFamilyIndex(),
+                                             instance.GetReadbackQueueFamilyIndex()};
+        if (mem_type == MemoryType::Sparse && instance.GetReadbackQueue()) {
+            buffer_ci.sharingMode = vk::SharingMode::eConcurrent;
+            buffer_ci.queueFamilyIndexCount = static_cast<u32>(families.size());
+            buffer_ci.pQueueFamilyIndices = families.data();
+        }
+        buffer.Create(buffer_ci, mem_type, &alloc_info);
+    }
 
     const auto device = instance.GetDevice();
     if (!debug_name.empty()) {

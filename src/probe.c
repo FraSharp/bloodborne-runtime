@@ -180,6 +180,17 @@ static void fault(int sig, siginfo_t *info, void *context) {
     else
         snprintf(line, sizeof(line), "Fault (signal %d) at RIP %p, address %p\n", sig, (void *)rip, info->si_addr);
     { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
+    const char *guest = runtime_thread_name();
+    char thread[32];
+    if (guest && *guest && strcmp(guest, "host") != 0) {
+        snprintf(thread, sizeof(thread), "%s", guest);
+    } else {
+        char host[16] = "";
+        pthread_getname_np(pthread_self(), host, sizeof(host));
+        snprintf(thread, sizeof(thread), "host:%s", *host ? host : (guest && *guest ? guest : "?"));
+    }
+    snprintf(line, sizeof(line), "  thread %s\n", thread);
+    { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
     if (bbcpu_describe_fault(context, line, sizeof(line))) {
         { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
         /* Guest call chain: return addresses into the image on the guest stack (translated code
@@ -199,9 +210,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
     /* Outside the image and any shared object (generated code, a freed mapping): the mapping
      * that holds RIP, and the thread. */
     if (rip - (uintptr_t)image >= 0x10000000 && !(dladdr((void *)rip, &where) && where.dli_fname)) {
-        char thread[32] = "?";
-        pthread_getname_np(pthread_self(), thread, sizeof(thread));
-        snprintf(line, sizeof(line), "  thread %s; mapping of RIP: ", thread);
+        snprintf(line, sizeof(line), "  mapping of RIP: ");
         { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
         if (bb_describe_mapping(rip, line, sizeof(line))) { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
         else { ssize_t written_=write(2, "none\n", 5); (void)written_; }

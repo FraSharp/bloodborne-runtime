@@ -13,6 +13,7 @@
 
 #include "common/assert.h"
 #include "common/types.h"
+#include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
@@ -66,14 +67,8 @@ bool WriteVerify();
 /// inverts it for an A/B while the game runs.
 bool ConstantsInPlace();
 
-/// Hints and requirements for the backing memory type of a commit
-enum class MemoryType : u8 {
-    DeviceLocal,  ///< Requests device local buffer.
-    HostUncached, ///< Requires a host visible memory type optimized for CPU to GPU uploads
-    HostCached,   ///< Requires a host visible memory type optimized for GPU to CPU readbacks
-    Stream,       ///< Requests device local host visible buffer, falling back host memory.
-    Sparse,       ///< Requires an unbacked sparse resident buffer.
-};
+/// Hints and requirements for the backing memory type of a commit.
+using MemoryType = Backend::MemoryClass;
 
 constexpr vk::BufferUsageFlags ReadFlags =
     vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eUniformBuffer |

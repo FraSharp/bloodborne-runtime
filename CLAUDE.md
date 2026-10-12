@@ -49,7 +49,10 @@ once, with their names and callers: the first thing to run on a "PM4 type 0" or 
 ## Native renderer
 
 `docs/NATIVE_RENDERER.md`: milestone R5, the engine's graphics on each platform's own API (steps
-N0–N6, N0 done). Multiplatform: shared core, Vulkan and Metal backends; nothing Metal-only.
+N0–N6, N0 and N1 done). Multiplatform: shared core, Vulkan and Metal backends; nothing Metal-only.
+N4's design is approved and Linux CI passes. The first buffer-resource slice is opt-in
+(`BB_N4_BUFFER_DESC=1`); uncapped and capped A/B game gates pass in Central Yharnam. Handle
+issuance, completion-based retirement and imported backing are next.
 
 ## Rendering bugs
 
@@ -58,11 +61,33 @@ Bisect bbport's optimizations first: `BB_TOGGLE_FILE` holds a mask of switches (
 The user watches and says what they see. Example: the cutscene flashing was bit 42
 (`WRITE_DATA` pipelined on the recording thread).
 
+If a game run hangs in an indirect dispatch, first retry with `BB_INDIRECT_GUARD=0`:
+Bloodborne-Android reported a hang after a few minutes with upstream's guard enabled on its
+device. This has not been observed here.
+
+The isolated new-save opening video faulted at the same null read (address `0xd2`) with both SRT
+walkers: 2/5 translated and 3/5 portable runs on 2026-10-12. One run each way stopped at
+`GPU [Debug] <Critical> vk_shader_hle.cpp:242 ExecuteCopyShaderHLE: Assertion Failed!`
+instead. The faulting thread was main or GXRenderThread; command-buffer
+probes in two runs each way saw those two users of the main buffer, no third movie-thread writer
+and no overlapping buffer memory. Wider and narrower command-buffer guards did not remove the
+fault, and the wider guard coincided with a stall. The portable walker is now the arm64 default
+because the failure reproduces with the translated walker; `BB_SRT_INTERP=0` selects the old
+one. The opening-video fault remains unresolved; a timing race is a hypothesis. A separate Central Yharnam baseline stopped at
+`SurfaceFormat: Unknown data_format=15 and num_format=4`; watch for recurrence alongside the
+earlier one-off `data_format=6 and num_format=1`. Do not record guest code or memory in docs or
+commits.
+
 ## Upstream merges
 
 bbport releases come as squashed commits; remote `upstream`
-(https://github.com/deadinside28/bloodborne_pc). Merge their tag (`git merge <tag>`), keep both
-sides in conflicts, then check what assumes Linux or native x86:
+(https://github.com/deadinside28/bloodborne_pc). Before the first N4 renderer code slice, its
+HEAD was checked on 2026-10-12 and still matched release 0.51. Once N4 code starts, merge
+non-renderer changes (runtime, patches, scripts, game settings and launcher) as before. Review
+changes in `renderer_vulkan/`, `buffer_cache/`, `texture_cache/` and `shader_recompiler/` for each
+release and port useful ones by hand into the shared core or Vulkan backend; record ported,
+skipped and deferred decisions in `docs/upstream/RENDERER_PORTS.md`. Check what assumes Linux or
+native x86:
 
 - no `MAP_FIXED_NOREPLACE`, `memfd_create`, `fallocate`, `gregs`/`REG_RIP` on macOS: use
   `bb_shared_memory`, `bb_shared_memory_zero`, `BB_UC_RIP`/`BB_UC_RSP`;
@@ -72,7 +97,8 @@ sides in conflicts, then check what assumes Linux or native x86:
 - libc++ needs complete types where GCC does not.
 
 Then build, run the game a few times (`tools/test_run.sh`), update `docs/CREDITS.md` ("merged up
-to") and `docs/upstream/README*.md`, and bump the submodule in bloodborne-mac. On macOS the
+to"), `docs/upstream/README*.md` and the renderer port log, and bump the submodule in
+bloodborne-mac. On macOS the
 "Auto" memory model picks the 0.3 one (non-AMD GPU).
 
 ## Working rules (all three repositories)
