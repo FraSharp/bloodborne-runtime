@@ -647,7 +647,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos,
                                         sel.runtime_infos, sdata, it.value());
 
-        if (!sel.graphics_key.fixed_quad_outer) {
+        // MoltenVK can reject a pipeline even when its shaders compiled. Never persist its key:
+        // preloading that key would reject it again and discard the entire shader cache.
+        if (!sel.graphics_key.fixed_quad_outer && it.value() && it.value()->Handle()) {
             RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         }
         ++num_new_pipelines;
@@ -669,7 +671,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
                                                       PendingPipeline& job) {
     const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(key);
-    if (!key.fixed_quad_outer) {
+    if (!key.fixed_quad_outer && job.pipeline && job.pipeline->Handle()) {
         RegisterPipelineData(key, pipeline_hash, job.sdata);
     }
     ++num_new_pipelines;
