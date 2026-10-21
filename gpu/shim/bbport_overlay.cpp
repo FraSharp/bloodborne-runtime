@@ -709,6 +709,8 @@ void GraphicsTab() {
         if (Choice(LT("graphics.upscaler"), names.data(), int(names.size()), &chosen,
                    s.upscaler == BbSettings::UpscalerTaa    ? T("upscaler.taa")
                    : s.upscaler == BbSettings::UpscalerDlss ? T("dlss.hint")
+                   : s.upscaler == BbSettings::UpscalerMetalFx
+                       ? LT("options.upscaler.metalfxHint")
                    : BbSettings::IsFsr4(s.upscaler)
                        ? T(s.upscaler == BbSettings::UpscalerFsr411 ? "fsr4.hint411" : "fsr4.hint")
                        : LT("graphics.upscalingHint"),
@@ -1136,6 +1138,7 @@ void FpsCounter() {
                            : s.upscaler == BbSettings::UpscalerFsr411 ? "FSR 4.1.1"
                            : s.upscaler == BbSettings::UpscalerTaa    ? "TAA"
                            : s.upscaler == BbSettings::UpscalerDlss   ? "DLSS"
+                           : s.upscaler == BbSettings::UpscalerMetalFx ? "MetalFX"
                                                                       : nullptr;
     const auto output = BbSettings::CurrentOutput();
     // What runs it: the GPU path and the CPU path.

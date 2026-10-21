@@ -99,17 +99,23 @@ Every pipeline the game uses builds in Metal (550: 510 graphics, 40 compute; 0 f
 frame path met 0 draws without a Metal pipeline and 0 unsupported commands. An earlier full play
 session completed; a later native 1080p play session crashed on a GX worker. A copied-save load
 aborted in Metal's fragment binding; `e0348c2` retains the shader bindings and pipeline entries
-through deferred recording. The same load then reached the level but encountered a guest worker
-fault, also seen with MoltenVK. Recording costs a little more per draw on the GPU thread
+through deferred recording. The same load then reached a worker fault on both Metal and MoltenVK:
+the live dynamic-shadows setting overrode a secondary context's disabled state. The 0.8.1 guard
+keeps that state. Recording costs a little more per draw on the GPU thread
 (5.3–5.6 against 5.1–5.2 µs). Characters drawn black above 3.5 million scene pixels
 happen on Metal too.
+
+MetalFX is available as an optional temporal upscaler on macOS with either renderer. It uses the
+Vulkan driver's Metal device through `VK_EXT_external_memory_metal`; the input and output copies
+are still needed until the renderer creates its images directly in Metal. On the M3 Pro's copied
+save at 1080p Balanced, it ran without a fault but did not beat FSR 3.1 on frame time
+([measurements](PERFORMANCE.md#what-helped)).
 
 ## Next
 
 1. Resources created in Metal (images, views, samplers, buffers, the guest-memory pool), each
    behind a switch and measured against MoltenVK; then MoltenVK can be left out on macOS. The
    fork did this in its "M2" (`3ee456f`).
-2. MetalFX as an upscaler option, from the fork, measured first.
-3. Shaders converted ahead of time (N2): MSL is still converted while the game runs.
-4. With the recompiled library: calls of hooked engine functions must go through the runtime
+2. Shaders converted ahead of time (N2): MSL is still converted while the game runs.
+3. With the recompiled library: calls of hooked engine functions must go through the runtime
    (recompiled functions call each other directly), before N3 can hook texture creation.

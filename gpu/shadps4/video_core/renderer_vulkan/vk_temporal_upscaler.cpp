@@ -11,6 +11,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 
 #include <vk_mem_alloc.h>
@@ -150,15 +151,14 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
 
 /// bbport: the menu reads the reason from another thread: keep each one alive (as FSR 4 does).
 void PublishMetalFxProblem(const char* problem) {
-    static std::array<std::string, 8> kept;
-    static u32 next = 0;
+    static std::deque<std::string> kept;
     auto& setting = BbSettings::Get().metalfx_problem;
     if (!problem) {
         setting = nullptr;
-    } else if (!setting.load() || kept[(next + kept.size() - 1) % kept.size()] != problem) {
-        kept[next] = problem;
-        setting = kept[next].c_str();
-        next = (next + 1) % kept.size();
+    } else {
+        // The menu may still be reading an older pointer: never reuse its storage.
+        if (kept.empty() || kept.back() != problem) kept.emplace_back(problem);
+        setting = kept.back().c_str();
     }
 }
 

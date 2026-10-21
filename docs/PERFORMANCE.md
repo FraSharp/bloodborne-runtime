@@ -51,6 +51,11 @@ largest single item, and the main target of the [native renderer](NATIVE_RENDERE
 | Copies recorded before a render pass instead of splitting it (`BB_HOIST_COPIES`) | ~1–2 ms |
 | Larger direct memory only for outputs above 1080p, sized from the scene | A 9 GB pool ran the clinic at 7 FPS on 18 GB |
 | The Metal renderer (`BB_METAL_FRAME=1`) | 65.5/61.7 against 58.0/58.1 FPS, p90 16–18 against 19–20 ms |
+
+MetalFX is an optional macOS upscaler. In one copied-save scene at 1080p Balanced on the Metal
+renderer, FSR 3.1 had a 21.3 ms median and 28.3 ms p90 frame time; a warm MetalFX run had
+23.9 ms median and 28.8 ms p90. The extra copies and submission gave no speed advantage on this
+route. Both upscalers rendered it correctly; image quality is a separate choice.
 | Frame rate through hooks instead of patches | No cost: 66.6–68.0 against 65.0–67.3 FPS |
 
 ## Measured without gain
