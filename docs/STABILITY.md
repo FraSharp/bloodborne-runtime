@@ -29,6 +29,10 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 - **Other native 1080p faults.** The repeatable GX worker fault was fixed above. A separate null
   guest virtual call was reported during an earlier Metal test but has not recurred. Its cause is
   unknown; a new occurrence needs its log and route.
+- **GXRenderThread null read in Cathedral Ward.** Reported on 0.8.0 with MoltenVK in
+  [app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3). Its signature
+  differs from the fixed GX worker fault. It has not been reproduced or confirmed fixed; a
+  nearby save and repeat steps are needed.
 - **Characters drawn black above about 3.5 million scene pixels** (1440p without an upscaler or
   with Native AA, 4K Quality). The boundary lies between 3.45 and 3.67 million pixels, with FSR
   on or off, at 1440p or 4K output, with more memory, and on the Metal renderer too. No cap of
