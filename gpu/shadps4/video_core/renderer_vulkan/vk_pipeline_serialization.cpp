@@ -17,7 +17,7 @@
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 20u; // bbport: UI edge stretch (vertex stage only) (aspect ratios); bounded motion-vector accesses; layer page-table pairs / guarded write-through stores (upstream 9)
+static constexpr u32 ShaderBinaryVersion = 21u; // rect/quad auxiliary tessellation locations deduplicated; UI edge stretch; bounded motion vectors; layer page-table pairs / guarded write-through stores
 static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
