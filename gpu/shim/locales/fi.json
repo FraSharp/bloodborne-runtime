@@ -165,5 +165,11 @@
   "launcher.options.effects.effect_dynamic_shadows": "Dynaamisten valojen varjot",
   "launcher.options.effects.effect_ssr": "Ruutuavaruuden heijastukset",
   "launcher.options.effects.effect_ssrHint": "Ei alkuperäisessä pelissä",
-  "launcher.options.effects.effect_bloom": "Bloom (hehku)"
+  "launcher.options.effects.effect_bloom": "Bloom (hehku)",
+  "launcher.options.upscaler.fsr3": "AMD FSR 3.1",
+  "launcher.options.upscaler.fsr3Hint": "Renderöi lähtöä pienemmällä ja rakentaa kuvan uudelleen",
+  "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
+  "launcher.options.upscaler.metalfxHint": "Applein ajallinen ylöskaalaus",
+  "launcher.options.upscaler.off": "Pois",
+  "launcher.options.upscaler.offHint": "Natiivitarkkuus"
 }

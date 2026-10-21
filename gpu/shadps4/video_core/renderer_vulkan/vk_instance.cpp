@@ -316,6 +316,10 @@ bool Instance::CreateDevice() {
     // bbport: the Metal objects behind Vulkan ones, to keep the imported memory resident
     // (bbport_metal_residency.h).
     metal_objects = add_extension("VK_EXT_metal_objects");
+    // bbport: MetalFX upscaler (vk_metalfx): buffer memory exported as MTLHeaps. Optional: a
+    // driver without it leaves MetalFX unsupported (the name macro lives in vulkan_metal.h,
+    // outside this file's platform defines).
+    external_memory_metal = add_extension("VK_EXT_external_memory_metal");
 #endif
     // Optional
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);

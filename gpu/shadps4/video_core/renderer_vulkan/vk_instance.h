@@ -109,6 +109,10 @@ public:
     bool IsMetalObjectsSupported() const {
         return metal_objects;
     }
+    /// bbport: VK_EXT_external_memory_metal is enabled (macOS; the MetalFX upscaler, vk_metalfx).
+    bool IsExternalMemoryMetalEnabled() const {
+        return external_memory_metal;
+    }
     /// bbport: buffers can be sparse (else the buffer cache uses the game's memory in place).
     bool IsSparseBufferSupported() const {
         return features.sparseBinding && features.sparseResidencyBuffer;
@@ -607,6 +611,7 @@ private:
     bool robust_buffer_access2{};
     bool external_memory_host{};
     bool metal_objects{};
+    bool external_memory_metal{}; // bbport: VK_EXT_external_memory_metal (MetalFX, macOS)
     bool null_descriptor{};
     bool fragment_shader_barycentric{};
     bool amd_shader_explicit_vertex_parameter{};

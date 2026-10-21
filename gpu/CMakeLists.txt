@@ -180,6 +180,13 @@ endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+    # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
+    # at run time, so nothing links against it; ARC is required by the ObjC objects.
+    enable_language(OBJCXX)
+    set_source_files_properties(shim/bbport_metalfx.mm PROPERTIES LANGUAGE OBJCXX
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(bbgpu PRIVATE shim/bbport_metalfx.mm)
+    target_link_libraries(bbgpu PUBLIC "-framework QuartzCore" "-framework Metal" "-framework Cocoa")
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)
 else()

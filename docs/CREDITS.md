@@ -73,6 +73,11 @@ Changes taken from other ports of bbport, with thanks:
   (GPL-2.0, commit `bf1e6cf`): carried that walker to bbport 0.51 with shader-cache serialization
   and host-architecture separation; also supplied delayed condition-variable retirement and
   pitch-sized NV12 frame invalidation. Only these runtime changes were taken.
+- [**bmy/bbport-mac**](https://github.com/bmy/bbport-mac/commit/0333d6004fd1499d6b4d029a3e6e5dd3c511f8ea)
+  (GPL-2.0-or-later, commit `0333d60`): the MetalFX temporal upscaler
+  (`video_core/renderer_vulkan/vk_metalfx.*`, `shim/bbport_metalfx.*`) — the
+  `VK_EXT_external_memory_metal` bridge to the host `MTLDevice` and the submission-thread
+  dispatch. Adapted to this tree (settings, menu, scheduler integration).
 
 ## Libraries
 

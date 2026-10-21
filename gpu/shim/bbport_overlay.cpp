@@ -688,13 +688,18 @@ void GraphicsTab() {
         // The upscalers this GPU offers (FSR 4, DLSS and XeSS need other GPUs).
         std::vector<int> ids;
         std::vector<const char*> names;
-        const char* all[] = {T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1.1", "TAA", "DLSS"};
+        const char* all[] = {T("upscaler.off"), "FSR 3.1", "FSR 4", "FSR 4.1.1", "TAA", "DLSS",
+                             LT("options.upscaler.metalfx")};
         static_assert(sizeof(all) / sizeof(all[0]) == BbSettings::UpscalerCount);
         for (int i = 0; i < BbSettings::UpscalerCount; ++i) {
             const bool supported = i == BbSettings::UpscalerFsr4     ? s.fsr4_supported.load()
                                    : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                                    : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
+                                   : i == BbSettings::UpscalerMetalFx ? s.metalfx_supported.load()
                                                                      : true;
+#ifndef __APPLE__
+            if (i == BbSettings::UpscalerMetalFx) continue; // macOS only
+#endif
             if (supported || i == s.upscaler) {
                 ids.push_back(i);
                 names.push_back(all[i]);
@@ -715,6 +720,14 @@ void GraphicsTab() {
             std::snprintf(line, sizeof(line), "DLSS: %s", problem);
             Note(line, true);
         }
+#ifdef __APPLE__
+        if (const char* problem = s.metalfx_problem.load();
+            problem && s.upscaler == BbSettings::UpscalerMetalFx) {
+            char line[192];
+            std::snprintf(line, sizeof(line), "MetalFX: %s", problem);
+            Note(line, true);
+        }
+#endif
         if (const char* problem = s.fsr4_problem.load()) {
             char line[192];
             std::snprintf(line, sizeof(line), T("fsr4.unavailable"), problem);
