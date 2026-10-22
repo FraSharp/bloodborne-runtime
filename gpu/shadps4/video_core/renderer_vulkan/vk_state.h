@@ -75,6 +75,23 @@ static_assert(u32(vk::ImageUsageFlagBits::eTransferSrc) == u32(Backend::ImageUse
                   u32(Backend::ImageUse::DepthStencilAttachment) &&
               u32(vk::ImageUsageFlagBits::eAttachmentFeedbackLoopEXT) ==
                   u32(Backend::ImageUse::AttachmentFeedbackLoop));
+static_assert(s32(vk::ImageViewType::e1D) == s32(Backend::ImageViewType::View1D) &&
+              s32(vk::ImageViewType::e2D) == s32(Backend::ImageViewType::View2D) &&
+              s32(vk::ImageViewType::e3D) == s32(Backend::ImageViewType::View3D) &&
+              s32(vk::ImageViewType::eCube) == s32(Backend::ImageViewType::Cube) &&
+              s32(vk::ImageViewType::e1DArray) == s32(Backend::ImageViewType::View1DArray) &&
+              s32(vk::ImageViewType::e2DArray) == s32(Backend::ImageViewType::View2DArray) &&
+              s32(vk::ImageViewType::eCubeArray) == s32(Backend::ImageViewType::CubeArray));
+static_assert(u32(vk::ImageAspectFlagBits::eColor) == u32(Backend::ImageAspect::Color) &&
+              u32(vk::ImageAspectFlagBits::eDepth) == u32(Backend::ImageAspect::Depth) &&
+              u32(vk::ImageAspectFlagBits::eStencil) == u32(Backend::ImageAspect::Stencil));
+static_assert(s32(vk::ComponentSwizzle::eIdentity) == s32(Backend::ComponentSwizzle::Identity) &&
+              s32(vk::ComponentSwizzle::eZero) == s32(Backend::ComponentSwizzle::Zero) &&
+              s32(vk::ComponentSwizzle::eOne) == s32(Backend::ComponentSwizzle::One) &&
+              s32(vk::ComponentSwizzle::eR) == s32(Backend::ComponentSwizzle::R) &&
+              s32(vk::ComponentSwizzle::eG) == s32(Backend::ComponentSwizzle::G) &&
+              s32(vk::ComponentSwizzle::eB) == s32(Backend::ComponentSwizzle::B) &&
+              s32(vk::ComponentSwizzle::eA) == s32(Backend::ComponentSwizzle::A));
 // Pipeline keys hold write masks; the serialized shader cache depends on their size.
 static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags));
 
@@ -126,6 +143,21 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
 }
 [[nodiscard]] constexpr Backend::ImageUse FromVk(vk::ImageUsageFlags v) noexcept {
     return static_cast<Backend::ImageUse>(static_cast<VkImageUsageFlags>(v));
+}
+[[nodiscard]] constexpr vk::ImageViewType ToVk(Backend::ImageViewType v) noexcept {
+    return static_cast<vk::ImageViewType>(v);
+}
+[[nodiscard]] constexpr vk::ImageAspectFlags ToVk(Backend::ImageAspect v) noexcept {
+    return vk::ImageAspectFlags(static_cast<VkImageAspectFlags>(v));
+}
+[[nodiscard]] constexpr Backend::ImageAspect FromVk(vk::ImageAspectFlags v) noexcept {
+    return static_cast<Backend::ImageAspect>(static_cast<VkImageAspectFlags>(v));
+}
+[[nodiscard]] constexpr vk::ComponentSwizzle ToVk(Backend::ComponentSwizzle v) noexcept {
+    return static_cast<vk::ComponentSwizzle>(v);
+}
+[[nodiscard]] constexpr vk::ComponentMapping ToVk(const Backend::ComponentMapping& m) noexcept {
+    return {ToVk(m.r), ToVk(m.g), ToVk(m.b), ToVk(m.a)};
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));

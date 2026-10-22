@@ -359,7 +359,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     VideoCore::ImageViewInfo view_info{};
     view_info.format = FromVk(GetFrameViewFormat(attribute.attrib.pixel_format));
     // Exclude alpha from output frame to avoid blending with UI.
-    view_info.mapping.a = vk::ComponentSwizzle::eOne;
+    view_info.mapping.a = VideoCore::Backend::ComponentSwizzle::One;
 
     vk::ImageView image_view{};
     vk::Extent2D image_size{};
@@ -390,7 +390,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         });
     } else {
         auto& image = texture_cache.GetImage(image_id);
-        image_view = *image.FindView(view_info).image_view;
+        image_view = image.FindView(view_info).Handle();
         image_size = vk::Extent2D{image.info.size.width, image.info.size.height};
         // bbport: BB_PRESENT_DUMP_TRIGGER for the game's own display buffer too.
         if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {

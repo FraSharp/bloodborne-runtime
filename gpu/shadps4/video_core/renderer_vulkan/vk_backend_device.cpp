@@ -284,6 +284,70 @@ u64 BackendDevice::NativeHandle(Backend::ImageHandle image) {
     return entry ? reinterpret_cast<u64>(static_cast<VkImage>(entry->image)) : 0;
 }
 
+Backend::ImageViewAllocation BackendDevice::CreateImageView(Backend::ImageHandle image,
+                                                            const Backend::ImageViewDesc& desc,
+                                                            std::string_view name) {
+    vk::Image native_image{};
+    {
+        std::scoped_lock lock{objects_mutex};
+        const UniqueImage* entry = images.Get(image);
+        ASSERT_MSG(entry, "Creating a view of a destroyed image");
+        native_image = entry->image;
+    }
+    vk::ImageViewUsageCreateInfo usage_ci{.usage = ToVk(desc.usage)};
+    vk::ImageViewMinLodCreateInfoEXT min_lod_ci{.minLod = desc.min_lod};
+    if (desc.min_lod != 0.0f && instance.IsImageViewMinLodSupported()) {
+        usage_ci.pNext = &min_lod_ci;
+    }
+    const vk::ImageViewCreateInfo image_view_ci = {
+        .pNext = &usage_ci,
+        .image = native_image,
+        .viewType = ToVk(desc.type),
+        .format = ToVk(desc.format),
+        .components = ToVk(desc.mapping),
+        .subresourceRange{
+            .aspectMask = ToVk(desc.aspect),
+            .baseMipLevel = desc.base_level,
+            .levelCount = desc.levels,
+            .baseArrayLayer = desc.base_layer,
+            .layerCount = desc.layers,
+        },
+    };
+    auto [view_result, view] = instance.GetDevice().createImageViewUnique(image_view_ci);
+    ASSERT_MSG(view_result == vk::Result::eSuccess, "Failed to create image view: {}",
+               vk::to_string(view_result));
+    SetObjectName(instance.GetDevice(), *view, name);
+    Backend::ImageViewAllocation result{
+        .native = reinterpret_cast<u64>(static_cast<VkImageView>(*view)),
+    };
+    std::scoped_lock lock{objects_mutex};
+    result.handle = views.Insert(std::move(view));
+    return result;
+}
+
+void BackendDevice::DestroyImageView(Backend::ImageViewHandle view) {
+    if (!view) {
+        return;
+    }
+    vk::UniqueImageView object;
+    {
+        std::scoped_lock lock{objects_mutex};
+        vk::UniqueImageView* entry = views.Get(view);
+        if (!entry) {
+            return;
+        }
+        object = std::move(*entry);
+        views.Erase(view);
+    }
+    DeferRelease([object = std::move(object)] {});
+}
+
+u64 BackendDevice::NativeHandle(Backend::ImageViewHandle view) {
+    std::scoped_lock lock{objects_mutex};
+    const vk::UniqueImageView* entry = views.Get(view);
+    return entry ? reinterpret_cast<u64>(static_cast<VkImageView>(**entry)) : 0;
+}
+
 Backend::SamplerHandle BackendDevice::CreateSampler(const Backend::SamplerDesc& desc) {
     const bool custom = desc.border_color == Backend::BorderColor::FloatCustom;
     const vk::SamplerCustomBorderColorCreateInfoEXT custom_color{

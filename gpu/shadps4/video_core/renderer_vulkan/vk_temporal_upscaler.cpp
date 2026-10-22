@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_game_hooks.h"
 #include "video_core/renderer_vulkan/vk_format.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -2256,7 +2257,7 @@ bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
             cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
         });
     }
-    view = Mirror(vk::Image(ui_image), ui_views, ToVk(info.format), info.mapping);
+    view = Mirror(vk::Image(ui_image), ui_views, ToVk(info.format), ToVk(info.mapping));
     layout = vk::ImageLayout::eGeneral;
     return true;
 }

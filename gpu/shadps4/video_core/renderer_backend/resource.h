@@ -115,6 +115,61 @@ struct ImageDesc {
     auto operator<=>(const ImageDesc&) const = default;
 };
 
+enum class ImageViewType : s32 {
+    View1D = 0,
+    View2D = 1,
+    View3D = 2,
+    Cube = 3,
+    View1DArray = 4,
+    View2DArray = 5,
+    CubeArray = 6,
+};
+
+enum class ImageAspect : u32 {
+    None = 0,
+    Color = 1u << 0,
+    Depth = 1u << 1,
+    Stencil = 1u << 2,
+};
+constexpr ImageAspect operator|(ImageAspect a, ImageAspect b) noexcept {
+    return static_cast<ImageAspect>(static_cast<u32>(a) | static_cast<u32>(b));
+}
+constexpr bool Has(ImageAspect aspects, ImageAspect aspect) noexcept {
+    return (static_cast<u32>(aspects) & static_cast<u32>(aspect)) != 0;
+}
+
+enum class ComponentSwizzle : s32 {
+    Identity = 0,
+    Zero = 1,
+    One = 2,
+    R = 3,
+    G = 4,
+    B = 5,
+    A = 6,
+};
+
+struct ComponentMapping {
+    ComponentSwizzle r{}, g{}, b{}, a{};
+
+    auto operator<=>(const ComponentMapping&) const = default;
+};
+
+struct ImageViewDesc {
+    ImageViewType type{ImageViewType::View2D};
+    Format format{Format::Undefined}; ///< already one the device supports
+    ImageAspect aspect{ImageAspect::Color};
+    u32 base_level{}, levels{1};
+    u32 base_layer{}, layers{1};
+    ComponentMapping mapping{};
+    ImageUse usage{ImageUse::None}; ///< the uses of the view, a subset of the image's
+    float min_lod{};                ///< 0: none
+};
+
+struct ImageViewAllocation {
+    ImageViewHandle handle;
+    u64 native{}; ///< Device::NativeHandle(handle)
+};
+
 /// An image the device created.
 struct ImageAllocation {
     ImageHandle handle;

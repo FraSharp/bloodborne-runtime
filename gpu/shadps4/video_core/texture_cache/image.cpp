@@ -143,7 +143,7 @@ ImageView& Image::FindView(const ImageViewInfo& view_info, bool ensure_guest_sam
         const auto view_id = backing->image_view_ids[backing->last_view];
         return (*slot_image_views)[view_id];
     }
-    const auto view_id = slot_image_views->insert(runtime->GetInstance(), view_info, *this);
+    const auto view_id = slot_image_views->insert(*device, view_info, *this);
     backing->image_view_infos.emplace_back(view_info);
     backing->image_view_ids.emplace_back(view_id);
     return (*slot_image_views)[view_id];

@@ -62,6 +62,10 @@ public:
     [[nodiscard]] virtual ImageAllocation CreateImage(const ImageDesc& desc,
                                                       std::string_view name) = 0;
     virtual void DestroyImage(ImageHandle image) = 0;
+    [[nodiscard]] virtual ImageViewAllocation CreateImageView(ImageHandle image,
+                                                              const ImageViewDesc& desc,
+                                                              std::string_view name) = 0;
+    virtual void DestroyImageView(ImageViewHandle view) = 0;
 
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
@@ -72,6 +76,7 @@ public:
     [[nodiscard]] virtual u64 NativeHandle(SamplerHandle sampler) = 0;
     [[nodiscard]] virtual u64 NativeHandle(BufferHandle buffer) = 0;
     [[nodiscard]] virtual u64 NativeHandle(ImageHandle image) = 0;
+    [[nodiscard]] virtual u64 NativeHandle(ImageViewHandle view) = 0;
 };
 
 } // namespace VideoCore::Backend

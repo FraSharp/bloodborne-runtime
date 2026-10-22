@@ -64,6 +64,11 @@ public:
         const VideoCore::Backend::ImageDesc& desc, std::string_view name) override;
     void DestroyImage(VideoCore::Backend::ImageHandle image) override;
     [[nodiscard]] u64 NativeHandle(VideoCore::Backend::ImageHandle image) override;
+    [[nodiscard]] VideoCore::Backend::ImageViewAllocation CreateImageView(
+        VideoCore::Backend::ImageHandle image, const VideoCore::Backend::ImageViewDesc& desc,
+        std::string_view name) override;
+    void DestroyImageView(VideoCore::Backend::ImageViewHandle view) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::ImageViewHandle view) override;
 
     /// The create info the backend builds for `desc` (for Vulkan code that makes images like it).
     [[nodiscard]] vk::ImageCreateInfo ImageCreateInfo(const VideoCore::Backend::ImageDesc& desc) const;
@@ -96,6 +101,7 @@ private:
     std::mutex objects_mutex;
     VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageTag, UniqueImage> images;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
 };
 

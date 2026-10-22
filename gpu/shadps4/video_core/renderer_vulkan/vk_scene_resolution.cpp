@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "video_core/renderer_vulkan/vk_format.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -426,7 +427,7 @@ vk::ImageView SceneTargets::View(Entry& e, const VideoCore::Image& original,
     const auto format = original.info.props.is_depth ? ToVk(original.backing->desc.format) : ToVk(info.format);
     auto view = Check(instance.GetDevice().createImageViewUnique({
         .image = e.image, .viewType = vk::ImageViewType::e2D, .format = format,
-        .components = info.mapping, .subresourceRange = {aspect,0,1,0,1},
+        .components = ToVk(info.mapping), .subresourceRange = {aspect,0,1,0,1},
     }));
     const auto result = *view;
     e.views.emplace_back(info, std::move(view));

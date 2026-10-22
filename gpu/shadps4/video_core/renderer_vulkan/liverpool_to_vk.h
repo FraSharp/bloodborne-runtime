@@ -51,9 +51,9 @@ Backend::MipmapMode MipFilter(AmdGpu::MipFilter filter);
 
 Backend::BorderColor BorderColor(AmdGpu::BorderColor color);
 
-vk::ComponentSwizzle ComponentSwizzle(AmdGpu::CompSwizzle comp_swizzle);
+Backend::ComponentSwizzle ComponentSwizzle(AmdGpu::CompSwizzle comp_swizzle);
 
-vk::ComponentMapping ComponentMapping(AmdGpu::CompMapping comp_mapping);
+Backend::ComponentMapping ComponentMapping(AmdGpu::CompMapping comp_mapping);
 
 struct SurfaceFormatInfo {
     AmdGpu::DataFormat data_format;

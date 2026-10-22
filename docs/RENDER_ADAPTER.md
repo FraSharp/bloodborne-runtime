@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers,
-buffers and images done; views next). The decisions are at the end.
+**State:** approved on 2026-10-22. A0, A1 and A2 are done; A3 (commands and
+synchronization) is next. The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -137,7 +137,7 @@ Metal backend draws everything; then the interception layer is removed.
 |---|---|---|
 | A0 ✓ | Adapter headers; a Vulkan backend that wraps today's objects; `Device` owns instance, queue and VMA | No behavior change; FPS and p90 unchanged in alternating runs |
 | A1 ✓ | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
-| A2 | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
+| A2 ✓ | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
 | A3 | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
 | A4 | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
 | A5 | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
@@ -196,6 +196,13 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   aspect, usage and format-feature fields the barriers use stay until A3. Validation was clean;
   image memory and frame time were unchanged (Metal, alternating with the previous commit:
   34.6 and 36.0 FPS against 33.8 and 37.0).
+- **A2, views:** `ImageViewDesc` (view type, format, aspect, levels, layers, component mapping,
+  usage, minimum LOD) and the view vocabulary (view types, aspects, swizzles),
+  `Device::CreateImageView` and deferred `DestroyImageView`. `ImageViewInfo::mapping` is the
+  adapter's; `ImageView::Handle()` gives Vulkan code the native view. Validation was clean; in
+  four alternating Metal pairs the views build averaged 35.0 FPS against 35.8 (one run slowed
+  late, with the whole machine's per-draw time up; it did not recur), and the GPU thread's
+  recording was 4.3–4.4 µs per draw against 4.2.
 
 ## Decisions
 
