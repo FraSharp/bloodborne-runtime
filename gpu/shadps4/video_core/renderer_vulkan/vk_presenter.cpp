@@ -374,6 +374,13 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         }));
         draw_scheduler.DeferOperation([device, image_view] { device.destroyImageView(image_view); });
         image_size = vk::Extent2D{display.width, display.height};
+        // bbport: BB_PRESENT_DUMP_TRIGGER, in the format the frame is shown in (the view's): the
+        // display image is created in the render target's format, and A8R8G8B8 frames read it as
+        // BGRA. With the image's own format, red and blue came out swapped.
+        if (auto& upscaler = rasterizer->GetUpscaler(); upscaler.PresentDumpDue()) {
+            upscaler.DumpPresented(display.image, display.width, display.height,
+                                   ToVk(view_info.format));
+        }
         draw_scheduler.Record([image = display.image](vk::CommandBuffer cmdbuf) {
             const vk::ImageMemoryBarrier2 to_read{
                 .srcStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,

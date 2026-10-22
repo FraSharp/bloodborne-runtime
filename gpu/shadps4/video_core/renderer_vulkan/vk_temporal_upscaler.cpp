@@ -2272,9 +2272,6 @@ bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
         return false;
     }
     display = {vk::Image(it->second.image), it->second.format, it->second.width, it->second.height};
-    if (PresentDumpDue()) {
-        DumpPresented(display.image, display.width, display.height, display.format);
-    }
     return true;
 }
 
