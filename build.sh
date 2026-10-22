@@ -150,8 +150,9 @@ echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 "$CC" "${arch[@]}" -std=c11 -O2 -Wall -Wextra -Werror "${includes[@]}" tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
 if [[ ${1:-} == --test ]]; then
-    ninja -C "$gpudir" image-upload-hash-test slot-vector-test fixed-quad-tessellation-test avplayer-clock-test avplayer-queue-test >/dev/null
+    ninja -C "$gpudir" image-upload-hash-test slot-vector-test fixed-quad-tessellation-test avplayer-clock-test avplayer-queue-test trophy-queue-test >/dev/null
     "$gpudir/image-upload-hash-test"
+    "$gpudir/trophy-queue-test"
     "$gpudir/slot-vector-test"
     "$gpudir/avplayer-queue-test"
     "$gpudir/avplayer-clock-test"

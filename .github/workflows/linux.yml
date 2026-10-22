@@ -24,9 +24,10 @@ jobs:
           nix_path: nixpkgs=channel:nixos-unstable
       - name: Build
         run: nix-shell shell.nix --run 'bash build.sh'
-      - name: Test resource storage and upload baselines
+      - name: Test resource storage, upload baselines and trophy notices
         run: |
           nix-shell shell.nix --run 'set -e
-          ninja -C out/gpu slot-vector-test image-upload-hash-test
+          ninja -C out/gpu slot-vector-test image-upload-hash-test trophy-queue-test
           out/gpu/slot-vector-test
-          out/gpu/image-upload-hash-test'
+          out/gpu/image-upload-hash-test
+          out/gpu/trophy-queue-test'

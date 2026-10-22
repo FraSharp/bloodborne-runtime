@@ -9,7 +9,6 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
-#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -19,6 +18,7 @@
 #include <SDL3/SDL.h>
 #include "bbport_settings.h"
 #include "bbport_text.h"
+#include "bbport_trophy_queue.h"
 #ifdef BB_METAL_BACKEND
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
@@ -95,17 +95,8 @@ struct TrophyText {
 };
 #include "bbport_trophy_data.inc"
 
-struct TrophyNotice {
-    int id;
-    std::chrono::steady_clock::time_point at;
-    bool preview;
-};
-std::mutex trophy_mutex;
-std::deque<TrophyNotice> trophy_queue;
-std::atomic<bool> trophy_pending{false};
-TrophyNotice trophy_active{-1, {}, false}; // present thread only
-std::chrono::steady_clock::time_point trophy_started{};
-std::chrono::steady_clock::time_point trophy_until{}, trophy_next{};
+BbTrophyQueue::Queue trophy_queue;
+float fps_top_right_bottom = 0.0f; ///< present thread: the FPS counter's bottom edge, when top right
 
 const TrophyText* TrophyTextFor(int id, const char* language) {
     const TrophyText* english = nullptr;
@@ -115,6 +106,12 @@ const TrophyText* TrophyTextFor(int id, const char* language) {
         if (std::strcmp(row.language, "en") == 0) english = &row;
     }
     return english;
+}
+
+void QueueTrophy(int id, bool preview) {
+    const TrophyText* text = TrophyTextFor(id, "en");
+    trophy_queue.Push({.id = id, .at = BbTrophyQueue::Clock::now(), .preview = preview,
+                       .platinum = text && std::strcmp(text->grade, "platinum") == 0});
 }
 
 // The launcher's design tokens (bloodborne-launcher src/index.css): the menu looks like the app.
@@ -1137,6 +1134,9 @@ void FpsCounter() {
     ImGui::Begin("##fps", nullptr,
                  ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize | ImGuiWindowFlags_NoInputs |
                      ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    if (position == BbSettings::FpsTopRight) {
+        fps_top_right_bottom = ImGui::GetWindowPos().y + ImGui::GetWindowSize().y;
+    }
     const float fps = frame_ms_avg > 0.0f ? 1000.0f / frame_ms_avg : 0.0f;
     const ImVec4 health = fps >= 55.0f ? Theme::Foreground : fps >= 30.0f ? Theme::Warning : Theme::PrimaryHover;
     // The number right-aligned in a three-digit slot: the label after it stays in place.
@@ -1499,40 +1499,26 @@ void ApplyTheme() {
 }
 
 void TrophyToast(std::chrono::steady_clock::time_point now) {
-    if (trophy_active.id >= 0 && now >= trophy_until) {
-        trophy_active.id = -1;
-        trophy_next = now + std::chrono::seconds(1);
-    }
-    if (trophy_active.id < 0 && now >= trophy_next) {
-        std::scoped_lock lock{trophy_mutex};
-        while (!trophy_queue.empty() && now - trophy_queue.front().at > std::chrono::seconds(30))
-            trophy_queue.pop_front();
-        if (!trophy_queue.empty()) {
-            trophy_active = trophy_queue.front();
-            trophy_queue.pop_front();
-            trophy_started = now;
-            trophy_until = now + std::chrono::seconds(trophy_active.id == 0 ? 7 : 5);
-        }
-        trophy_pending = trophy_active.id >= 0 || !trophy_queue.empty();
-    }
-    if (trophy_active.id < 0) return;
+    const BbTrophyQueue::Notice* notice = trophy_queue.Update(now);
+    if (!notice) return;
 
-    const TrophyText* text = TrophyTextFor(trophy_active.id, BbText::Language());
-    const TrophyText* english = TrophyTextFor(trophy_active.id, "en");
+    const TrophyText* text = TrophyTextFor(notice->id, BbText::Language());
+    const TrophyText* english = TrophyTextFor(notice->id, "en");
     if (!text || !english) return;
     const char* description = text->description[0] ? text->description : english->description;
     const ImVec4 metal = std::strcmp(text->grade, "platinum") == 0 ? Theme::Hex(0xcfdee4)
                          : std::strcmp(text->grade, "gold") == 0 ? Theme::Hex(0xe8c976)
                          : std::strcmp(text->grade, "silver") == 0 ? Theme::Hex(0xd7dbdd)
                          : Theme::Hex(0xce9e78);
-    const float elapsed = std::chrono::duration<float>(now - trophy_started).count();
-    const float left = std::chrono::duration<float>(trophy_until - now).count();
+    const float elapsed = std::chrono::duration<float>(now - trophy_queue.Started()).count();
+    const float left = std::chrono::duration<float>(trophy_queue.Until() - now).count();
     const float alpha = std::clamp(std::min(elapsed / 0.3f, left / 0.3f), 0.0f, 1.0f);
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
     const float width = std::min(S(420), viewport->WorkSize.x - S(24));
-    const bool fps_top_right = BbSettings::Get().show_fps && BbSettings::Get().fps_position == BbSettings::FpsTopRight && !menu_open;
+    // Below the FPS counter when it is in the same corner (its height depends on its size).
     ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - S(14),
-                                   viewport->WorkPos.y + S(fps_top_right ? 115 : 14)),
+                                   fps_top_right_bottom > 0.0f ? fps_top_right_bottom + S(10)
+                                                               : viewport->WorkPos.y + S(14)),
                             ImGuiCond_Always, ImVec2(1, 0));
     ImGui::SetNextWindowSize(ImVec2(width, 0));
     ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
@@ -1564,7 +1550,7 @@ void TrophyToast(std::chrono::steady_clock::time_point now) {
     ImGui::SameLine();
     ImGui::BeginGroup();
     ImGui::PushStyleColor(ImGuiCol_Text, metal);
-    ImGui::TextUnformatted(T(trophy_active.preview ? "trophies.preview" : "trophies.earned"));
+    ImGui::TextUnformatted(T(notice->preview ? "trophies.preview" : "trophies.earned"));
     ImGui::PopStyleColor();
     ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.1f);
     ImGui::TextWrapped("%s", text->name);
@@ -1590,11 +1576,7 @@ void TrophyUnlocked(const char* title, int id) {
     if (!title || std::strcmp(title, "CUSA03173") || id < 0 || id >= 40) return;
     const char* off = std::getenv("BB_TROPHY_OVERLAY");
     if (off && std::strcmp(off, "0") == 0) return;
-    std::scoped_lock lock{trophy_mutex};
-    if (trophy_queue.size() < 16) {
-        trophy_queue.push_back({id, std::chrono::steady_clock::now(), false});
-        trophy_pending = true;
-    }
+    QueueTrophy(id, false);
 }
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
@@ -1716,10 +1698,8 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     if (const char* preview = std::getenv("BB_TROPHY_OVERLAY_PREVIEW");
         preview && std::strcmp(preview, "1") == 0 &&
         (!notices_off || std::strcmp(notices_off, "0") != 0)) {
-        std::scoped_lock notice_lock{trophy_mutex};
         for (int id : {21, 7, 1, 0, 35})
-            trophy_queue.push_back({id, std::chrono::steady_clock::now(), true});
-        trophy_pending = true;
+            QueueTrophy(id, true);
     }
 #ifdef __APPLE__
     std::printf("Overlay: menu ready (F1 or L3+R3)\n");
@@ -1874,7 +1854,7 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || trophy_pending);
+    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending());
 }
 
 bool MenuOpen() {
@@ -1929,6 +1909,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (menu_open) {
         Menu();
     }
+    fps_top_right_bottom = 0.0f;
     if (BbSettings::Get().show_fps && !menu_open) {
         FpsCounter();
     }

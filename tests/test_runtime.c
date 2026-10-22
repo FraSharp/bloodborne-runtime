@@ -14,6 +14,14 @@ void runtime_restart(void) { abort(); }
 #include <time.h>
 #include <unistd.h>
 #include <sys/stat.h>
+#include "gpu/bbgpu.h"
+
+/* The game's notice queue (libbbgpu) is replaced here to record which unlocks reach it. */
+static int notified[64], notified_count;
+void bbgpu_trophy_notification(const char *title,int id) {
+    (void)title;
+    if (notified_count<64) notified[notified_count++]=id;
+}
 
 typedef int (ABI *Register)(GuestCallback);
 typedef int (ABI *RegisterCxa)(void (ABI *)(void *), void *, void *);
@@ -469,11 +477,14 @@ static void trophies(void) {
     assert(unlink(path)==0 && symlink("/dev/null",path)==0);
     assert(unlock(1,1,11,&platinum)==0); /* Must not follow an event-file link. */
     assert(unlink(path)==0);
+    /* Only the first, eligible unlock reaches the notices: not repeats or edited saves. */
+    assert(notified_count==1 && notified[0]==7);
     runtime_trophy_configure("CUSA03173");
     for (int trophy=1;trophy<=32;++trophy) assert(unlock(1,1,trophy,&platinum)==0 && platinum==-1);
     assert(unlock(1,1,33,&platinum)==0 && platinum==0);
     assert(stat(path,&before)==0);
     assert(unlock(1,1,33,&platinum)==0 && platinum==-1 && stat(path,&after)==0 && before.st_size==after.st_size);
+    assert(notified_count==35 && notified[33]==33 && notified[34]==0); /* platinum last */
     assert(unlink(path)==0);
     runtime_trophy_configure("SYNTH0001");
     f=fopen(path,"w"); assert(f); fputs("v1 123 SYNTH0001 12",f); assert(fclose(f)==0);
@@ -484,7 +495,7 @@ static void trophies(void) {
     const char *folders[]={"temp0","download0","data"};
     for (int i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,folders[i]); assert(rmdir(path)==0); }
     assert(rmdir(root)==0); runtime_file_configure(previous,previous);
-    puts("PASS: local trophy events, IDs, edited-save suppression, env fallback and symlink refusal");
+    puts("PASS: local trophy events, IDs, edited-save suppression, env fallback, symlink refusal and notices");
 }
 
 int main(int argc,char **argv) {

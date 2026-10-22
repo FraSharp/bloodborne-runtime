@@ -298,6 +298,10 @@ set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
 target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
+add_executable(trophy-queue-test EXCLUDE_FROM_ALL ../tests/test_trophy_queue.cpp)
+target_include_directories(trophy-queue-test PRIVATE shim)
+target_compile_options(trophy-queue-test PRIVATE -UNDEBUG)
+
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)
