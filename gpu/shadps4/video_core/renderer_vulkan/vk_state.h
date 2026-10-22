@@ -24,6 +24,10 @@ namespace Vulkan {
 #define BB_BACKEND_STATE_CHECK_ONE_PrimitiveTopology(name, value) BB_BACKEND_STATE_CHECK_ONE(PrimitiveTopology, name, value)
 #define BB_BACKEND_STATE_CHECK_ONE_PolygonMode(name, value) BB_BACKEND_STATE_CHECK_ONE(PolygonMode, name, value)
 #define BB_BACKEND_STATE_CHECK_ONE_LogicOp(name, value) BB_BACKEND_STATE_CHECK_ONE(LogicOp, name, value)
+#define BB_BACKEND_STATE_CHECK_ONE_Filter(name, value) BB_BACKEND_STATE_CHECK_ONE(Filter, name, value)
+#define BB_BACKEND_STATE_CHECK_ONE_SamplerMipmapMode(name, value) BB_BACKEND_STATE_CHECK_ONE(SamplerMipmapMode, name, value)
+#define BB_BACKEND_STATE_CHECK_ONE_SamplerAddressMode(name, value) BB_BACKEND_STATE_CHECK_ONE(SamplerAddressMode, name, value)
+#define BB_BACKEND_STATE_CHECK_ONE_BorderColor(name, value) BB_BACKEND_STATE_CHECK_ONE(BorderColor, name, value)
 BB_BACKEND_STATE_CHECK(BlendFactor, BB_BACKEND_BLEND_FACTORS)
 BB_BACKEND_STATE_CHECK(BlendOp, BB_BACKEND_BLEND_OPS)
 BB_BACKEND_STATE_CHECK(CompareOp, BB_BACKEND_COMPARE_OPS)
@@ -33,6 +37,12 @@ BB_BACKEND_STATE_CHECK(FrontFace, BB_BACKEND_FRONT_FACES)
 BB_BACKEND_STATE_CHECK(PrimitiveTopology, BB_BACKEND_PRIMITIVE_TOPOLOGIES)
 BB_BACKEND_STATE_CHECK(PolygonMode, BB_BACKEND_POLYGON_MODES)
 BB_BACKEND_STATE_CHECK(LogicOp, BB_BACKEND_LOGIC_OPS)
+BB_BACKEND_STATE_CHECK(Filter, BB_BACKEND_FILTERS)
+BB_BACKEND_STATE_CHECK(SamplerMipmapMode, BB_BACKEND_MIPMAP_MODES)
+BB_BACKEND_STATE_CHECK(SamplerAddressMode, BB_BACKEND_ADDRESS_MODES)
+BB_BACKEND_STATE_CHECK(BorderColor, BB_BACKEND_BORDER_COLORS)
+static_assert(static_cast<s32>(vk::BorderColor::eFloatCustomEXT) ==
+              static_cast<s32>(Backend::BorderColor::FloatCustom));
 #undef BB_BACKEND_STATE_CHECK_ONE_BlendFactor
 #undef BB_BACKEND_STATE_CHECK_ONE_BlendOp
 #undef BB_BACKEND_STATE_CHECK_ONE_CompareOp
@@ -42,6 +52,10 @@ BB_BACKEND_STATE_CHECK(LogicOp, BB_BACKEND_LOGIC_OPS)
 #undef BB_BACKEND_STATE_CHECK_ONE_PrimitiveTopology
 #undef BB_BACKEND_STATE_CHECK_ONE_PolygonMode
 #undef BB_BACKEND_STATE_CHECK_ONE_LogicOp
+#undef BB_BACKEND_STATE_CHECK_ONE_Filter
+#undef BB_BACKEND_STATE_CHECK_ONE_SamplerMipmapMode
+#undef BB_BACKEND_STATE_CHECK_ONE_SamplerAddressMode
+#undef BB_BACKEND_STATE_CHECK_ONE_BorderColor
 #undef BB_BACKEND_STATE_CHECK_ONE
 #undef BB_BACKEND_STATE_CHECK
 static_assert(static_cast<u32>(vk::ColorComponentFlagBits::eR) == u32(Backend::ColorWriteMask::R) &&
@@ -78,6 +92,18 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
 }
 [[nodiscard]] constexpr vk::LogicOp ToVk(Backend::LogicOp v) noexcept {
     return static_cast<vk::LogicOp>(v);
+}
+[[nodiscard]] constexpr vk::Filter ToVk(Backend::Filter v) noexcept {
+    return static_cast<vk::Filter>(v);
+}
+[[nodiscard]] constexpr vk::SamplerMipmapMode ToVk(Backend::MipmapMode v) noexcept {
+    return static_cast<vk::SamplerMipmapMode>(v);
+}
+[[nodiscard]] constexpr vk::SamplerAddressMode ToVk(Backend::AddressMode v) noexcept {
+    return static_cast<vk::SamplerAddressMode>(v);
+}
+[[nodiscard]] constexpr vk::BorderColor ToVk(Backend::BorderColor v) noexcept {
+    return static_cast<vk::BorderColor>(v);
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));

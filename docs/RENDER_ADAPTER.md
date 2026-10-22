@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 and A1 are done; A2 (resources through the adapter) is
-next. The decisions are at the end.
+**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers done;
+buffers, images and views next). The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -174,6 +174,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   blend rules (`AttachmentBlend`) and the PS4-state conversions use it. Same warm caches and
   frame times. Sampler and view settings, usages, aspects and layouts move with A2, where
   sampler, view and image creation go through the adapter.
+- **A2, samplers:** `SamplerDesc` and the sampler vocabulary (filters, mipmap modes, address
+  modes, border colors), `Device::CreateSampler`/`DestroySampler` (deferred) and
+  `NativeHandle`. The texture cache builds each description from the S# with the device's
+  capabilities and keeps the native handle, so binding needs no lookup; the Vulkan backend
+  keeps the samplers in a handle table. Metal API validation was clean on MoltenVK and Metal;
+  28.9 and 34.3 FPS in plain runs.
 
 ## Decisions
 

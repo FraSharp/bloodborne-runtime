@@ -158,6 +158,11 @@ Backend::Capabilities QueryResourceCapabilities(const Instance &instance) {
       .imported_host_memory = instance.IsHostMemoryImportSupported(),
       .exported_guest_memory = instance.IsGuestMemoryExportSupported(),
       .buffer_device_address = instance.IsBufferDeviceAddressSupported(),
+      .custom_border_color = instance.IsCustomBorderColorSupported(),
+      .max_sampler_anisotropy = instance.IsAnisotropicFilteringSupported()
+                                    ? instance.MaxSamplerAnisotropy()
+                                    : 1.0f,
+      .max_sampler_lod_bias = instance.MaxSamplerLodBias(),
   };
 }
 

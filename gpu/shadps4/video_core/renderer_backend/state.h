@@ -104,6 +104,29 @@ namespace VideoCore::Backend {
     X(Nand, 14)                                                                                    \
     X(Set, 15)
 
+#define BB_BACKEND_FILTERS(X) \
+    X(Nearest, 0) \
+    X(Linear, 1)
+
+#define BB_BACKEND_MIPMAP_MODES(X) \
+    X(Nearest, 0) \
+    X(Linear, 1)
+
+#define BB_BACKEND_ADDRESS_MODES(X) \
+    X(Repeat, 0) \
+    X(MirroredRepeat, 1) \
+    X(ClampToEdge, 2) \
+    X(ClampToBorder, 3) \
+    X(MirrorClampToEdge, 4)
+
+#define BB_BACKEND_BORDER_COLORS(X) \
+    X(FloatTransparentBlack, 0) \
+    X(IntTransparentBlack, 1) \
+    X(FloatOpaqueBlack, 2) \
+    X(IntOpaqueBlack, 3) \
+    X(FloatOpaqueWhite, 4) \
+    X(IntOpaqueWhite, 5)
+
 #define BB_BACKEND_ENUMERATOR(name, value) name = value,
 enum class BlendFactor : s32 { BB_BACKEND_BLEND_FACTORS(BB_BACKEND_ENUMERATOR) };
 enum class BlendOp : s32 { BB_BACKEND_BLEND_OPS(BB_BACKEND_ENUMERATOR) };
@@ -114,6 +137,11 @@ enum class FrontFace : s32 { BB_BACKEND_FRONT_FACES(BB_BACKEND_ENUMERATOR) };
 enum class PrimitiveTopology : s32 { BB_BACKEND_PRIMITIVE_TOPOLOGIES(BB_BACKEND_ENUMERATOR) };
 enum class PolygonMode : s32 { BB_BACKEND_POLYGON_MODES(BB_BACKEND_ENUMERATOR) };
 enum class LogicOp : s32 { BB_BACKEND_LOGIC_OPS(BB_BACKEND_ENUMERATOR) };
+enum class Filter : s32 { BB_BACKEND_FILTERS(BB_BACKEND_ENUMERATOR) };
+enum class MipmapMode : s32 { BB_BACKEND_MIPMAP_MODES(BB_BACKEND_ENUMERATOR) };
+enum class AddressMode : s32 { BB_BACKEND_ADDRESS_MODES(BB_BACKEND_ENUMERATOR) };
+/// FloatCustom takes SamplerDesc::border_color_value (Vulkan's VK_EXT_custom_border_color).
+enum class BorderColor : s32 { BB_BACKEND_BORDER_COLORS(BB_BACKEND_ENUMERATOR) FloatCustom = 1000287003 };
 #undef BB_BACKEND_ENUMERATOR
 
 /// Which color components an attachment writes (bits as Vulkan's).

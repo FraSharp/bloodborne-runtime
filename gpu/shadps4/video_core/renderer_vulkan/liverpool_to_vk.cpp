@@ -308,63 +308,63 @@ Backend::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op) {
 }
 
 // https://github.com/chaotic-cx/mesa-mirror/blob/0954afff5/src/amd/vulkan/radv_sampler.c#L21
-vk::SamplerAddressMode ClampMode(AmdGpu::ClampMode mode) {
+Backend::AddressMode ClampMode(AmdGpu::ClampMode mode) {
     switch (mode) {
     case AmdGpu::ClampMode::Wrap:
-        return vk::SamplerAddressMode::eRepeat;
+        return Backend::AddressMode::Repeat;
     case AmdGpu::ClampMode::Mirror:
-        return vk::SamplerAddressMode::eMirroredRepeat;
+        return Backend::AddressMode::MirroredRepeat;
     case AmdGpu::ClampMode::ClampLastTexel:
-        return vk::SamplerAddressMode::eClampToEdge;
+        return Backend::AddressMode::ClampToEdge;
     case AmdGpu::ClampMode::MirrorOnceHalfBorder:
     case AmdGpu::ClampMode::MirrorOnceBorder:
         LOG_WARNING(Render_Vulkan, "Unimplemented clamp mode {}, using closest equivalent.",
                     static_cast<u32>(mode));
         [[fallthrough]];
     case AmdGpu::ClampMode::MirrorOnceLastTexel:
-        return vk::SamplerAddressMode::eMirrorClampToEdge;
+        return Backend::AddressMode::MirrorClampToEdge;
     case AmdGpu::ClampMode::ClampHalfBorder:
         LOG_WARNING(Render_Vulkan, "Unimplemented clamp mode {}, using closest equivalent.",
                     static_cast<u32>(mode));
         [[fallthrough]];
     case AmdGpu::ClampMode::ClampBorder:
-        return vk::SamplerAddressMode::eClampToBorder;
+        return Backend::AddressMode::ClampToBorder;
     default:
         UNREACHABLE();
     }
 }
 
-vk::CompareOp DepthCompare(AmdGpu::DepthCompare comp) {
+Backend::CompareOp DepthCompare(AmdGpu::DepthCompare comp) {
     switch (comp) {
     case AmdGpu::DepthCompare::Never:
-        return vk::CompareOp::eNever;
+        return Backend::CompareOp::Never;
     case AmdGpu::DepthCompare::Less:
-        return vk::CompareOp::eLess;
+        return Backend::CompareOp::Less;
     case AmdGpu::DepthCompare::Equal:
-        return vk::CompareOp::eEqual;
+        return Backend::CompareOp::Equal;
     case AmdGpu::DepthCompare::LessEqual:
-        return vk::CompareOp::eLessOrEqual;
+        return Backend::CompareOp::LessOrEqual;
     case AmdGpu::DepthCompare::Greater:
-        return vk::CompareOp::eGreater;
+        return Backend::CompareOp::Greater;
     case AmdGpu::DepthCompare::NotEqual:
-        return vk::CompareOp::eNotEqual;
+        return Backend::CompareOp::NotEqual;
     case AmdGpu::DepthCompare::GreaterEqual:
-        return vk::CompareOp::eGreaterOrEqual;
+        return Backend::CompareOp::GreaterOrEqual;
     case AmdGpu::DepthCompare::Always:
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     default:
         UNREACHABLE();
     }
 }
 
-vk::Filter Filter(AmdGpu::Filter filter) {
+Backend::Filter Filter(AmdGpu::Filter filter) {
     switch (filter) {
     case AmdGpu::Filter::Point:
     case AmdGpu::Filter::AnisoPoint:
-        return vk::Filter::eNearest;
+        return Backend::Filter::Nearest;
     case AmdGpu::Filter::Bilinear:
     case AmdGpu::Filter::AnisoLinear:
-        return vk::Filter::eLinear;
+        return Backend::Filter::Linear;
     default:
         UNREACHABLE();
     }
@@ -383,29 +383,29 @@ vk::SamplerReductionMode FilterMode(AmdGpu::FilterMode mode) {
     }
 }
 
-vk::SamplerMipmapMode MipFilter(AmdGpu::MipFilter filter) {
+Backend::MipmapMode MipFilter(AmdGpu::MipFilter filter) {
     switch (filter) {
     case AmdGpu::MipFilter::Point:
-        return vk::SamplerMipmapMode::eNearest;
+        return Backend::MipmapMode::Nearest;
     case AmdGpu::MipFilter::Linear:
-        return vk::SamplerMipmapMode::eLinear;
+        return Backend::MipmapMode::Linear;
     case AmdGpu::MipFilter::None:
-        return vk::SamplerMipmapMode::eNearest;
+        return Backend::MipmapMode::Nearest;
     default:
         UNREACHABLE();
     }
 }
 
-vk::BorderColor BorderColor(AmdGpu::BorderColor color) {
+Backend::BorderColor BorderColor(AmdGpu::BorderColor color) {
     switch (color) {
     case AmdGpu::BorderColor::TransparentBlack:
-        return vk::BorderColor::eFloatTransparentBlack;
+        return Backend::BorderColor::FloatTransparentBlack;
     case AmdGpu::BorderColor::OpaqueBlack:
-        return vk::BorderColor::eFloatOpaqueBlack;
+        return Backend::BorderColor::FloatOpaqueBlack;
     case AmdGpu::BorderColor::White:
-        return vk::BorderColor::eFloatOpaqueWhite;
+        return Backend::BorderColor::FloatOpaqueWhite;
     case AmdGpu::BorderColor::Custom:
-        return vk::BorderColor::eFloatCustomEXT;
+        return Backend::BorderColor::FloatCustom;
     default:
         UNREACHABLE();
     }

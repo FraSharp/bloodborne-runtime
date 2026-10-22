@@ -113,10 +113,11 @@ u64 HashUploadGuestMemory(VAddr address, u64 size, bool shared) {
 }
 } // namespace
 
-TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
-                           Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
-                           BufferCache& buffer_cache_, PageManager& tracker_)
-    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
+TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& instance_,
+                           Vulkan::Scheduler& scheduler_, Vulkan::Runtime& runtime_,
+                           AmdGpu::Liverpool* liverpool_, BufferCache& buffer_cache_,
+                           PageManager& tracker_)
+    : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
       buffer_cache{buffer_cache_}, tracker{tracker_}, blit_helper{instance, scheduler},
       tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
@@ -1115,7 +1116,7 @@ void TextureCache::RefreshImage(Image& image) {
     runtime.UploadImage(&image, buffer, image_copies);
 }
 
-vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
+u64 TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
                                      AmdGpu::BorderColorBuffer border_color_base,
                                      const bool is_depth, float extra_lod_bias) {
     // Compare and plain uses of one S# need separate samplers; so do extra LOD biases.
@@ -1123,7 +1124,7 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
                                  u64(std::bit_cast<u32>(extra_lod_bias)));
 
     std::scoped_lock lock{samplers_mutex};
-    const auto [it, new_sampler] = samplers.try_emplace(hash, instance, sampler, border_color_base,
+    const auto [it, new_sampler] = samplers.try_emplace(hash, device, sampler, border_color_base,
                                                         is_depth, extra_lod_bias);
     if (new_sampler) {
         samplers.at(hash).lru_id = sampler_lru_cache.Insert(hash, gc_tick);
@@ -1131,7 +1132,7 @@ vk::Sampler TextureCache::GetSampler(const AmdGpu::Sampler& sampler,
         sampler_lru_cache.Touch(it->second.lru_id, gc_tick);
     }
 
-    return it->second.Handle();
+    return it->second.Native();
 }
 
 void TextureCache::RegisterImage(ImageId image_id) {
@@ -1484,12 +1485,10 @@ void TextureCache::GarbageCollectSamplers() {
         }
         --num_deletions;
         const size_t lru_id = samplers.at(hash).lru_id;
-        // bbport: destroyed once the GPU is past the work recorded so far. The GC runs per
-        // submission (~9 a frame), so 16 ticks are ~2 frames, and recorded commands may still
-        // use the sampler: MoltenVK lost the device (Invalid Resource) after upscaler
+        // bbport: the device destroys it once the GPU is past the work recorded so far. The GC
+        // runs per submission (~9 a frame), so 16 ticks are ~2 frames, and recorded commands may
+        // still use the sampler: MoltenVK lost the device (Invalid Resource) after upscaler
         // switches, each of which brings a new sampler set (another LOD bias).
-        scheduler.DeferOperation(
-            [sampler = std::make_shared<Sampler>(std::move(samplers.at(hash)))] {});
         samplers.erase(hash);
         sampler_lru_cache.Free(lru_id);
         return false;

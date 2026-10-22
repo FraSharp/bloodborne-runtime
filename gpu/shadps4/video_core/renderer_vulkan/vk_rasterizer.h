@@ -41,8 +41,8 @@ class Runtime;
 class NullResources; // bbport: vk_null_resources.h
 class Rasterizer {
 public:
-    explicit Rasterizer(const Instance& instance, Scheduler& scheduler, Runtime& runtime,
-                        AmdGpu::Liverpool* liverpool);
+    explicit Rasterizer(VideoCore::Backend::Device& device, const Instance& instance,
+                        Scheduler& scheduler, Runtime& runtime, AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
     [[nodiscard]] Runtime& GetRuntime() noexcept {

@@ -85,8 +85,8 @@ public:
     };
 
 public:
-    TextureCache(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
-                 Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
+    TextureCache(Backend::Device& device, const Vulkan::Instance& instance,
+                 Vulkan::Scheduler& scheduler, Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
                  PageManager& tracker);
     ~TextureCache();
 
@@ -200,9 +200,10 @@ public:
     void RefreshImage(Image& image);
     void WatchImage(const Image& image, const char* what);
 
-    /// Retrieves the sampler that matches the provided S# descriptor.
-    /// extra_lod_bias: bbport, added to the S#'s bias (reduced scene rendering).
-    [[nodiscard]] vk::Sampler GetSampler(const AmdGpu::Sampler& sampler,
+    /// Retrieves the sampler that matches the provided S# descriptor, as the backend's object
+    /// (Backend::Device::NativeHandle). extra_lod_bias: bbport, added to the S#'s bias (reduced
+    /// scene rendering).
+    [[nodiscard]] u64 GetSampler(const AmdGpu::Sampler& sampler,
                                          AmdGpu::BorderColorBuffer border_color_base,
                                          bool is_depth, float extra_lod_bias = 0.0f);
 
@@ -397,6 +398,7 @@ private:
     void GarbageCollectSamplers();
 
 private:
+    Backend::Device& device;
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;

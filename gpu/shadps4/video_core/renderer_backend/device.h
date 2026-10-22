@@ -35,6 +35,15 @@ public:
     /// including work prepared before this call and recorded into a later submission. Callers
     /// never wait for the GPU to free something.
     virtual void DeferRelease(Common::UniqueFunction<void>&& release) = 0;
+
+    // Thread-safe. Destroy* is deferred like DeferRelease; the handle is stale at once.
+    [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
+    virtual void DestroySampler(SamplerHandle sampler) = 0;
+
+    /// The backend's own object (a VkSampler, an id<MTLSamplerState>) as an integer, for code
+    /// that still calls the API directly (docs/RENDER_ADAPTER.md, "native interop"). Zero for a
+    /// stale handle. Valid until the object is destroyed.
+    [[nodiscard]] virtual u64 NativeHandle(SamplerHandle sampler) = 0;
 };
 
 } // namespace VideoCore::Backend

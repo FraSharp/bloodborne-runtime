@@ -39,17 +39,17 @@ Backend::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func);
 
 Backend::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op);
 
-vk::SamplerAddressMode ClampMode(AmdGpu::ClampMode mode);
+Backend::AddressMode ClampMode(AmdGpu::ClampMode mode);
 
-vk::CompareOp DepthCompare(AmdGpu::DepthCompare comp);
+Backend::CompareOp DepthCompare(AmdGpu::DepthCompare comp);
 
-vk::Filter Filter(AmdGpu::Filter filter);
+Backend::Filter Filter(AmdGpu::Filter filter);
 
 vk::SamplerReductionMode FilterMode(AmdGpu::FilterMode mode);
 
-vk::SamplerMipmapMode MipFilter(AmdGpu::MipFilter filter);
+Backend::MipmapMode MipFilter(AmdGpu::MipFilter filter);
 
-vk::BorderColor BorderColor(AmdGpu::BorderColor color);
+Backend::BorderColor BorderColor(AmdGpu::BorderColor color);
 
 vk::ComponentSwizzle ComponentSwizzle(AmdGpu::CompSwizzle comp_swizzle);
 

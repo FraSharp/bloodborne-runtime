@@ -3,7 +3,10 @@
 
 #pragma once
 
+#include <mutex>
+
 #include "video_core/renderer_backend/device.h"
+#include "video_core/renderer_backend/handle_table.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -42,6 +45,11 @@ public:
         scheduler.DeferOperationPastNext(std::move(release));
     }
 
+    [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
+        const VideoCore::Backend::SamplerDesc& desc) override;
+    void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::SamplerHandle sampler) override;
+
     [[nodiscard]] Instance& GetInstance() noexcept {
         return instance;
     }
@@ -53,6 +61,14 @@ private:
     Instance instance;
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;
+
+    std::mutex objects_mutex;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
 };
+
+/// A sampler's NativeHandle as the Vulkan object.
+[[nodiscard]] inline vk::Sampler NativeSampler(u64 native) noexcept {
+    return vk::Sampler{reinterpret_cast<VkSampler>(native)};
+}
 
 } // namespace Vulkan
