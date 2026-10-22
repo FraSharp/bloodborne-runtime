@@ -29,7 +29,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N1 · frame planning | 100% `████████████████████` | Deferred clears accepted; tessellation moved to N5 |
 | N2 · shaders ahead of time | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: inventory the shader variants |
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
-| N4 · backend interface | 10% `██░░░░░░░░░░░░░░░░░░` | Paused (its command stream waits for a backend that needs it, such as D3D12) |
+| N4 · render adapter | 10% `██░░░░░░░░░░░░░░░░░░` | Restarted: [specification](RENDER_ADAPTER.md) approved; next: A0, the adapter over today's Vulkan objects |
 | N5 · Metal backend | 35% `███████░░░░░░░░░░░░░` | The frame draws through Metal behind an option; next: resources in Metal |
 | N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
 
@@ -53,13 +53,15 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
   (merging what splits passes); resources (shadPS4's texture and buffer caches and detiling);
   shaders (GCN → shadPS4's intermediate form → SPIR-V or MSL).
 - **Backends:** Vulkan (today's code) and Metal; D3D12 possible later.
-- **Where Metal meets the core:** at the Vulkan calls the renderer already makes. A layer under
+- **Where Metal meets the core today:** at the Vulkan calls the renderer already makes. A layer under
   vulkan.hpp's dispatcher (`renderer_metal/mtl_vk_layer`) takes the command buffers the Metal path
   owns and encodes them in Metal (`mtl_frame`); MoltenVK gets the rest. The renderer above is
   unchanged and Linux keeps real Vulkan. Vulkan's enum values are the shared vocabulary of the
   pipeline keys (`vk_pipeline_key.h`) and blend rules; no Vulkan handle is in them.
 
-This route was chosen on 2026-10-20 over N4's original order (a backend-neutral command stream
+**Replaced by the [render adapter](RENDER_ADAPTER.md)** (approved 2026-10-22): the renderer
+will call the project's own GPU interface, with Vulkan and Metal backends, and the interception
+layer and MoltenVK leave the macOS build. The interception route was chosen on 2026-10-20 over N4's original order (a backend-neutral command stream
 first, then Metal): adapting the Metal renderer of
 [Wooloomooloo2/bloodborne_mac_port](https://github.com/Wooloomooloo2/bloodborne_mac_port)
 reached a working Metal frame directly. N4's approved contract still describes how resources and
@@ -113,9 +115,9 @@ save at 1080p Balanced, it ran without a fault but did not beat FSR 3.1 on frame
 
 ## Next
 
-1. Resources created in Metal (images, views, samplers, buffers, the guest-memory pool), each
-   behind a switch and measured against MoltenVK; then MoltenVK can be left out on macOS. The
-   fork did this in its "M2" (`3ee456f`).
+1. The [render adapter](RENDER_ADAPTER.md): steps A0–A6 move the renderer onto it with the
+   Vulkan backend; M1–M4 build the Metal backend on it (resources in Metal, as the fork's "M2"
+   `3ee456f` did) and leave MoltenVK out on macOS.
 2. Shaders converted ahead of time (N2): MSL is still converted while the game runs.
 3. With the recompiled library: calls of hooked engine functions must go through the runtime
    (recompiled functions call each other directly), before N3 can hook texture creation.
