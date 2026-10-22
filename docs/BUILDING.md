@@ -26,7 +26,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 
 - `build.sh` builds `out/bb-probe`, the GPU library and bbcpu (from the `recomp/` submodule).
   `bash build.sh --test` also runs the native tests.
-- `deps/` (MoltenVK, SDL3, FFmpeg, ...) is built by `scripts/macos/build-deps.sh`. Its libraries
+- `deps/` (MoltenVK, SDL3, FFmpeg, ...; for FSR 4.1.1 on Metal also DXC, the spirv-cross command
+  and the fsr4-native-macos tree, without AMD's initializers) is built by
+  `scripts/macos/build-deps.sh`. Its libraries
   record absolute paths: a moved or copied `deps/` must be rebuilt (remove `deps/macos-arm64`,
   then `BB_ARCH=arm64 bash scripts/macos/build-deps.sh`).
 - From a checkout, saves and caches go to `user/` and settings to `bbport.ini`.
@@ -42,7 +44,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 |---|---|
 | `BB_GAME_DIR` | The game folder |
 | `BB_OUTPUT_RES=WxH`, `BB_RENDER_RES=WxH` | Output size, and the game's render size (with `BB_RENDER_RES`, also set `BB_DMEM_MB`) |
-| `BB_UPSCALER=fsr3\|off`, `BB_UPSCALE_PRESET` | Upscaler and preset |
+| `BB_UPSCALER=fsr3\|fsr411\|metalfx\|off`, `BB_UPSCALE_PRESET` | Upscaler and preset |
+| `BB_FSR411_DIR` | AMD's FSR 4.1.1 files: the Vulkan path's set, or for FSR 4.1.1 on Metal `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |
+| `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on Metal with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1` | The experimental Metal renderer |
 | `BB_RECOMP_LIB=PATH` | Load the recompiled library |

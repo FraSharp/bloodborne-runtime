@@ -175,7 +175,7 @@ add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_trophy_data.inc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/gen_trophy_catalog.py ${CMAKE_CURRENT_SOURCE_DIR}/shim/trophy_catalog.json VERBATIM)
 target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_trophy_data.inc)
 target_include_directories(bbgpu PRIVATE ${BB_TEXT_DIR})
-target_include_directories(bbgpu PRIVATE shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
+target_include_directories(bbgpu PRIVATE . fsr4_metal shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
 target_compile_options(bbgpu PRIVATE -Wno-deprecated-declarations -Wno-missing-field-initializers)
 # Native arm64 (docs/ARM64_NATIVE.md): x86 cycle-count and spin-wait intrinsics for the GPU library.
@@ -184,7 +184,34 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
 endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
+    target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
+    set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
+        COMPILE_FLAGS "-fobjc-arc")
+    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+
+    # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
+    # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
+    # in deps/ (scripts/macos/build-deps.sh). Without them FSR 4.1.1 reports itself unavailable.
+    set(BB_FSR4_NATIVE_SRC "$ENV{BB_FSR4_NATIVE_SRC}" CACHE PATH "fsr4-native-macos tree")
+    if (NOT BB_FSR4_NATIVE_SRC)
+        set(BB_FSR4_NATIVE_SRC ${CMAKE_PREFIX_PATH}/share/fsr4-native-macos)
+    endif()
+    set(BB_FSR4_METAL_OUT ${CMAKE_BINARY_DIR}/../fsr4_metal)
+    if (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
+        file(GLOB BB_FSR4_METAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.metal
+             ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.h ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.py)
+        add_custom_command(OUTPUT ${BB_FSR4_METAL_OUT}/.built
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
+                    --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
+            COMMAND ${CMAKE_COMMAND} -E touch ${BB_FSR4_METAL_OUT}/.built
+            DEPENDS ${BB_FSR4_METAL_SOURCES} VERBATIM)
+        add_custom_target(fsr4_metal_assets DEPENDS ${BB_FSR4_METAL_OUT}/.built)
+        add_dependencies(bbgpu fsr4_metal_assets)
+    else()
+        message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
+                        "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
+    endif()
     # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
     # at run time, so nothing links against it; ARC is required by the ObjC objects.
     enable_language(OBJCXX)
