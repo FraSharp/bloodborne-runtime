@@ -1395,9 +1395,11 @@ void TextureCache::GarbageCollectImages() {
         // A GPU-modified image with that flag still has its only valid contents on the GPU:
         // SafeToDownload() rejects it, but freeing it would discard those contents. This is
         // visible as lost exposure/material lighting after the 1440p scene crosses the GC mark.
+        // Over the critical mark memory comes first: kept without a limit, these images could
+        // grow VRAM the way the render targets above did.
         const bool gpu_contents_unresolved =
             True(image.flags & ImageFlagBits::GpuModified) && !download &&
-            False(image.flags & ImageFlagBits::CpuDirty);
+            False(image.flags & ImageFlagBits::CpuDirty) && !aggresive;
         if ((tiled && download) || (download && !pressured) || gpu_contents_unresolved) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
