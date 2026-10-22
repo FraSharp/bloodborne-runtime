@@ -102,8 +102,8 @@ aborted in Metal's fragment binding; `e0348c2` retains the shader bindings and p
 through deferred recording. The same load then reached a worker fault on both Metal and MoltenVK:
 the live dynamic-shadows setting overrode a secondary context's disabled state. The 0.8.1 guard
 keeps that state. Recording costs a little more per draw on the GPU thread
-(5.3–5.6 against 5.1–5.2 µs). Characters drawn black above 3.5 million scene pixels
-happen on Metal too.
+(5.3–5.6 against 5.1–5.2 µs). The character-lighting loss above 3.5 million scene pixels
+also happened on Metal; the texture collector now retains unresolved GPU-written images.
 
 MetalFX is available as an optional temporal upscaler on macOS with either renderer. It uses the
 Vulkan driver's Metal device through `VK_EXT_external_memory_metal`; the input and output copies

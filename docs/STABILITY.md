@@ -23,6 +23,7 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 | Metal recorder fault in `BindStage` while loading | Metal pipelines held shader pointers after Vulkan reused a module handle; queued draws held pipeline entries after deletion | Shader modules kept by SPIR-V content, bound pipeline entries shared through deferred draws | 0.8.1 |
 | GX worker null access during a copied-save load, on Metal and MoltenVK | A live setting turned dynamic shadows back on in a secondary render context without a shadow target | Keep the game's disabled shadow state for that context while retaining the live setting elsewhere | 0.8.1 |
 | Shader cache rebuilt at every launch after a rejected tessellation pipeline | The generated shader assigned one output location twice, and the rejected pipeline key was still saved; preload treated the driver rejection as a damaged cache entry | Emit each location once, rebuild old shader binaries once, and save only successful pipeline keys | 0.8.1 |
+| Character clothing lost its lighting above about 3.5 million scene pixels on Metal and MoltenVK | The larger scene crossed the texture collector's cleanup mark sooner. It evicted small GPU-written images marked possibly CPU dirty without preserving their GPU contents | Keep GPU-written images whose contents cannot safely be downloaded until a definite CPU write supersedes them; normal collection of other images continues | main, after 0.8.1 |
 
 ## Open
 
@@ -33,11 +34,6 @@ these were investigated. Run-by-run logs of the investigations are in this file'
   [app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3). Its signature
   differs from the fixed GX worker fault. It has not been reproduced or confirmed fixed; a
   nearby save and repeat steps are needed.
-- **Characters drawn black above about 3.5 million scene pixels** (1440p without an upscaler or
-  with Native AA, 4K Quality). The boundary lies between 3.45 and 3.67 million pixels, with FSR
-  on or off, at 1440p or 4K output, with more memory, and on the Metal renderer too. No cap of
-  that size was found in the port. Left: a buffer the game sizes for 1080p, or MoltenVK's
-  resources (which the Metal renderer still uses).
 - **White flashes in the opening video**, seen in about half of the observed openings; playback
   completes. Clear deferral, the draw pipeline, preparation workers, GPU-completion locking and
   the clock repair did not remove them. Cause unknown.

@@ -1391,7 +1391,14 @@ void TextureCache::GarbageCollectImages() {
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
-        if ((tiled && download) || (download && !pressured)) {
+        // MaybeCpuDirty can mean a write to a neighboring byte on the same tracked page.
+        // A GPU-modified image with that flag still has its only valid contents on the GPU:
+        // SafeToDownload() rejects it, but freeing it would discard those contents. This is
+        // visible as lost exposure/material lighting after the 1440p scene crosses the GC mark.
+        const bool gpu_contents_unresolved =
+            True(image.flags & ImageFlagBits::GpuModified) && !download &&
+            False(image.flags & ImageFlagBits::CpuDirty);
+        if ((tiled && download) || (download && !pressured) || gpu_contents_unresolved) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
