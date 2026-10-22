@@ -1,10 +1,9 @@
-# Compile the Vulkan runtime on Linux before and during the N4 backend migration.
+# Compile the Vulkan runtime on Linux and run its native unit tests.
+# Manual only for now (Actions → Linux → Run workflow) while the work is on macOS; restore the
+# push and pull_request triggers when Linux work resumes.
 name: Linux
 
 on:
-  push:
-    branches: [main]
-  pull_request:
   workflow_dispatch:
 
 concurrency:
