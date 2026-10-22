@@ -1544,9 +1544,22 @@ void TrophyToast(std::chrono::steady_clock::time_point now) {
                  ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
     ImDrawList* draw = ImGui::GetWindowDrawList();
     const ImVec2 badge = ImGui::GetCursorScreenPos();
-    draw->AddCircleFilled(ImVec2(badge.x + S(23), badge.y + S(27)), S(22), ImGui::GetColorU32(metal));
-    draw->AddCircleFilled(ImVec2(badge.x + S(23), badge.y + S(27)), S(17), ImGui::GetColorU32(Theme::Card));
-    draw->AddText(ImVec2(badge.x + S(15), badge.y + S(18)), ImGui::GetColorU32(metal), "✦");
+    const float cx = badge.x + S(23), cy = badge.y + S(27);
+    const ImU32 metal_color = ImGui::GetColorU32(metal);
+    draw->AddCircleFilled(ImVec2(cx, cy), S(22), metal_color);
+    draw->AddCircleFilled(ImVec2(cx, cy), S(18), ImGui::GetColorU32(Theme::Card));
+    // A cup silhouette for every grade; the metallic tint comes from the trophy's grade.
+    draw->AddBezierCubic(ImVec2(cx - S(10), cy - S(9)), ImVec2(cx - S(22), cy - S(13)),
+                         ImVec2(cx - S(18), cy + S(3)), ImVec2(cx - S(8), cy + S(3)),
+                         metal_color, S(2.5f));
+    draw->AddBezierCubic(ImVec2(cx + S(10), cy - S(9)), ImVec2(cx + S(22), cy - S(13)),
+                         ImVec2(cx + S(18), cy + S(3)), ImVec2(cx + S(8), cy + S(3)),
+                         metal_color, S(2.5f));
+    const ImVec2 cup[] = {{cx - S(11), cy - S(11)}, {cx + S(11), cy - S(11)},
+                          {cx + S(7), cy + S(3)}, {cx - S(7), cy + S(3)}};
+    draw->AddConvexPolyFilled(cup, 4, metal_color);
+    draw->AddRectFilled(ImVec2(cx - S(2), cy + S(3)), ImVec2(cx + S(2), cy + S(12)), metal_color);
+    draw->AddRectFilled(ImVec2(cx - S(8), cy + S(12)), ImVec2(cx + S(8), cy + S(15)), metal_color, S(1));
     ImGui::Dummy(ImVec2(S(54), S(55)));
     ImGui::SameLine();
     ImGui::BeginGroup();
