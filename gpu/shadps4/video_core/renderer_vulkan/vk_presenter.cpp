@@ -14,6 +14,9 @@
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "bbport_game_menu.h"
 #include "bbport_overlay.h"
+#ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "bbport_timeline.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_presenter.h"
@@ -95,9 +98,14 @@ bool CanBlitToSwapchain(const vk::PhysicalDevice physical_device, vk::Format for
     return MakeImageBlit(frame_width, frame_height, swapchain_width, swapchain_height, 0, 0);
 }
 
+/// The shown frame's aspect (bbgpu_frame_aspect, the menu pointer's window-to-stage mapping):
+/// any thread. From bbport 0.6.
+static std::atomic<float> shown_aspect{16.0f / 9.0f};
+
 static vk::Rect2D FitImage(s32 frame_width, s32 frame_height, s32 swapchain_width,
                            s32 swapchain_height) {
     float frame_aspect = static_cast<float>(frame_width) / frame_height;
+    shown_aspect.store(frame_aspect, std::memory_order_relaxed);
     float swapchain_aspect = static_cast<float>(swapchain_width) / swapchain_height;
 
     u32 dst_width = swapchain_width;
@@ -127,9 +135,10 @@ static vk::Rect2D FitImage(s32 frame_width, s32 frame_height, s32 swapchain_widt
 
 Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_)
     : window{window_}, liverpool{liverpool_},
-      instance{window, EmulatorSettings.GetGpuId(), EmulatorSettings.IsVkValidationEnabled(),
-               EmulatorSettings.IsVkCrashDiagnosticEnabled()},
-      draw_scheduler{instance, true}, present_scheduler{instance}, flip_scheduler{instance},
+      backend_device{window, EmulatorSettings.GetGpuId(), EmulatorSettings.IsVkValidationEnabled(),
+                     EmulatorSettings.IsVkCrashDiagnosticEnabled()},
+      instance{backend_device.GetInstance()}, draw_scheduler{backend_device.GetScheduler()},
+      present_scheduler{instance}, flip_scheduler{instance},
       swapchain{instance, window}, runtime{instance, draw_scheduler},
       rasterizer{std::make_unique<Rasterizer>(instance, draw_scheduler, runtime, liverpool)},
       texture_cache{rasterizer->GetTextureCache()} {
@@ -347,7 +356,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
     draw_scheduler.EndRendering();
 
     VideoCore::ImageViewInfo view_info{};
-    view_info.format = GetFrameViewFormat(attribute.attrib.pixel_format);
+    view_info.format = FromVk(GetFrameViewFormat(attribute.attrib.pixel_format));
     // Exclude alpha from output frame to avoid blending with UI.
     view_info.mapping.a = vk::ComponentSwizzle::eOne;
 
@@ -358,7 +367,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
         image_view = Check(device.createImageView({
             .image = display.image,
             .viewType = vk::ImageViewType::e2D,
-            .format = view_info.format,
+            .format = ToVk(view_info.format),
             .components = {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
                            vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eOne},
             .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
@@ -388,7 +397,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
                             vk::AccessFlagBits2::eTransferRead);
             runtime.FlushBarriers();
             upscaler.DumpPresented(image.GetImage(), image_size.width, image_size.height,
-                                   view_info.format);
+                                   ToVk(view_info.format));
         }
         runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
                         vk::PipelineStageFlagBits2::eFragmentShader,
@@ -695,6 +704,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     const vk::Image swapchain_image = swapchain.Image();
     auto& scheduler = present_scheduler;
     const auto cmdbuf = scheduler.CommandBuffer();
+#ifdef BB_METAL_BACKEND
+    // The Metal backend (BB_METAL_PRESENT=1): this pass is encoded in Metal, except when the
+    // overlay draws (ImGui still records Vulkan).
+    if (MetalLayer::PresentEnabled() && !BbOverlay::Visible()) {
+        MetalLayer::Own(static_cast<VkCommandBuffer>(cmdbuf));
+    }
+#endif
     DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
                         swapchain.GetSurfaceFormat().format);
 
@@ -891,3 +907,7 @@ void Presenter::SetExpectedGameSize(s32 width, s32 height) {
 }
 
 } // namespace Vulkan
+
+extern "C" float bbgpu_frame_aspect(void) {
+    return Vulkan::shown_aspect.load(std::memory_order_relaxed);
+}

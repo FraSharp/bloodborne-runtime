@@ -5,6 +5,7 @@
 
 #include "video_core/amdgpu/regs_depth.h"
 #include "video_core/amdgpu/resource.h"
+#include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/types.h"
 
@@ -31,7 +32,7 @@ struct ImageViewInfo {
                   AmdGpu::DepthControl ctl);
 
     AmdGpu::ImageType type = AmdGpu::ImageType::Color2D;
-    vk::Format format = vk::Format::eR8G8B8A8Unorm;
+    Backend::Format format = Backend::Format::R8G8B8A8Unorm;
     SubresourceRange range;
     vk::ComponentMapping mapping{};
     u32 min_lod = 0;

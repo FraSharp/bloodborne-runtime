@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstdio>
 #include <span>
 #include <vector>
 #include <boost/container/static_vector.hpp>
@@ -223,6 +225,16 @@ struct Info : InfoPersistent {
         return *reinterpret_cast<const T*>(&FlatUserData()[sharp_idx]);
     }
 
+    /// bbport: the table pointer in user data register ptr_index is null (see ReadUdReg).
+    bool UdPointerNull(u32 ptr_index) const noexcept {
+        if (ptr_index == IR::NumScalarRegs) {
+            return false;
+        }
+        u64 pointer;
+        std::memcpy(&pointer, &UserData()[ptr_index], sizeof(pointer));
+        return (pointer & 0xFFFFFFFFFFFFULL) < 0x10000;
+    }
+
     template <typename T>
     T ReadUdReg(u32 ptr_index, u32 dword_offset) const noexcept {
         T data;
@@ -231,6 +243,17 @@ struct Info : InfoPersistent {
         if (ptr_index != IR::NumScalarRegs) {
             std::memcpy(&base, &ud[ptr_index], sizeof(base));
             base = reinterpret_cast<const u32*>(VAddr(base) & 0xFFFFFFFFFFFFULL);
+            // bbport: some draws leave the table pointer null. The GPU reads nothing there; here
+            // it crashed the game. A zero descriptor is a null buffer, which the callers skip.
+            // From Supermedo/bloodborne_pc 2c4ddeb (bbport 0.6 fixes the same crash, "139").
+            if (VAddr(base) < 0x10000) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("GPU: a resource table pointer is null (%p): read as empty\n",
+                                static_cast<const void*>(base));
+                }
+                return T{};
+            }
         }
         std::memcpy(&data, base + dword_offset, sizeof(T));
         return data;

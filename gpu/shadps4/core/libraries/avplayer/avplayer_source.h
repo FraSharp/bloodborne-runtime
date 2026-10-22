@@ -16,6 +16,7 @@
 #include "common/assert.h"
 #include "core/libraries/avplayer/avplayer.h"
 #include "core/libraries/avplayer/avplayer_common.h"
+#include "core/libraries/avplayer/playback_clock.h"
 #include "core/libraries/avplayer/avplayer_data_streamer.h"
 #include "core/libraries/kernel/threads.h"
 
@@ -250,11 +251,15 @@ private:
     SWRContextPtr m_swr_context{nullptr, &ReleaseSWRContext};
     SWSContextPtr m_sws_context{nullptr, &ReleaseSWSContext};
 
-    std::optional<u64> m_last_audio_ts{};
-    std::optional<std::chrono::high_resolution_clock::time_point> m_last_data_time{};
-    std::optional<std::chrono::high_resolution_clock::time_point> m_start_time{};
-    std::chrono::high_resolution_clock::time_point m_pause_time{};
-    std::chrono::high_resolution_clock::duration m_pause_duration{};
+    PlaybackClock<> m_clock;
+    enum class VideoOutcome { Inactive, Empty, Future, Shown };
+    void RecordVideoTiming(VideoOutcome outcome, u64 clock = 0, u64 timestamp = 0);
+    void PrintVideoTiming();
+    struct VideoTiming {
+        u64 requests{}, shown{}, empty{}, future{}, inactive{}, late{}, max_late{}, max_ahead{};
+    } m_video_timing;
+    std::mutex m_video_timing_mutex;
+
 };
 
 } // namespace Libraries::AvPlayer

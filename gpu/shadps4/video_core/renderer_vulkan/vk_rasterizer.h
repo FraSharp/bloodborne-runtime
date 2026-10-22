@@ -96,6 +96,7 @@ public:
     [[nodiscard]] bool DmaMayWriteOnCpu(VAddr dst, u32 num_bytes);
     u32 ReadDataFromGds(u32 gsd_offset);
     bool InvalidateMemory(VAddr addr, u64 size, bool assume_locks = false);
+    bool HostCopiesPendingFor(VAddr addr, u64 size);
     /// bbport: data written into GPU memory by a path we hear of (file reads, the game's resource
     /// loaders, DMA on the CPU): invalidated, and an asset for the buffer cache.
     void NoteAssetWrite(VAddr addr, u64 size);
@@ -315,6 +316,7 @@ private:
         RenderState state;
         u32 scene_size = 0;
         std::array<float, 2> target_scale{};
+        std::array<float, 2> ui_edges{};
     } begin_memo;
     u64 begin_memo_hits = 0, begin_memo_misses = 0;
     void Resolve();
@@ -465,14 +467,14 @@ private:
     Common::SharedFirstMutex mapped_ranges_mutex;
     PipelineCache pipeline_cache;
     std::unique_ptr<DrawPreparation> draw_prep;
-    std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (docs/upscaler.md)
+    std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (bbport's docs/upscaler.md)
     std::unique_ptr<SceneTargets> scene_targets;
     bool scene_started = false;
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;
     u64 motion_geometry{};    ///< vertex-stream identity of the current direct draw
     bool gbuffer_draw = false;
-    std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (docs/upscaler.md)
+    std::unique_ptr<TemporalUpscaler> upscaler; // bbport: FSR (bbport's docs/upscaler.md)
     /// bbport: stand-ins for null descriptors when the driver has none (MoltenVK), else null.
     std::unique_ptr<NullResources> null_resources;
     /// bbport: per image binding of BindTextures, the stand-in view of an empty binding.
@@ -480,6 +482,11 @@ private:
     vk::ImageView NullImageView(const Shader::ImageResource& desc, const AmdGpu::Image& sharp) const;
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
+    /// The UI pass on an output of another aspect ratio: where the game's 16:9 screen ends
+    /// (UiComposition::ScreenEdges); {1, 1}: not such a pass.
+    std::array<float, 2> ui_edges{1.0f, 1.0f};
+    /// The UI edge stretch for this draw (push_data.motion_param), bbport 0.6.
+    void UiEdgeStretch(const GraphicsPipeline* pipeline);
     const bool host_markers_enabled;
     const bool guest_markers_enabled;
 

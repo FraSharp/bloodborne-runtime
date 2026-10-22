@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 
 #include <chrono>
@@ -399,9 +400,9 @@ void CameraMotion::OnDisplayPass(VideoCore::ImageId frame) {
 void CameraMotion::Overlay(VideoCore::ImageId frame) {
     auto& depth = texture_cache.GetImage(depth_id);
     auto& color = texture_cache.GetImage(frame);
-    const auto depth_format = depth.info.pixel_format;
+    const auto depth_format = ToVk(depth.info.pixel_format);
     if ((depth_format != vk::Format::eD32Sfloat && depth_format != vk::Format::eD32SfloatS8Uint) ||
-        color.info.pixel_format != vk::Format::eR8G8B8A8Unorm ||
+        ToVk(color.info.pixel_format) != vk::Format::eR8G8B8A8Unorm ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eStorage) ||
         color.info.size.width != depth.info.size.width ||
         color.info.size.height != depth.info.size.height) {
@@ -410,7 +411,7 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
             warned = true;
             std::printf("Camera motion: overlay skipped (depth %s, frame %s %ux%u)\n",
                         vk::to_string(depth_format).c_str(),
-                        vk::to_string(color.info.pixel_format).c_str(), color.info.size.width,
+                        vk::to_string(ToVk(color.info.pixel_format)).c_str(), color.info.size.width,
                         color.info.size.height);
         }
         return;

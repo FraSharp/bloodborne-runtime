@@ -28,6 +28,91 @@ static constexpr std::array LogicalStageToStageBit = {
     vk::ShaderStageFlagBits::eCompute,
 };
 
+AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
+    const auto& control = key.blend_controls[i];
+
+    const auto src_color = LiverpoolToVK::BlendFactor(control.color_src_factor);
+    const auto dst_color = LiverpoolToVK::BlendFactor(control.color_dst_factor);
+    const auto color_blend = LiverpoolToVK::BlendOp(control.color_func);
+
+    const auto src_alpha = control.separate_alpha_blend
+                               ? LiverpoolToVK::BlendFactor(control.alpha_src_factor)
+                               : src_color;
+    const auto dst_alpha = control.separate_alpha_blend
+                               ? LiverpoolToVK::BlendFactor(control.alpha_dst_factor)
+                               : dst_color;
+    const auto alpha_blend =
+        control.separate_alpha_blend ? LiverpoolToVK::BlendOp(control.alpha_func) : color_blend;
+
+    // Vulkan ignores blend factors for min/max, but a factor that zeroes one operand
+    // makes the operation collapse to a plain selection: min(s, 0) is 0 and max(s, 0)
+    // is s for normalized alpha. Rewrite those to the equivalent add so the result is
+    // exact instead of leaving the other operand to survive.
+    auto eff_src_alpha = src_alpha;
+    auto eff_dst_alpha = dst_alpha;
+    auto eff_alpha_blend = alpha_blend;
+    if (alpha_blend == Backend::BlendOp::Min || alpha_blend == Backend::BlendOp::Max) {
+        const bool takes_max = alpha_blend == Backend::BlendOp::Max;
+        if (src_alpha == Backend::BlendFactor::One && dst_alpha == Backend::BlendFactor::Zero) {
+            eff_alpha_blend = Backend::BlendOp::Add;
+            eff_src_alpha = takes_max ? Backend::BlendFactor::One : Backend::BlendFactor::Zero;
+            eff_dst_alpha = Backend::BlendFactor::Zero;
+        } else if (src_alpha == Backend::BlendFactor::Zero && dst_alpha == Backend::BlendFactor::One) {
+            eff_alpha_blend = Backend::BlendOp::Add;
+            eff_src_alpha = Backend::BlendFactor::Zero;
+            eff_dst_alpha = takes_max ? Backend::BlendFactor::One : Backend::BlendFactor::Zero;
+        }
+    }
+
+    AttachmentBlend blend{
+        .enable = bool(control.enable),
+        .src_color = src_color,
+        .dst_color = dst_color,
+        .src_alpha = eff_src_alpha,
+        .dst_alpha = eff_dst_alpha,
+        .color_op = color_blend,
+        .alpha_op = eff_alpha_blend,
+    };
+    const auto color_scaled_min_max =
+        (color_blend == Backend::BlendOp::Min || color_blend == Backend::BlendOp::Max) &&
+        (src_color != Backend::BlendFactor::One || dst_color != Backend::BlendFactor::One) &&
+        !key.color_buffers[i].blend_self_scale;
+    const auto alpha_scaled_min_max =
+        (eff_alpha_blend == Backend::BlendOp::Min || eff_alpha_blend == Backend::BlendOp::Max) &&
+        (eff_src_alpha != Backend::BlendFactor::One || eff_dst_alpha != Backend::BlendFactor::One);
+    blend.unimplemented_min_max = color_scaled_min_max || alpha_scaled_min_max;
+
+    // The shader squares its color output for this attachment (see PsColorBuffer), so the
+    // factors must not scale the operands again.
+    if (key.color_buffers[i].blend_self_scale) {
+        blend.self_scaled = true;
+        blend.src_color = Backend::BlendFactor::One;
+        blend.dst_color = Backend::BlendFactor::One;
+    }
+
+    // On GCN GPU there is an additional mask which allows to control color components exported
+    // from a pixel shader. A situation possible, when the game may mask out the alpha channel,
+    // while it is still need to be used in blending ops. For such cases, HW will default alpha
+    // to 1 and perform the blending, while shader normally outputs 0 in the last component.
+    // Unfortunatelly, Vulkan doesn't provide any control on blend inputs, so below we detecting
+    // such cases and override alpha value in order to emulate HW behaviour.
+    const auto has_alpha_masked_out =
+        (key.cb_shader_mask.GetMask(i) & AmdGpu::ColorBufferMask::ComponentA) == 0;
+    const auto has_src_alpha_in_src_blend = src_color == Backend::BlendFactor::SrcAlpha ||
+                                            src_color == Backend::BlendFactor::OneMinusSrcAlpha;
+    const auto has_src_alpha_in_dst_blend = dst_color == Backend::BlendFactor::SrcAlpha ||
+                                            dst_color == Backend::BlendFactor::OneMinusSrcAlpha;
+    if (has_alpha_masked_out && has_src_alpha_in_src_blend) {
+        blend.src_color = src_color == Backend::BlendFactor::SrcAlpha ? Backend::BlendFactor::One
+                                                                   : Backend::BlendFactor::Zero; // 1-A
+    }
+    if (has_alpha_masked_out && has_src_alpha_in_dst_blend) {
+        blend.dst_color = dst_color == Backend::BlendFactor::SrcAlpha ? Backend::BlendFactor::One
+                                                                   : Backend::BlendFactor::Zero; // 1-A
+    }
+    return blend;
+}
+
 GraphicsPipeline::GraphicsPipeline(
     const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
     const Shader::Profile& profile, const GraphicsPipelineKey& key_,
@@ -83,7 +168,7 @@ GraphicsPipeline::GraphicsPipeline(
         .pVertexAttributeDescriptions = sdata.vertex_attributes.data(),
     };
 
-    const auto topology = LiverpoolToVK::PrimitiveType(key.prim_type);
+    const auto topology = ToVk(LiverpoolToVK::PrimitiveType(key.prim_type));
     const vk::PipelineInputAssemblyStateCreateInfo input_assembly = {
         .topology = topology,
     };
@@ -99,7 +184,7 @@ GraphicsPipeline::GraphicsPipeline(
             .depthClampEnable = key.depth_clamp_enable &&
                                 (!key.depth_clip_enable || instance.IsDepthClipEnableSupported()),
             .rasterizerDiscardEnable = false,
-            .polygonMode = LiverpoolToVK::PolygonMode(key.polygon_mode),
+            .polygonMode = ToVk(LiverpoolToVK::PolygonMode(key.polygon_mode)),
             .lineWidth = 1.0f,
         },
         vk::PipelineRasterizationProvokingVertexStateCreateInfoEXT{
@@ -258,7 +343,7 @@ GraphicsPipeline::GraphicsPipeline(
     }
 
     const auto depth_format =
-        instance.GetSupportedFormat(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format),
+        instance.GetSupportedFormat(ToVk(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format)),
                                     vk::FormatFeatureFlagBits2::eDepthStencilAttachment);
     std::array<vk::Format, Shader::IR::NumRenderTargets> color_formats;
     for (s32 i = 0; i < key.num_color_attachments; ++i) {
@@ -271,7 +356,7 @@ GraphicsPipeline::GraphicsPipeline(
         const auto& col_buf = key.color_buffers[i];
         const auto format = LiverpoolToVK::SurfaceFormat(col_buf.data_format, col_buf.num_format);
         const auto color_format =
-            instance.GetSupportedFormat(format, vk::FormatFeatureFlagBits2::eColorAttachment);
+            instance.GetSupportedFormat(ToVk(format), vk::FormatFeatureFlagBits2::eColorAttachment);
         if (!instance.IsFormatSupported(color_format,
                                         vk::FormatFeatureFlagBits2::eColorAttachment)) {
             LOG_WARNING(Render_Vulkan,
@@ -307,107 +392,37 @@ GraphicsPipeline::GraphicsPipeline(
 
     std::array<vk::PipelineColorBlendAttachmentState, AmdGpu::NUM_COLOR_BUFFERS> attachments;
     for (u32 i = 0; i < key.num_color_attachments; i++) {
-        const auto& control = key.blend_controls[i];
-
-        const auto src_color = LiverpoolToVK::BlendFactor(control.color_src_factor);
-        const auto dst_color = LiverpoolToVK::BlendFactor(control.color_dst_factor);
-        const auto color_blend = LiverpoolToVK::BlendOp(control.color_func);
-
-        const auto src_alpha = control.separate_alpha_blend
-                                   ? LiverpoolToVK::BlendFactor(control.alpha_src_factor)
-                                   : src_color;
-        const auto dst_alpha = control.separate_alpha_blend
-                                   ? LiverpoolToVK::BlendFactor(control.alpha_dst_factor)
-                                   : dst_color;
-        const auto alpha_blend =
-            control.separate_alpha_blend ? LiverpoolToVK::BlendOp(control.alpha_func) : color_blend;
-
-        // Vulkan ignores blend factors for min/max, but a factor that zeroes one operand
-        // makes the operation collapse to a plain selection: min(s, 0) is 0 and max(s, 0)
-        // is s for normalized alpha. Rewrite those to the equivalent add so the result is
-        // exact instead of leaving the other operand to survive.
-        auto eff_src_alpha = src_alpha;
-        auto eff_dst_alpha = dst_alpha;
-        auto eff_alpha_blend = alpha_blend;
-        if (alpha_blend == vk::BlendOp::eMin || alpha_blend == vk::BlendOp::eMax) {
-            const bool takes_max = alpha_blend == vk::BlendOp::eMax;
-            if (src_alpha == vk::BlendFactor::eOne && dst_alpha == vk::BlendFactor::eZero) {
-                eff_alpha_blend = vk::BlendOp::eAdd;
-                eff_src_alpha = takes_max ? vk::BlendFactor::eOne : vk::BlendFactor::eZero;
-                eff_dst_alpha = vk::BlendFactor::eZero;
-            } else if (src_alpha == vk::BlendFactor::eZero && dst_alpha == vk::BlendFactor::eOne) {
-                eff_alpha_blend = vk::BlendOp::eAdd;
-                eff_src_alpha = vk::BlendFactor::eZero;
-                eff_dst_alpha = takes_max ? vk::BlendFactor::eOne : vk::BlendFactor::eZero;
-            }
-        }
-
-        const auto color_scaled_min_max =
-            (color_blend == vk::BlendOp::eMin || color_blend == vk::BlendOp::eMax) &&
-            (src_color != vk::BlendFactor::eOne || dst_color != vk::BlendFactor::eOne) &&
-            !key.color_buffers[i].blend_self_scale;
-        const auto alpha_scaled_min_max =
-            (eff_alpha_blend == vk::BlendOp::eMin || eff_alpha_blend == vk::BlendOp::eMax) &&
-            (eff_src_alpha != vk::BlendFactor::eOne || eff_dst_alpha != vk::BlendFactor::eOne);
-        if (color_scaled_min_max || alpha_scaled_min_max) {
+        const AttachmentBlend blend = AttachmentBlendState(key, i);
+        if (blend.unimplemented_min_max) {
             LOG_WARNING(
                 Render_Vulkan,
                 "Unimplemented use of min/max blend op with blend factor not equal to one.");
         }
-
+        if (blend.self_scaled) {
+            LOG_WARNING(
+                Render_Vulkan,
+                "Emulating scaled min/max blend with squared shader output on attachment {}", i);
+        }
         attachments[i] = vk::PipelineColorBlendAttachmentState{
-            .blendEnable = control.enable,
-            .srcColorBlendFactor = src_color,
-            .dstColorBlendFactor = dst_color,
-            .colorBlendOp = color_blend,
-            .srcAlphaBlendFactor = eff_src_alpha,
-            .dstAlphaBlendFactor = eff_dst_alpha,
-            .alphaBlendOp = eff_alpha_blend,
+            .blendEnable = blend.enable,
+            .srcColorBlendFactor = ToVk(blend.src_color),
+            .dstColorBlendFactor = ToVk(blend.dst_color),
+            .colorBlendOp = ToVk(blend.color_op),
+            .srcAlphaBlendFactor = ToVk(blend.src_alpha),
+            .dstAlphaBlendFactor = ToVk(blend.dst_alpha),
+            .alphaBlendOp = ToVk(blend.alpha_op),
             .colorWriteMask =
                 instance.IsDynamicColorWriteMaskSupported()
                     ? vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-                    : key.write_masks[i],
+                    : ToVk(key.write_masks[i]),
         };
-
-        // The shader squares its color output for this attachment (see PsColorBuffer), so the
-        // factors must not scale the operands again.
-        if (key.color_buffers[i].blend_self_scale) {
-            LOG_WARNING(
-                Render_Vulkan,
-                "Emulating scaled min/max blend with squared shader output on attachment {}", i);
-            attachments[i].srcColorBlendFactor = vk::BlendFactor::eOne;
-            attachments[i].dstColorBlendFactor = vk::BlendFactor::eOne;
-        }
-
-        // On GCN GPU there is an additional mask which allows to control color components exported
-        // from a pixel shader. A situation possible, when the game may mask out the alpha channel,
-        // while it is still need to be used in blending ops. For such cases, HW will default alpha
-        // to 1 and perform the blending, while shader normally outputs 0 in the last component.
-        // Unfortunatelly, Vulkan doesn't provide any control on blend inputs, so below we detecting
-        // such cases and override alpha value in order to emulate HW behaviour.
-        const auto has_alpha_masked_out =
-            (key.cb_shader_mask.GetMask(i) & AmdGpu::ColorBufferMask::ComponentA) == 0;
-        const auto has_src_alpha_in_src_blend = src_color == vk::BlendFactor::eSrcAlpha ||
-                                                src_color == vk::BlendFactor::eOneMinusSrcAlpha;
-        const auto has_src_alpha_in_dst_blend = dst_color == vk::BlendFactor::eSrcAlpha ||
-                                                dst_color == vk::BlendFactor::eOneMinusSrcAlpha;
-        if (has_alpha_masked_out && has_src_alpha_in_src_blend) {
-            attachments[i].srcColorBlendFactor = src_color == vk::BlendFactor::eSrcAlpha
-                                                     ? vk::BlendFactor::eOne
-                                                     : vk::BlendFactor::eZero; // 1-A
-        }
-        if (has_alpha_masked_out && has_src_alpha_in_dst_blend) {
-            attachments[i].dstColorBlendFactor = dst_color == vk::BlendFactor::eSrcAlpha
-                                                     ? vk::BlendFactor::eOne
-                                                     : vk::BlendFactor::eZero; // 1-A
-        }
     }
 
     const vk::PipelineColorBlendStateCreateInfo color_blending = {
         .logicOpEnable =
             instance.IsLogicOpSupported() && key.logic_op != AmdGpu::ColorControl::LogicOp::Copy,
-        .logicOp = LiverpoolToVK::LogicOp(key.logic_op),
+        .logicOp = ToVk(LiverpoolToVK::LogicOp(key.logic_op)),
         .attachmentCount = key.num_color_attachments,
         .pAttachments = attachments.data(),
         .blendConstants = std::array{1.0f, 1.0f, 1.0f, 1.0f},
@@ -499,7 +514,7 @@ void GraphicsPipeline::GetVertexInputs(
         attributes.push_back(Attribute{
             .location = attrib.semantic,
             .binding = attrib.semantic,
-            .format = LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
+            .format = ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())),
             .offset = 0,
         });
         bindings.push_back(Binding{

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # SPDX-License-Identifier: GPL-2.0-or-later
-"""JSON answers for the macOS launcher (launcher/app), from the same code run.sh uses.
+"""JSON answers for the macOS launcher (launcher), from the same code run.sh uses.
   launcher_api.py check GAME_DIR              {"problem": text or null, "game": {"title_id",
                                                "title", "version", "region", "old_hunters"}}
   launcher_api.py mods MODS_DIR CONFIG        {"mods": [{"name", "enabled"}]} in load order

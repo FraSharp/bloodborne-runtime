@@ -24,6 +24,8 @@ public:
     void ReadBacking(VAddr address, void* data, u64 size);
     /// CPU wrote guest memory outside page tracking (e.g. decoded video frames).
     void InvalidateMemory(VAddr address, u64 size);
+    /// Diagnostic snapshot of queued host-copy readers, not a synchronization guarantee.
+    bool HostCopiesPendingFor(VAddr address, u64 size);
     Vulkan::Rasterizer* GetRasterizer() const { return rasterizer; }
 
 private:

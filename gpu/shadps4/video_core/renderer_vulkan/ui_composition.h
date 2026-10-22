@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #pragma once
 
+#include <algorithm>
 #include <array>
 #include <cmath>
 #include <cstdint>
@@ -38,6 +39,23 @@ inline std::array<float, 2> Scale(uint32_t guest_width, uint32_t guest_height,
                                 bool native_coordinates) {
     return {float(output_width) / float(native_coordinates ? 1920 : guest_width),
             float(output_height) / float(native_coordinates ? 1080 : guest_height)};
+}
+
+// Where the game's 16:9 screen ends in such a frame (normalized, at most 1): x on a wider output,
+// y on a taller one. From bbport 0.6.
+inline std::array<float, 2> ScreenEdges(uint32_t output_width, uint32_t output_height) {
+    const float k = float(output_width) * 1080.0f / (float(output_height) * 1920.0f);
+    return {std::min(1.0f, 1.0f / k), std::min(1.0f, k)};
+}
+
+// The UI's full-screen fills and backgrounds (the menus' dimming, fades) reach the output's
+// edges: their vertices in the corners of the game's screen, or past them, are moved to the
+// output's corners by the vertex shader (push constant motion_param: the screen's edges, x in the
+// high 16 bits, y in bits 1-15, bit 0 set when clip space +y is the bottom of the screen;
+// EmitUiEdgeStretch). 0: none.
+inline uint32_t EdgeParam(float edge_x, float edge_y, bool y_down) {
+    const auto q = [](float f, float max) { return uint32_t(std::lround(std::clamp(f, 0.0f, 1.0f) * max)); };
+    return std::max(2u, q(edge_x, 65535.0f) << 16 | q(edge_y, 32767.0f) << 1) | (y_down ? 1u : 0u);
 }
 
 } // namespace Vulkan::UiComposition

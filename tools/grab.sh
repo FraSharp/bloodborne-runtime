@@ -10,10 +10,15 @@ kind=present trigger=out/grab.trigger
 mkdir -p out/grab
 before=$(ls out/grab/*_${kind}_*.raw 2>/dev/null | wc -l)
 touch "$trigger"
+dumped=0
 for i in $(seq 1 100); do
     sleep 0.2
-    [[ $(ls out/grab/*_${kind}_*.raw 2>/dev/null | wc -l) -gt $before ]] && break
+    if [[ $(ls out/grab/*_${kind}_*.raw 2>/dev/null | wc -l) -gt $before ]]; then
+        dumped=1
+        break
+    fi
 done
+[[ $dumped == 1 ]] || { echo "no new frame dumped"; exit 1; }
 latest=$(ls -t out/grab/*_${kind}_*.raw 2>/dev/null | head -1)
 [[ -n $latest ]] || { echo "no frame dumped"; exit 1; }
 sleep 0.5

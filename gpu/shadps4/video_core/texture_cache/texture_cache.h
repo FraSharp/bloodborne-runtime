@@ -434,7 +434,7 @@ private:
         VAddr address = 0;
         u64 size = 0;
         Extent3D extent{};
-        vk::Format format{};
+        Backend::Format format{};
         AmdGpu::ImageType type{};
         bool exact_fmt = false;
         BindingType binding{};

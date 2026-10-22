@@ -77,7 +77,10 @@ class NativeUiTests(unittest.TestCase):
         self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
 
     def test_output_other_than_1080p_scales_the_scene(self):
-        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}))
+        # Native 1080p stays unpatched; a 1080p preset renders the whole game smaller.
+        self.assertIsNone(scaled_sizes({'output_res': '1920x1080', 'preset': '0'}))
+        self.assertEqual(scaled_sizes({'output_res': '1920x1080', 'preset': '2'}),
+                         ((1130, 636), (1920, 1080)))
         # Steam Deck: below 1080p the scene is still the preset's fraction of the output.
         for preset, expected in [(0, (1280, 720)), (2, (752, 424)), (4, (426, 240))]:
             with self.subTest(preset=preset):
@@ -87,6 +90,28 @@ class NativeUiTests(unittest.TestCase):
                          ((1916, 1078), (3840, 2160)))
         # TAA is native-only and uses the live host targets.
         self.assertIsNone(scaled_sizes({'output_res': '1280x720', 'upscaler': 'taa', 'preset': '3'}))
+
+
+class FrameRateTests(unittest.TestCase):
+    def test_frame_rate_needs_no_patches_but_with_hooks_off(self):
+        # Above 30 FPS hooks in the game's code run the frame rate (gpu/shim/bbport_frame_rate.cpp).
+        for fps in ('uncap', '60', '90', '30'):
+            self.assertEqual(patches.fps_patches(fps, {}), [], fps)
+        self.assertEqual(patches.fps_patches('uncap', {'BB_FRAME_HOOKS': '0'}),
+                         ['Uncap FPS++', 'Sprint Fix (High FPS)'])
+        self.assertEqual(patches.fps_patches('60', {'BB_FRAME_HOOKS': '0'}), ['60 FPS++'])
+
+
+class HotEffectTests(unittest.TestCase):
+    def test_live_effects_have_no_startup_patch_but_ssr(self):
+        off={k:'0' for k in patches.HOT_EFFECTS}
+        off['effect_ssr']='1'
+        self.assertEqual(patches.effect_patches(off, {}),
+                         ['Enable Screen Space Reflections (READ NOTE)'])
+        names=patches.effect_patches(off, {'BB_HOT_EFFECTS': '0'})
+        self.assertIn('Disable SSAO', names)
+        self.assertIn('Disable DoF', names)
+        self.assertIn('Disable SSAO', patches.effect_patches(off, {'BB_GAME_HOOKS': '0'}))
 
 
 class DebugPatchTests(unittest.TestCase):

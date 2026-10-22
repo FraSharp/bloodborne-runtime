@@ -11,8 +11,18 @@
 typedef struct { int type; } GuestAttr;
 typedef struct { pthread_mutex_t native; } GuestMutex;
 static size_t created, locks, unlocks;
-static int32_t orbis_error(int e) {
+/* Error-only diagnostics: no handle values or guest memory are recorded. */
+static int32_t orbis_error_at(int e, const char *operation, const char *reason) {
     if (!e) return 0;
+    if (e == EINVAL) {
+        const char *probe = getenv("BB_PTHREAD_PROBE");
+        if (probe && probe[0] == '1') {
+            const char *name = runtime_thread_name();
+            fprintf(stderr, "Pthread probe: %s returned EINVAL (%s), thread %s\n",
+                    operation, reason ? reason : "native or argument validation",
+                    name && *name ? name : "unknown");
+        }
+    }
     unsigned code;
     switch (e) {
     case EPERM: code=1; break;
@@ -25,6 +35,7 @@ static int32_t orbis_error(int e) {
     }
     return (int32_t)(UINT32_C(0x80020000) | code);
 }
+#define orbis_error(e) orbis_error_at((e), __func__, NULL)
 static ABI int32_t attr_init(GuestAttr **out) {
     if (!out) return orbis_error(EINVAL);
     GuestAttr *attr = malloc(sizeof(*attr));
@@ -62,11 +73,40 @@ static ABI int32_t mutex_init(GuestMutex **out, GuestAttr **attr, const char *na
     *out = mutex; ++created; return 0;
 }
 static pthread_mutex_t static_init = PTHREAD_MUTEX_INITIALIZER;
+/* Bounded diagnostic history, independent of native mutex lifetime. */
+typedef struct { GuestMutex **slot; uint64_t ns; char thread[32]; } MutexDestruction;
+static pthread_mutex_t destruction_lock = PTHREAD_MUTEX_INITIALIZER;
+static MutexDestruction destructions[128];
+static size_t destruction_next;
+static void probe_destruction(GuestMutex **slot, int record) {
+    const char *probe = getenv("BB_PTHREAD_PROBE");
+    if (!probe || probe[0] != '1') return;
+    pthread_mutex_lock(&destruction_lock);
+    if (record) {
+        MutexDestruction *d = &destructions[destruction_next++ % 128];
+        *d = (MutexDestruction){.slot = slot, .ns = runtime_wait_clock()};
+        const char *name = runtime_thread_name();
+        snprintf(d->thread, sizeof(d->thread), "%s", name && *name ? name : "unknown");
+    } else {
+        for (size_t n = 0; n < 128 && n < destruction_next; ++n) {
+            const MutexDestruction *d = &destructions[(destruction_next - 1 - n) % 128];
+            if (d->slot == slot) {
+                fprintf(stderr, "Pthread probe: mutex destruction by %s %.3f ms before invalid use\n",
+                        d->thread, (double)(runtime_wait_clock() - d->ns) / 1000000.0);
+                break;
+            }
+        }
+    }
+    pthread_mutex_unlock(&destruction_lock);
+}
 /* Statically initialized handles (0/1) are created once, even under contention. */
-static int32_t ensure_mutex(GuestMutex **mutex) {
-    if (!mutex) return orbis_error(EINVAL);
+static int32_t ensure_mutex(GuestMutex **mutex, const char *operation) {
+    if (!mutex) return orbis_error_at(EINVAL, operation, "null handle slot");
     uintptr_t value = __atomic_load_n((uintptr_t *)mutex, __ATOMIC_ACQUIRE);
-    if (value == 2) return orbis_error(EINVAL);
+    if (value == 2) {
+        probe_destruction(mutex, 0);
+        return orbis_error_at(EINVAL, operation, "destroyed handle");
+    }
     if (value >= 2) return 0;
     pthread_mutex_lock(&static_init);
     int32_t e = 0;
@@ -79,7 +119,7 @@ static int32_t ensure_mutex(GuestMutex **mutex) {
     return e;
 }
 static ABI int32_t mutex_lock(GuestMutex **mutex) {
-    int32_t e = ensure_mutex(mutex);
+    int32_t e = ensure_mutex(mutex, __func__);
     if (e) return e;
     int r = pthread_mutex_trylock(&(*mutex)->native);
     if (r == EBUSY) { /* contended: timed for the wait profile */
@@ -92,7 +132,7 @@ static ABI int32_t mutex_lock(GuestMutex **mutex) {
     return e;
 }
 static ABI int32_t mutex_trylock(GuestMutex **mutex) {
-    int32_t e = ensure_mutex(mutex);
+    int32_t e = ensure_mutex(mutex, __func__);
     if (e) return e;
     e = orbis_error(pthread_mutex_trylock(&(*mutex)->native));
     if (!e) ++locks;
@@ -109,7 +149,7 @@ static ABI int32_t mutex_destroy(GuestMutex **mutex) {
     if (!mutex || (uintptr_t)*mutex == 2) return orbis_error(EINVAL);
     if ((uintptr_t)*mutex < 2) return 0;
     int e = pthread_mutex_destroy(&(*mutex)->native);
-    if (!e) { free(*mutex); *mutex = (GuestMutex *)(uintptr_t)2; }
+    if (!e) { probe_destruction(mutex, 1); free(*mutex); *mutex = (GuestMutex *)(uintptr_t)2; }
     return orbis_error(e);
 }
 static int deadline_after(struct timespec *end, uint64_t usec) {
@@ -121,7 +161,7 @@ static int deadline_after(struct timespec *end, uint64_t usec) {
 }
 static int32_t timed_error(int e) { return e == ETIMEDOUT ? (int32_t)UINT32_C(0x8002003c) : orbis_error(e); }
 static ABI int32_t mutex_timedlock(GuestMutex **mutex, uint32_t usec) {
-    int32_t e = ensure_mutex(mutex);
+    int32_t e = ensure_mutex(mutex, __func__);
     if (e) return e;
     struct timespec end;
     if (deadline_after(&end, usec)) return orbis_error(EINVAL);

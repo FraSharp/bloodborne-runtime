@@ -151,6 +151,45 @@ __asm__(".text\n.globl " ENTER_ON_STACK "\n" ENTER_ON_STACK ":\n"
 #endif
 static ABI void guest_exit(void) { puts("Runtime: process finalizer callback reached"); }
 #ifndef _WIN32
+/* Optional terminating diagnostics: reg-index:offset[:indirect-offset...], comma separated.
+ * No reads or callbacks occur before a fault. Unreadable fields are reported, not dereferenced. */
+static void fault_reads(const BbGuestRegs *regs) {
+    const char *env = getenv("BB_FAULT_READS");
+    if (!env || !*env) return;
+    char fields[1024];
+    if (strlen(env) >= sizeof(fields)) return;
+    memcpy(fields, env, strlen(env) + 1);
+    char *save = NULL;
+    unsigned count = 0;
+    for (char *field = strtok_r(fields, ",", &save); field && count < 32;
+         field = strtok_r(NULL, ",", &save), ++count) {
+        char *end;
+        const unsigned long reg = strtoul(field, &end, 10);
+        if (end == field || *end++ != ':' || reg >= 16) continue;
+        char *start = end;
+        const int64_t offset = strtoll(start, &end, 0);
+        if (start == end || (*end && *end != ':')) continue;
+        uint64_t value = 0;
+        const uint64_t address = regs->r[reg] + (uint64_t)offset;
+        int readable = bb_read_memory(&value, address, sizeof(value)) == sizeof(value);
+        unsigned depth = 0;
+        while (*end == ':' && depth++ < 8) {
+            start = end + 1;
+            const int64_t indirect = strtoll(start, &end, 0);
+            if (start == end || (*end && *end != ':')) { readable = 0; break; }
+            if (readable && value)
+                readable = bb_read_memory(&value, value + (uint64_t)indirect, sizeof(value)) == sizeof(value);
+            else readable = 0;
+        }
+        if (*end) continue;
+        char line[192];
+        const int n = snprintf(line, sizeof(line),
+                              "  fault field %s: first address %#llx, readable %d, value %#llx\n",
+                              field, (unsigned long long)address, readable, (unsigned long long)value);
+        if (n > 0) { ssize_t written_ = write(2, line, (size_t)n < sizeof(line) ? (size_t)n : sizeof(line) - 1); (void)written_; }
+    }
+}
+
 static void fault(int sig, siginfo_t *info, void *context) {
     /* Translated code's unaligned ordered accesses (bbcpu, arm64). */
     if (sig == SIGBUS && bbcpu_handle_alignment_fault(context)) return;
@@ -169,7 +208,7 @@ static void fault(int sig, siginfo_t *info, void *context) {
     /* The process is terminating: dladdr/snprintf are acceptable here. */
     ucontext_t *uc = context;
     uintptr_t rip = (uintptr_t)BB_UC_RIP(uc);
-    char line[512];
+    char line[1024];
     Dl_info where;
     if (rip - (uintptr_t)image < 0x10000000)
         snprintf(line, sizeof(line), "Guest fault (signal %d) at guest offset 0x%lx, address %p\n",
@@ -195,8 +234,12 @@ static void fault(int sig, siginfo_t *info, void *context) {
         { ssize_t written_=write(2, line, strlen(line)); (void)written_; }
         /* Guest call chain: return addresses into the image on the guest stack (translated code
          * has no host frames for them). */
+        BbGuestRegs regs;
+        const int have_regs = bbcpu_fault_guest_regs(context, &regs);
+        if (have_regs) fault_reads(&regs);
+        runtime_cmdbuf_fault_report();
         uint64_t stack[256];
-        const size_t got = bb_read_memory(stack, (uintptr_t)BB_UC_RSP(uc), sizeof(stack));
+        const size_t got = have_regs ? bb_read_memory(stack, regs.r[4], sizeof(stack)) : 0;
         int n = snprintf(line, sizeof(line), "  guest stack, image offsets:");
         for (size_t i = 0, shown = 0; i < got / 8 && shown < 24 && n < (int)sizeof(line) - 24; ++i)
             if (stack[i] - (uintptr_t)image < 0x10000000) {

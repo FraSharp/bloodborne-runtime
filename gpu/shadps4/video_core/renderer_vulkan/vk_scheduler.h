@@ -977,6 +977,9 @@ public:
     /// Writes elsewhere do not wait (the hardware's command processor writes do not wait for
     /// earlier draws either).
     void WaitHostCopiesFor(u64 address, u64 size);
+    /// Thread-safe diagnostic snapshot; conservative at granule collisions. Does not
+    /// admit a CPU write or cover future copy registrations/queued draw reads.
+    bool HostCopiesPendingFor(u64 address, u64 size);
 
     /// Runs `copy` on a recording thread in order with the commands, the other host copies and
     /// the signals of SignalAfterHostCopies (the threads spin for work anyway, so small copies cost no wakeup);
@@ -1105,6 +1108,17 @@ public:
     void DeferOperation(Common::UniqueFunction<void>&& func) {
         std::unique_lock lk(pending_ops_mutex);
         pending_ops.emplace(std::move(func), CurrentTick());
+        num_pending_ops.fetch_add(1, std::memory_order_release);
+    }
+
+    /// bbport: as DeferOperation, but until the GPU is past the submission after the current
+    /// one. For resources the draw pipeline's stage B may still reference: it records draws
+    /// stage A prepared before the deferral, and those can land in the next submission (Metal:
+    /// texture-cache image views "destroyed while still required to be alive by the command
+    /// buffer"; 40 in a load with the pipeline, none with it off or with this deferral).
+    void DeferOperationPastNext(Common::UniqueFunction<void>&& func) {
+        std::unique_lock lk(pending_ops_mutex);
+        pending_ops.emplace(std::move(func), CurrentTick() + 1);
         num_pending_ops.fetch_add(1, std::memory_order_release);
     }
 

@@ -3,6 +3,7 @@
 
 #include <chrono>
 #include <array>
+#include <atomic>
 #include <map>
 #include <unordered_map>
 #include <algorithm>
@@ -69,6 +70,72 @@ static bool LayerTranslate(uint64_t va, uint64_t* phys, uint64_t* end) {
 namespace VideoCore {
 
 namespace {
+bool UnifiedAccessProbeEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_UNIFIED_ACCESS_PROBE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    return enabled;
+}
+
+bool UnifiedCpuSyncEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_UNIFIED_CPU_SYNC");
+        if (!value || std::strcmp(value, "1") != 0) {
+            return false;
+        }
+        if (EmulatorSettings.GetReadbacksMode() != GpuReadbacksMode::Precise) {
+            std::printf("Unified CPU sync: disabled; BB_READBACKS=2 is required\n");
+            return false;
+        }
+        const char* workers = std::getenv("BB_PREP_WORKERS");
+        const char* pipe = std::getenv("BB_DRAW_PIPE");
+        if (!workers || std::strcmp(workers, "0") != 0 ||
+            !pipe || std::strcmp(pipe, "0") != 0) {
+            std::printf("Unified CPU sync: disabled; the experiment requires "
+                        "BB_PREP_WORKERS=0 and BB_DRAW_PIPE=0\n");
+            return false;
+        }
+        std::printf("Unified CPU sync: precise page tracking and completion waits enabled\n");
+        return true;
+    }();
+    return enabled;
+}
+
+// Diagnostic history of declared write bindings, not their contents. The bounded history
+// can miss older bindings; a negative lookup is not proof that the range was never written.
+struct UnifiedWriteProbeHistory {
+    struct Range {
+        u64 address{}, size{}, tick{};
+    };
+    static constexpr size_t Capacity = 4096;
+    std::array<Range, Capacity> ranges{};
+    std::mutex mutex;
+    u64 count{};
+
+    void Note(u64 address, u64 size, u64 tick) {
+        std::scoped_lock lock{mutex};
+        ranges[count++ % Capacity] = {address, size, tick};
+    }
+
+    std::pair<u64, u64> Newest(u64 address, u64 size) {
+        std::scoped_lock lock{mutex};
+        u64 newest = 0;
+        for (const auto& range : ranges) {
+            if (range.size && address < range.address + range.size &&
+                range.address < address + size) {
+                newest = std::max(newest, range.tick);
+            }
+        }
+        return {newest, count > Capacity ? count - Capacity : 0};
+    }
+};
+
+UnifiedWriteProbeHistory& UnifiedWriteHistory() {
+    static UnifiedWriteProbeHistory history;
+    return history;
+}
+
 // bbport: the tick of the newest GPU write per 64 KiB of guest memory, per 1 MiB for writes over
 // 16 MiB (ObtainBuffer with is_written: the only place ranges become GPU-modified). A readback
 // waits for that submission only and copies on the readback queue, not behind the queued
@@ -96,6 +163,9 @@ struct GpuWriteTicks {
     void Note(u64 address, u64 size, u64 tick) {
         if (size == 0 || (address + size - 1) >> AddressBits) {
             return;
+        }
+        if (UnifiedAccessProbeEnabled()) {
+            UnifiedWriteHistory().Note(address, size, tick);
         }
         auto& table = size <= FineLimit ? fine : coarse;
         for (u64 page = address >> table.shift; page <= (address + size - 1) >> table.shift;
@@ -134,6 +204,45 @@ struct GpuWriteTicks {
 GpuWriteTicks& WriteTicks() {
     static GpuWriteTicks write_ticks;
     return write_ticks;
+}
+
+// Notifications can be before or after a host write; this measures unfinished GPU work,
+// not simultaneous stores. Unified memory still needs ordering even without a readback copy.
+void ProbeUnifiedCpuAccess(Vulkan::Scheduler& scheduler, VAddr address, u64 size, bool is_write) {
+    if (!UnifiedAccessProbeEnabled() || size == 0) {
+        return;
+    }
+    static std::atomic<u64> notifications{0}, coarse_hits{0}, pending_reads{0}, pending_writes{0};
+    const u64 tick = WriteTicks().Newest(address, size);
+    const auto [exact_tick, replaced] = UnifiedWriteHistory().Newest(address, size);
+    auto* completion = scheduler.GetWorkSemaphore();
+    if (!completion->IsFree(std::max(tick, exact_tick))) {
+        completion->Refresh(); // Do not count a stale cached completion value as pending work.
+    }
+    const bool coarse_pending = tick && !completion->IsFree(tick);
+    const bool pending = exact_tick && !completion->IsFree(exact_tick);
+    const u64 coarse_count = coarse_pending
+        ? coarse_hits.fetch_add(1, std::memory_order_relaxed) + 1
+        : coarse_hits.load(std::memory_order_relaxed);
+    u64 pending_count = 0;
+    if (pending) {
+        auto& counter = is_write ? pending_writes : pending_reads;
+        pending_count = counter.fetch_add(1, std::memory_order_relaxed) + 1;
+    }
+    const u64 total = notifications.fetch_add(1, std::memory_order_relaxed) + 1;
+    if ((coarse_pending && coarse_count <= 8) || (pending && pending_count <= 8) ||
+        (total & (total - 1)) == 0) {
+        std::printf("Unified access probe: %llu notifications, %llu reads and %llu writes "
+                    "over unfinished GPU write bindings; %llu coarse overlaps; "
+                    "current %s %llu bytes, coarse %u, exact %u; %llu history entries replaced\n",
+                    static_cast<unsigned long long>(total),
+                    static_cast<unsigned long long>(pending_reads.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(pending_writes.load(std::memory_order_relaxed)),
+                    static_cast<unsigned long long>(coarse_count),
+                    is_write ? "write" : "read", static_cast<unsigned long long>(size),
+                    unsigned(coarse_pending), unsigned(pending),
+                    static_cast<unsigned long long>(replaced));
+    }
 }
 
 // bbport (BB_READBACK_LOG): the newest GPU-written bindings, to show which writes a readback that
@@ -583,7 +692,34 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
         ASSERT_MSG(instance.IsExternalMemoryHostSupported() &&
                        runtime_memory_pool_view(&pool, &pool_size),
                    "The GPU has no sparse buffers and cannot import the game's memory");
-        pool_buffer = std::make_unique<Buffer>(instance, pool, pool_size, "Guest memory pool");
+        // MoltenVK draws data from past 4 GiB in an imported buffer wrongly: vertex and index bytes
+        // that drew correctly lower gave stretched objects and missing walls once areas loaded
+        // there, until a restart (KosmicKrisp, on the same path, drew them correctly). A buffer
+        // bound to the pool's memory at an offset is not enough: MoltenVK uses the same Metal
+        // buffer at the same offset. So the pool is imported in windows, each its own Metal buffer:
+        // one starts every 3 GiB and reaches 512 MiB into the next, and a binding uses the window
+        // its start is in. The overlap is all the memory imported twice: a whole second import
+        // from 3 GiB (0.7.0) put 17 GB in the residency set at 1440p (10 GB pool) and the device
+        // was lost at start. BB_POOL_SPLIT=0: one import of the whole pool.
+        const char* split_env = std::getenv("BB_POOL_SPLIT");
+        const bool split = !(split_env && split_env[0] == '0');
+        for (u64 start = 0; start < pool_size; start += POOL_WINDOW_STEP) {
+            const u64 size = split ? std::min(POOL_WINDOW_SIZE, pool_size - start) : pool_size;
+            const std::string name = split && pool_size > POOL_WINDOW_STEP
+                                         ? "Guest memory pool " + std::to_string(pool_windows.size() + 1)
+                                         : std::string("Guest memory pool");
+            pool_windows.push_back(std::make_unique<Buffer>(instance, static_cast<u8*>(pool) + start,
+                                                            size, name));
+            if (!split || start + size >= pool_size) {
+                break;
+            }
+        }
+        if (pool_windows.size() > 1) {
+            std::printf("Guest memory: the pool is imported in %zu windows of up to %llu MiB, one "
+                        "every %llu MiB (BB_POOL_SPLIT=0: one import)\n",
+                        pool_windows.size(), static_cast<unsigned long long>(POOL_WINDOW_SIZE >> 20),
+                        static_cast<unsigned long long>(POOL_WINDOW_STEP >> 20));
+        }
         unified_memory.store(true, std::memory_order_relaxed);
         if (GuestInPlace()) {
             DisableGuestInPlace(); // the same idea, through sparse arenas
@@ -692,6 +828,12 @@ BufferCache::~BufferCache() = default;
 
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
     if (UnifiedGuestMemory()) {
+        ProbeUnifiedCpuAccess(scheduler, device_addr, size, true);
+        if (UnifiedCpuSyncEnabled()) {
+            memory_tracker->InvalidateRegion(device_addr, size, [this, device_addr, size, assume_locks] {
+                ReadMemory(device_addr, size, true, assume_locks);
+            });
+        }
         return; // the GPU reads the game's memory itself: nothing to invalidate
     }
     if (LayerMode()) {
@@ -753,6 +895,26 @@ void BufferCache::ExtendWriteFault(VAddr device_addr, u64 guest_rip) {
 
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks) {
     if (UnifiedGuestMemory()) {
+        ProbeUnifiedCpuAccess(scheduler, device_addr, size, is_write);
+        if (UnifiedCpuSyncEnabled()) {
+            const auto synchronize = [this, device_addr, size, is_write] {
+                // Shared bytes need no download, but the CPU must not use them before the
+                // GPU write completes. Wait submits a still-open chunk before waiting for it.
+                const u64 tick = WriteTicks().Newest(device_addr, size);
+                if (tick) {
+                    scheduler.Wait(tick);
+                }
+                memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
+                if (is_write) {
+                    memory_tracker->MarkRegionAsCpuModified(device_addr, size);
+                }
+            };
+            if (assume_locks) {
+                synchronize();
+            } else {
+                liverpool->SendCommand<true>(synchronize);
+            }
+        }
         return; // GPU writes land in the game's memory: nothing to read back
     }
     BbStats::readbacks.fetch_add(1, std::memory_order_relaxed);
@@ -1139,7 +1301,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         if (is_written || size > STREAM_THRESHOLD || IsRegionGpuModified(device_addr, size)) {
             if (const auto range = UnifiedRange(device_addr, size)) {
                 if (is_written) {
-                    WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+                    NoteWriteTick(device_addr, size);
                 } else if (is_texel_buffer) {
                     SynchronizeMemoryFromImage(range->first, range->second, device_addr, size);
                 }
@@ -3417,8 +3579,36 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
                         u32(image.flags));
         }
     }
+    // A shared guest-memory pool bounds the allocation, not the individual binding. Check
+    // whether an alias transfer is larger than that binding without logging guest contents.
+    static const bool alias_probe = [] {
+        const char* value = std::getenv("BB_IMAGE_ALIAS_PROBE");
+        return value && std::strcmp(value, "1") == 0;
+    }();
+    if (alias_probe) {
+        static std::atomic<u64> transfers{0}, oversized{0};
+        const u64 total = transfers.fetch_add(1, std::memory_order_relaxed) + 1;
+        const bool larger = image.info.guest_size > size;
+        const u64 over = larger ? oversized.fetch_add(1, std::memory_order_relaxed) + 1
+                               : oversized.load(std::memory_order_relaxed);
+        if ((larger && over <= 8) || (total & (total - 1)) == 0) {
+            std::printf("Image alias probe: %llu transfers, %llu larger than the binding; "
+                        "current binding %u bytes, image %llu bytes, %zu mips\n",
+                        static_cast<unsigned long long>(total),
+                        static_cast<unsigned long long>(over), size,
+                        static_cast<unsigned long long>(image.info.guest_size),
+                        buffer_copies.size());
+        }
+    }
     auto& tile_manager = texture_cache.GetTileManager();
     tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
+    if (UnifiedGuestMemory()) {
+        if (UnifiedCpuSyncEnabled()) {
+            NoteWriteTick(device_addr, image.info.guest_size);
+        } else if (UnifiedAccessProbeEnabled()) {
+            UnifiedWriteHistory().Note(device_addr, image.info.guest_size, scheduler.CurrentTick());
+        }
+    }
     DropShadows(device_addr, size);
     // A GPU write like any other: what the GPU copies there each frame (a render target read as a
     // texel buffer) goes to VRAM instead of crossing PCIe twice (written there, read back).
@@ -3582,7 +3772,19 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::UnifiedRange(VAddr add
         return std::nullopt;
     }
     UnifiedPageTable(addr, size);
-    return std::pair<const Buffer*, u64>{pool_buffer.get(), phys};
+    const size_t window = PoolWindow(phys);
+    const u64 start = window * POOL_WINDOW_STEP;
+    const Buffer* buffer = pool_windows[window].get();
+    if (phys - start + size > buffer->SizeBytes()) {
+        // Longer than the windows overlap (512 MiB): never seen; a copy instead.
+        static std::atomic<bool> logged{false};
+        if (!logged.exchange(true)) {
+            std::printf("Guest memory: a %llu MiB binding crosses the end of pool window %zu\n",
+                        static_cast<unsigned long long>(size >> 20), window + 1);
+        }
+        return std::nullopt;
+    }
+    return std::pair<const Buffer*, u64>{buffer, phys - start};
 }
 
 void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
@@ -3599,8 +3801,12 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
             u64 phys = 0;
             uintptr_t mapping_end = 0;
             if (runtime_memory_pool_phys(at, &phys, &mapping_end)) {
+                // The window of the block's first byte holds the whole block.
                 const u64 into_block = at - (block << block_shift);
-                entries.emplace_back(block, pool_buffer->BufferDeviceAddress() + phys - into_block);
+                const u64 base = phys >= into_block ? phys - into_block : 0;
+                const size_t window = PoolWindow(base);
+                entries.emplace_back(block, pool_windows[window]->BufferDeviceAddress() + phys -
+                                                into_block - window * POOL_WINDOW_STEP);
             }
         }
     });
@@ -3742,6 +3948,11 @@ void BufferCache::ReportArenaBinds() {
 namespace VideoCore {
 void BufferCache::NoteWriteTick(VAddr address, u64 size) {
     WriteTicks().Note(address, size, scheduler.CurrentTick());
+    if (UnifiedGuestMemory() && UnifiedCpuSyncEnabled() && size) {
+        // The GPU already writes the imported pool. Reuse page-state transitions without
+        // uploading CPU bytes: protect reads/writes until the binding's work completes.
+        memory_tracker->ForEachUploadRange(address, size, true, [](u64, u64) {}, [] {});
+    }
 }
 } // namespace VideoCore
 

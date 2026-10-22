@@ -30,6 +30,8 @@ void runtime_mutex_report(void);
 uintptr_t runtime_memory_resolve(const char *name);
 void runtime_memory_report(void);
 int runtime_memory_is_mapped(uintptr_t address, uint64_t size);
+/* Direct memory past the game's size for the port's own guest allocations (runtime_memory.c). */
+int runtime_extra_direct_map(uint64_t size, uint64_t alignment, void **out);
 /* The CPU is about to write the range outside guest code (a file read): tells the GPU side. */
 void runtime_memory_note_write(uintptr_t address, uint64_t size);
 void runtime_memory_note_cpu_write(uintptr_t address, uint64_t size);
@@ -69,6 +71,8 @@ uintptr_t runtime_kernel_resolve(const char *name);
 uintptr_t runtime_file_resolve(const char *name);
 uintptr_t runtime_services_resolve(const char *name);
 /* Online play (runtime_net.c, BB_ONLINE=1): the online module answers the network and PSN imports. */
+void runtime_trophy_configure(const char *title);
+int32_t runtime_trophy_unlock(int32_t id, int32_t *platinum);
 void runtime_net_configure(const char *app0, const char *serial, const char *title, const char *version);
 int runtime_net_enabled(void);
 int runtime_net_symbol(const char *symbol);
@@ -98,6 +102,7 @@ void *runtime_low_map(size_t size, int prot);
 void runtime_native_load(uint64_t image_base);
 /* The game's command buffers: one writer at a time, BB_CB_PROBE=1 reports (runtime_cmdbuf.c). */
 void runtime_cmdbuf_load(uint64_t image_base);
+void runtime_cmdbuf_fault_report(void);
 uintptr_t runtime_ajm_resolve(const char *name);
 void runtime_ajm_report(void);
 uintptr_t runtime_audio_resolve(const char *name);
@@ -111,4 +116,5 @@ uintptr_t runtime_savedata_resolve(const char *name);
 void runtime_savedata_report(void);
 void runtime_thread_attach_host(const char *name);
 #include "runtime_heap.h"
+
 #endif

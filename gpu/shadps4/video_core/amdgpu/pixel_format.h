@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <atomic>
+#include <cstdio>
 #include <string_view>
 #include <fmt/format.h>
 #include "common/assert.h"
@@ -356,7 +358,17 @@ constexpr NumberConversion MapNumberConversion(const NumberFormat num_fmt,
         case DataFormat::Format16_16_16_16:
             return NumberConversion::Sint16ToSnormNz;
         default:
-            UNREACHABLE_MSG("data_fmt = {}", u32(data_fmt));
+            // bbport: no real descriptor has this combination (seen: SnormNz with
+            // Format11_11_10). Draw preparation reads sharps from game memory the game may be
+            // rewriting; a stale one must not stop the game. From Supermedo/bloodborne_pc
+            // 3e3b760 (idea from parsifal295, PR #55).
+            if (static std::atomic<u32> reported{0};
+                reported.fetch_add(1, std::memory_order_relaxed) < 8) {
+                std::printf("GPU: SnormNz with data format %u (a stale descriptor?): read without "
+                            "conversion\n",
+                            u32(data_fmt));
+            }
+            return NumberConversion::None;
         }
     }
     default:

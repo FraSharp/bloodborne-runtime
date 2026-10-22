@@ -160,10 +160,14 @@ if [[ $live == 1 ]]; then
     echo "Output ${scaled_output}: live resolution changes (live_resolution=0: startup patch)"
 elif [[ -n ${scaled_output:-} ]]; then
     export BB_RENDER_RES=$scaled_render BB_OUTPUT_RES=$scaled_output BB_AUTO_RENDER_RES=1
-    # Outputs above 1080p need more direct memory for their targets; at 1080p the default
-    # (9152 MiB there ran the clinic at 7 FPS instead of 36 on an 18 GB M3 Pro).
-    if (( ${scaled_output%x*} > 1920 )); then
-        export BB_DMEM_MB=${BB_DMEM_MB:-9152}
+    # A scene larger than 1080p needs direct memory for its larger targets: 448 bytes per pixel
+    # above 1080p, in 64 MiB steps, over the PS4's 5056 MiB. A 2258x1270 scene (4K output,
+    # Balanced) failed at 5184 MiB and ran at 5376; 1506x848 (1440p, Balanced) ran at 5056. The
+    # 9152 MiB used before for every output above 1080p lost the device at 1440p on an 18 GB Mac.
+    scene_w=${scaled_render%x*} scene_h=${scaled_render#*x}
+    extra=$(( (scene_w * scene_h - 1920 * 1080) * 448 ))
+    if (( extra > 0 )); then
+        export BB_DMEM_MB=${BB_DMEM_MB:-$(( 5056 + (extra + (64 << 20) - 1) / (64 << 20) * 64 ))}
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
 fi
@@ -276,7 +280,9 @@ if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
 fi
 probe_args=("$out/boot-linked.bin" --content-profile "$out/content.bin" --patches "$out/patches.bin" --app0 "$game" --user "${BB_USER_DIR:-$data/user}" --timeout "${BB_TIMEOUT:-0}" "$@")
 if [[ -n ${mod_game:-} ]]; then
-    "$probe" "${probe_args[@]}" &
+    # stdin passed on explicitly: a background command's is /dev/null otherwise (the launcher's
+    # settings channel arrives on it).
+    "$probe" "${probe_args[@]}" <&0 &
     mod_pid=$!
     trap 'kill -TERM "$mod_pid" 2>/dev/null || true' TERM INT
     mod_status=0

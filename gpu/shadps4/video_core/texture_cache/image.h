@@ -8,6 +8,7 @@
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image_info.h"
+#include "video_core/texture_cache/image_upload_hash.h"
 #include "video_core/texture_cache/image_view.h"
 
 #include <deque>
@@ -198,7 +199,7 @@ public:
         u32 num_samples;
     };
     std::deque<BackingImage> backing_images;
-    boost::container::static_vector<u64, 16> mip_hashes{};
+    boost::container::static_vector<ImageUploadHash, 16> mip_hashes{};
     u64 lru_id{};
     u64 hash{};
 

@@ -600,24 +600,29 @@ void Scheduler::NoteHostCopySource(u64 address, u64 size) {
     }
 }
 
+bool Scheduler::HostCopiesPendingFor(u64 address, u64 size) {
+    if (size == 0) {
+        return false;
+    }
+    std::scoped_lock lk{host_copy_sources_mutex};
+    bool overlap = host_copy_big_seq > host_copy_sources_done;
+    const u64 first = address >> HostCopyGranuleShift;
+    const u64 last = (address + size - 1) >> HostCopyGranuleShift;
+    if (last - first >= HostCopyMaxGranules) {
+        overlap = true;
+    }
+    for (u64 g = first; !overlap && g <= last; ++g) {
+        const auto& slot = host_copy_slots[HostCopySlotOf(g, HostCopySlots)];
+        overlap = slot.seq > host_copy_sources_done &&
+                  (slot.granule == g || slot.granule == HostCopyWildcard);
+    }
+    return overlap;
+}
+
 void Scheduler::WaitHostCopiesFor(u64 address, u64 size) {
-    {
-        std::scoped_lock lk{host_copy_sources_mutex};
-        bool overlap = host_copy_big_seq > host_copy_sources_done;
-        const u64 first = address >> HostCopyGranuleShift;
-        const u64 last = (address + std::max<u64>(size, 1) - 1) >> HostCopyGranuleShift;
-        if (last - first >= HostCopyMaxGranules) {
-            overlap = true;
-        }
-        for (u64 g = first; !overlap && g <= last; ++g) {
-            const auto& slot = host_copy_slots[HostCopySlotOf(g, HostCopySlots)];
-            overlap = slot.seq > host_copy_sources_done &&
-                      (slot.granule == g || slot.granule == HostCopyWildcard);
-        }
-        if (!overlap) {
-            BbStats::host_copy_waits_skipped.fetch_add(1, std::memory_order_relaxed);
-            return;
-        }
+    if (!HostCopiesPendingFor(address, std::max<u64>(size, 1))) {
+        BbStats::host_copy_waits_skipped.fetch_add(1, std::memory_order_relaxed);
+        return;
     }
     WaitHostCopies();
 }
@@ -1147,9 +1152,12 @@ void Scheduler::SubmitExecution(SubmitInfo& info) {
     const vk::Semaphore timeline = work_semaphore.Handle();
     info.AddSignal(timeline, signal_value);
 
+    // The second wait is the presented frame's ready semaphore: the present pass reads that
+    // frame with a blit (transfer stage), which ColorAttachmentOutput did not cover. From
+    // bbport 0.6 (8185b88, deadinside28/bloodborne_pc).
     static constexpr std::array<vk::PipelineStageFlags, 2> wait_stage_masks = {
         vk::PipelineStageFlagBits::eAllCommands,
-        vk::PipelineStageFlagBits::eColorAttachmentOutput,
+        vk::PipelineStageFlagBits::eAllCommands,
     };
 
     const vk::TimelineSemaphoreSubmitInfo timeline_si = {
@@ -1228,9 +1236,10 @@ void Scheduler::SubmitAsync(SubmitInfo& info) {
         }
         recorded_segments.fetch_add(num_cmdbufs, std::memory_order_relaxed);
         recorded_submissions.fetch_add(1, std::memory_order_relaxed);
+        // As above: every wait covers all stages (bbport 0.6).
         static constexpr std::array<vk::PipelineStageFlags, 4> wait_stage_masks = {
             vk::PipelineStageFlagBits::eAllCommands,
-            vk::PipelineStageFlagBits::eColorAttachmentOutput,
+            vk::PipelineStageFlagBits::eAllCommands,
             vk::PipelineStageFlagBits::eAllCommands,
             vk::PipelineStageFlagBits::eAllCommands,
         };

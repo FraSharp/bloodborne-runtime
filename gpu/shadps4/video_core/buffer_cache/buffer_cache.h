@@ -381,7 +381,16 @@ private:
     void ProcessUnifiedUnmaps();
     /// A read-only copy of guest memory outside the pool (or across mappings).
     std::pair<const Buffer*, u64> UnifiedCopy(VAddr addr, u64 size, bool is_written);
-    std::unique_ptr<Buffer> pool_buffer;
+    /// The game's memory pool, imported in overlapping windows: one starts every POOL_WINDOW_STEP
+    /// and is POOL_WINDOW_SIZE long (the last one shorter), so no binding offset reaches 4 GiB
+    /// (MoltenVK; see the constructor). BB_POOL_SPLIT=0: one import of the whole pool.
+    std::vector<std::unique_ptr<Buffer>> pool_windows;
+    static constexpr u64 POOL_WINDOW_STEP = 3ull << 30;
+    static constexpr u64 POOL_WINDOW_SIZE = POOL_WINDOW_STEP + (512ull << 20);
+    /// The window a range starting at pool offset `phys` uses.
+    size_t PoolWindow(u64 phys) const {
+        return std::min<size_t>(phys / POOL_WINDOW_STEP, pool_windows.size() - 1);
+    }
     IntervalList<> unified_table_blocks; ///< blocks whose page table entries point into the pool
     /// bbport BB_LAYER_MEMORY (statistics): a binding not whole in one chunk.
     void NoteLayerMiss(VAddr address, u64 size, bool is_written);

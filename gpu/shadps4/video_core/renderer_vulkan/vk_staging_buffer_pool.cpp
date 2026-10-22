@@ -191,6 +191,19 @@ void StagingBufferPool::TrimRing(Ring& ring) {
 }
 
 void StagingBufferPool::TrimLarge(std::vector<LargeBuffer>& cache) {
+    // bbport: large buffers are kept for reuse, not destroyed after LARGE_IDLE_FRAMES. With Metal
+    // argument buffers (MoltenVK's default; without them our frame rate fell from ~30 to ~4 FPS)
+    // a destroyed one was still referenced by later command buffers long after its last use: the
+    // device loss reported as VK_ERROR_OUT_OF_DEVICE_MEMORY (a 64 MiB detiler buffer, in every
+    // motion-vector boss run). Their total is bounded by the largest uploads.
+    // BB_STAGING_TRIM_LARGE=1: trimmed as before.
+    static const bool trim = [] {
+        const char* env = std::getenv("BB_STAGING_TRIM_LARGE");
+        return env && env[0] == '1';
+    }();
+    if (!trim) {
+        return;
+    }
     std::erase_if(cache, [this](const LargeBuffer& entry) {
         return !entry.held && frame - entry.last_used_frame >= LARGE_IDLE_FRAMES &&
                scheduler.IsFree(entry.tick);

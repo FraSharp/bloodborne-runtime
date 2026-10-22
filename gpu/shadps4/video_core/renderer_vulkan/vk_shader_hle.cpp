@@ -239,6 +239,11 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     const auto src_buf_sharp = info.buffers[1].GetSharp(info);
     const auto dst_buf_sharp = info.buffers[2].GetSharp(info);
     const auto buf_stride = src_buf_sharp.GetStride();
+    if (buf_stride != dst_buf_sharp.GetStride()) {
+        LOG_ERROR(Render_Vulkan,
+                  "Copy shader descriptor mismatch: source stride {}, destination stride {}, control stride {}",
+                  buf_stride, dst_buf_sharp.GetStride(), ctl_buf_sharp.GetStride());
+    }
     ASSERT(buf_stride == dst_buf_sharp.GetStride());
 
     struct CopyShaderControl {
@@ -247,6 +252,10 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
         u32 end;
     };
     static_assert(sizeof(CopyShaderControl) == 12);
+    if (ctl_buf_sharp.GetStride() != sizeof(CopyShaderControl)) {
+        LOG_ERROR(Render_Vulkan, "Copy shader control stride {} (expected {})",
+                  ctl_buf_sharp.GetStride(), sizeof(CopyShaderControl));
+    }
     ASSERT(ctl_buf_sharp.GetStride() == sizeof(CopyShaderControl));
     const auto ctl_buf = reinterpret_cast<const CopyShaderControl*>(ctl_buf_sharp.base_address);
 

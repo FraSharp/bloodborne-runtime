@@ -36,6 +36,12 @@ public:
     /// GPU thread, at every draw/dispatch: starts or ends a recording at frame boundaries.
     static void Poll();
 
+    // Opt-in per-command metadata. No guest memory is dereferenced by these methods.
+    static bool Detailed();
+    static void BeginCommand(const char* kind, u64 tick, u64 completed);
+    static void Binding(const char* kind, u64 stage, u32 slot, VAddr guest, u64 size,
+                        u64 host_base, u64 offset, bool written);
+
     static void BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_colors,
                           const VideoCore::ImageInfo* depth);
     static void Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_instances);

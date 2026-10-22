@@ -20,6 +20,7 @@ static char game_folder[PATH_MAX], game_serial[16], game_title[128], game_versio
 void runtime_net_configure(const char *app0, const char *serial, const char *title, const char *version) {
     snprintf(game_folder,sizeof(game_folder),"%s",app0 ? app0 : "");
     snprintf(game_serial,sizeof(game_serial),"%s",serial ? serial : "");
+    runtime_trophy_configure(serial);
     snprintf(game_title,sizeof(game_title),"%s",title ? title : "");
     snprintf(game_version,sizeof(game_version),"%s",version ? version : "");
 }

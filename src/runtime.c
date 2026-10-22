@@ -33,6 +33,7 @@ static _Atomic size_t guards_acquired, guards_released;
 typedef struct { uint64_t stack_canary; int32_t need_libc_internal; } ImportedData;
 static ImportedData *imported_data;
 static _Atomic size_t memory_calls;
+static int memory_watch;
 /* Dynamic TLS of linked modules: module IDs 2..7 (1 is the eboot's static TLS). */
 #define TLS_MODULES 8
 static struct { const void *data; uint64_t filesz, memsz; } tls_modules[TLS_MODULES];
@@ -82,6 +83,8 @@ static ABI void *guest_tls_get_addr(const uint64_t *index) {
 
 void runtime_start(uint64_t flags) {
     capabilities = flags;
+    const char *watch = getenv("BB_JIT_WATCH");
+    memory_watch = watch && *watch;
     if (!(flags & 1)) return;
     static ImportedData host_data;
     imported_data = runtime_low_map(sizeof(ImportedData), PROT_READ | PROT_WRITE);
@@ -205,17 +208,23 @@ static ABI __attribute__((noreturn)) void stack_fail(void) {
 static ABI void *guest_memset(void *dst, int value, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
-    memset(dst, value, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
+    memset(dst, value, size);
+    if (memory_watch) bbcpu_watch_write((uintptr_t)dst, size);
+    runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memcpy(void *dst, const void *src, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
-    memcpy(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
+    memcpy(dst, src, size);
+    if (memory_watch) bbcpu_watch_write((uintptr_t)dst, size);
+    runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI void *guest_memmove(void *dst, const void *src, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed);
     runtime_memory_prepare_cpu_write((uintptr_t)dst, size);
-    memmove(dst, src, size); runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
+    memmove(dst, src, size);
+    if (memory_watch) bbcpu_watch_write((uintptr_t)dst, size);
+    runtime_memory_note_cpu_write((uintptr_t)dst, size); return dst;
 }
 static ABI int guest_memcmp(const void *a, const void *b, size_t size) {
     atomic_fetch_add_explicit(&memory_calls,1,memory_order_relaxed); return memcmp(a, b, size);

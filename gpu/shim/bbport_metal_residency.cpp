@@ -2,8 +2,10 @@
 #include "bbport_metal_residency.h"
 
 #ifdef __APPLE__
+#include <chrono>
 #include <cstdio>
 #include <cstdlib>
+#include <deque>
 #include <mutex>
 #include <unordered_map>
 #include <objc/message.h>
@@ -34,6 +36,12 @@ struct State {
     /// Allocations in the set: memory (MTLBuffer and its count) and images (MTLTexture).
     std::unordered_map<VkDeviceMemory, std::pair<id, u32>> memories;
     std::unordered_map<VkImage, id> images;
+    /// Removed objects, retained until the GPU completes the tick open at their removal.
+    std::deque<std::pair<id, u64>> retired;
+    u64 (*current_tick)(void*) = nullptr;
+    u64 (*completed_tick)(void*) = nullptr;
+    void* tick_context = nullptr;
+    u64 released = 0; ///< removed objects released so far (the stats line)
 };
 
 State& Get() {
@@ -70,6 +78,27 @@ id ExportTexture(State& s, VkImage image) {
 
 void Commit(State& s) {
     Send(s.set, "commit");
+}
+
+/// Keeps a removed object alive past the command buffers already committed (see SetTicks).
+void Retire(State& s, id object) {
+    if (!s.current_tick) {
+        return;
+    }
+    Send(object, "retain");
+    s.retired.emplace_back(object, s.current_tick(s.tick_context));
+}
+
+void ReleaseCompleted(State& s) {
+    if (s.retired.empty() || !s.completed_tick) {
+        return;
+    }
+    const u64 completed = s.completed_tick(s.tick_context);
+    while (!s.retired.empty() && s.retired.front().second <= completed) {
+        Send(s.retired.front().first, "release");
+        s.retired.pop_front();
+        ++s.released;
+    }
 }
 
 } // namespace
@@ -159,8 +188,10 @@ void RemoveMemory(VkDeviceMemory memory) {
         return;
     }
     SendObject(s.set, "removeAllocation:", it->second.first);
-    s.memories.erase(it);
     Commit(s);
+    Retire(s, it->second.first);
+    s.memories.erase(it);
+    ReleaseCompleted(s);
 }
 
 void AddImage(VkImage image) {
@@ -192,8 +223,38 @@ void RemoveImage(VkImage image) {
         return;
     }
     SendObject(s.set, "removeAllocation:", it->second);
-    s.images.erase(it);
     Commit(s);
+    Retire(s, it->second);
+    s.images.erase(it);
+    ReleaseCompleted(s);
+}
+
+void SetTicks(std::uint64_t (*current)(void*), std::uint64_t (*completed)(void*), void* context) {
+    auto& s = Get();
+    std::scoped_lock lock{s.mutex};
+    s.current_tick = current;
+    s.completed_tick = completed;
+    s.tick_context = context;
+}
+
+void ReleaseRetired() {
+    auto& s = Get();
+    if (!s.set) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    ReleaseCompleted(s);
+    // Every 5 s: removed objects still waiting for their submission, and released so far.
+    static auto last = std::chrono::steady_clock::now();
+    const auto now = std::chrono::steady_clock::now();
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    if (stats && now - last >= std::chrono::seconds(5)) {
+        last = now;
+        std::printf("Residency: %zu removed objects waiting, %llu released; set holds %zu "
+                    "memories and %zu images\n",
+                    s.retired.size(), static_cast<unsigned long long>(s.released),
+                    s.memories.size(), s.images.size());
+    }
 }
 #else
 void Init(const Vulkan::Instance&) {}
@@ -206,6 +267,8 @@ bool AddMemory(VkDeviceMemory) {
 void RemoveMemory(VkDeviceMemory) {}
 void AddImage(VkImage) {}
 void RemoveImage(VkImage) {}
+void SetTicks(std::uint64_t (*)(void*), std::uint64_t (*)(void*), void*) {}
+void ReleaseRetired() {}
 #endif
 
 } // namespace BbMetalResidency

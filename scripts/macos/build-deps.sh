@@ -19,7 +19,7 @@ root=$PWD
 arch=${BB_ARCH:-x86_64}
 case $arch in x86_64|arm64) ;; *) echo "BB_ARCH: x86_64 or arm64" >&2; exit 1 ;; esac
 prefix=$root/deps/macos-$arch
-work=$root/deps/build$([[ $arch == arm64 ]] && echo -arm64)
+work=$root/deps/build$([[ $arch == arm64 ]] && echo -arm64 || true)
 mkdir -p "$prefix" "$work/src"
 
 for tool in pkg-config glslangValidator nasm cmake ninja; do
@@ -30,6 +30,9 @@ done
 
 VULKAN_VERSION=v1.4.365
 MOLTENVK_VERSION=v1.4.2
+# SPIR-V to Metal shading language for the Metal backend (R5); the tag Wooloomooloo2/bloodborne_mac_port
+# builds its Metal renderer with.
+SPIRV_CROSS_VERSION=vulkan-sdk-1.4.363.0
 SDL_VERSION=release-3.4.18
 FMT_VERSION=12.0.0
 MAGIC_ENUM_VERSION=v0.9.7
@@ -116,6 +119,10 @@ EOF
     mark moltenvk
 fi
 
+cmake_package spirv-cross "$(gh KhronosGroup/SPIRV-Cross $SPIRV_CROSS_VERSION)" \
+    -DSPIRV_CROSS_SHARED=OFF -DSPIRV_CROSS_STATIC=ON -DSPIRV_CROSS_CLI=OFF -DSPIRV_CROSS_ENABLE_TESTS=OFF \
+    -DSPIRV_CROSS_ENABLE_HLSL=OFF -DSPIRV_CROSS_ENABLE_CPP=OFF -DSPIRV_CROSS_ENABLE_REFLECT=OFF \
+    -DSPIRV_CROSS_ENABLE_C_API=OFF -DSPIRV_CROSS_ENABLE_UTIL=OFF
 cmake_package sdl3 "$(gh libsdl-org/SDL $SDL_VERSION)" -DSDL_SHARED=ON -DSDL_STATIC=OFF -DSDL_TESTS=OFF -DSDL_EXAMPLES=OFF
 cmake_package fmt "$(gh fmtlib/fmt $FMT_VERSION)" -DFMT_TEST=OFF -DFMT_DOC=OFF
 cmake_package magic-enum "$(gh Neargye/magic_enum $MAGIC_ENUM_VERSION)" \
@@ -187,10 +194,10 @@ if needed app-bash; then
     install -m755 "$work/src/app-bash/bash" "$prefix/app-runtime/bin/bash"
     mark app-bash
 fi
-# Python for the app bundle: python-build-standalone (relocatable, stripped), checksummed.
-if needed app-python; then
+# Python for the app bundle: python-build-standalone (relocatable, stripped), checksummed. The
+# app is packaged for arm64 only; an x86-64 (Rosetta 2) development build does without it.
+if [[ $arch == arm64 ]] && needed app-python; then
     echo "== app-python"
-    [[ $arch == arm64 ]] || { echo 'app-python: arm64 only' >&2; exit 1; }
     archive=$work/app-python.tar.gz
     [[ -f $archive ]] || curl -fsSL --retry 3 -o "$archive" \
         "https://github.com/astral-sh/python-build-standalone/releases/download/${PYTHON_STANDALONE/+/%2B}-aarch64-apple-darwin-install_only_stripped.tar.gz"

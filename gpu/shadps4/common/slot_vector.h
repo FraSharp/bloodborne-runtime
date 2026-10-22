@@ -3,7 +3,11 @@
 
 #pragma once
 
-#include <numeric>
+#include <cstdlib>
+#include <functional>
+#include <iterator>
+#include <limits>
+#include <new>
 #include <utility>
 #include <vector>
 #include "common/assert.h"
@@ -26,10 +30,14 @@ struct SlotId {
     u32 index = INVALID_INDEX;
 };
 
+// Stable storage adapted from Supermedo/bloodborne_pc 3a7cde8 (João Pedro Valadares),
+// after upstream shadPS4. Page operations live in gpu/shim/common/slot_vector_pages.cpp.
+void* SlotVectorReservePages(std::size_t size) noexcept;
+void SlotVectorCommitPages(void* address, std::size_t size) noexcept;
+void SlotVectorReleasePages(void* base, std::size_t size) noexcept;
+
 template <class T>
 class SlotVector {
-    constexpr static std::size_t InitialCapacity = 2048;
-
 public:
     template <typename ValueType, typename Pointer, typename Reference>
     class Iterator {
@@ -89,7 +97,7 @@ public:
     using const_reverse_iterator = std::reverse_iterator<const_iterator>;
 
     SlotVector() {
-        Reserve(InitialCapacity);
+        AddChunk();
     }
 
     ~SlotVector() noexcept {
@@ -102,8 +110,11 @@ public:
             }
             index += 64;
         }
-        delete[] values;
+        SlotVectorReleasePages(values, ReservedBytes);
     }
+
+    SlotVector(const SlotVector&) = delete;
+    SlotVector& operator=(const SlotVector&) = delete;
 
     [[nodiscard]] T& operator[](SlotId id) noexcept {
         ValidateIndex(id);
@@ -219,7 +230,7 @@ private:
 
     [[nodiscard]] u32 FreeValueIndex() noexcept {
         if (free_list.empty()) {
-            Reserve(values_capacity ? (values_capacity << 1) : 1);
+            AddChunk();
         }
 
         const u32 free_index = free_list.back();
@@ -227,37 +238,43 @@ private:
         return free_index;
     }
 
-    void Reserve(std::size_t new_capacity) noexcept {
-        Entry* const new_values = new Entry[new_capacity];
-        std::size_t index = 0;
-        for (u64 bits : stored_bitset) {
-            for (std::size_t bit = 0; bits; ++bit, bits >>= 1) {
-                const std::size_t i = index + bit;
-                if ((bits & 1) == 0) {
-                    continue;
-                }
-                T& old_value = values[i].object;
-                new (&new_values[i].object) T(std::move(old_value));
-                old_value.~T();
-            }
-            index += 64;
+    // Entries never move (as in upstream shadPS4's SlotVector): the whole range is reserved as
+    // address space up front and committed one chunk at a time, so a T& taken before insert()
+    // stays valid after it. The old grow-by-reallocation left such references dangling
+    // (TextureCache::FindDepthTarget and ResolveDepthOverlap crashed reading freed images).
+    void AddChunk() noexcept {
+        if (!values) {
+            values = static_cast<Entry*>(SlotVectorReservePages(ReservedBytes));
+        }
+        const std::size_t old_capacity = values_capacity;
+        const std::size_t new_capacity = (committed_bytes + ChunkBytes) / sizeof(Entry);
+        if (committed_bytes > ReservedBytes - ChunkBytes) {
+            ASSERT_MSG(false, "SlotVector out of space");
+            std::abort();
+        }
+        SlotVectorCommitPages(reinterpret_cast<u8*>(values) + committed_bytes, ChunkBytes);
+        committed_bytes += ChunkBytes;
+        for (std::size_t i = old_capacity; i < new_capacity; ++i) {
+            new (&values[i]) Entry();
         }
 
         stored_bitset.resize((new_capacity + 63) / 64);
-
-        const std::size_t old_free_size = free_list.size();
-        free_list.resize(old_free_size + (new_capacity - values_capacity));
-        const std::size_t new_free_size = free_list.size();
-        std::iota(free_list.rbegin(), free_list.rbegin() + new_free_size - old_free_size,
-                  static_cast<u32>(values_capacity));
-
-        delete[] values;
-        values = new_values;
+        // Lowest new index on top, as before.
+        for (std::size_t i = new_capacity; i-- > old_capacity;) {
+            free_list.push_back(static_cast<u32>(i));
+        }
         values_capacity = new_capacity;
     }
 
+    static constexpr std::size_t ChunkBytes = std::size_t{2} << 20;    // 2 MiB committed at a time
+    static constexpr std::size_t ReservedBytes = std::size_t{1} << 30; // 1 GiB of address space
+    static_assert(sizeof(Entry) <= ChunkBytes);
+    // All supported hosts provide at least 4 KiB alignment for page reservations.
+    static_assert(alignof(Entry) <= 4096);
+
     Entry* values = nullptr;
     std::size_t values_capacity = 0;
+    std::size_t committed_bytes = 0;
 
     std::vector<u64> stored_bitset;
     std::vector<u32> free_list;

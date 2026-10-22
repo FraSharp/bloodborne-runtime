@@ -403,12 +403,16 @@ static void touch_for_write(void *buffer,uint64_t size) {
     }
 }
 /* A page protected again between the touch and the kernel's copy (the GPU side re-arms its write
- * traps): EFAULT with nothing read. Touched again, the read is tried again a few times. */
+ * traps): EFAULT. Touched again, the read is tried again a few times. macOS can report EFAULT after
+ * copying part of the data, with read() having moved the file offset past it: the offset goes back
+ * before each retry, or the retry would read a later part of the file. */
 static ssize_t read_retrying(int h,void *buffer,uint64_t size,int64_t offset,int positional) {
     ssize_t n=-1;
+    const off_t start=positional ? (off_t)offset : lseek(h,0,SEEK_CUR);
     for (int attempt=0; attempt<8; ++attempt) {
         n=positional ? pread(h,buffer,size,offset) : read(h,buffer,size);
         if (n>=0 || errno!=EFAULT) break;
+        if (!positional && start>=0) lseek(h,start,SEEK_SET);
         touch_for_write(buffer,size);
     }
     return n;

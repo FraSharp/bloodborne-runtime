@@ -1,0 +1,92 @@
+// SPDX-License-Identifier: GPL-2.0-or-later
+// From Wooloomooloo2/bloodborne_mac_port (78b59f5, GPL-2.0-or-later), adapted to bloodborne-runtime.
+// bbport: Metal back end "shadow" builder (BB_METAL_SHADOW=1, and always with BB_METAL_FRAME=1) (docs/DESIGN_METAL_BACKEND.md, M1). With BB_METAL_SHADOW=1
+// in the arm64 GPU host, every pipeline the Vulkan path creates is also built as a Metal pipeline
+// state (renderer_metal/mtl_shadow.mm) and the results are counted; nothing draws with them.
+// Everywhere else these are no-ops.
+
+#pragma once
+
+#include <array>
+#include <span>
+#include <tuple>
+#include <vector>
+#include "common/types.h"
+#include "shader_recompiler/runtime_info.h"
+#include "video_core/renderer_vulkan/vk_common.h"
+
+namespace Vulkan {
+struct GraphicsPipelineKey;
+struct ComputePipelineKey;
+} // namespace Vulkan
+
+namespace MetalShadow {
+
+/// One vertex attribute as the Vulkan pipeline declares it (GraphicsPipeline::GetVertexInputs).
+struct VertexInput {
+    u32 location{};
+    bool per_instance{};
+    u32 divisor{1};
+};
+
+#ifdef BB_METAL_BACKEND
+bool Enabled();
+/// The SPIR-V a Vulkan shader module was made from (CompileSPV).
+void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv);
+/// A graphics pipeline the Vulkan path built; `modules`/`has_stage` are indexed by SwStage.
+/// `pipeline`: the Vulkan pipeline, so the Metal frame path finds the Metal one for it.
+void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
+              std::span<const bool> has_stage, std::span<const VertexInput> inputs,
+              bool aux_fragment, vk::Pipeline pipeline);
+void Compute(const Vulkan::ComputePipelineKey& key, vk::ShaderModule module, vk::Pipeline pipeline);
+/// Around the game pipelines' vkCreate*Pipelines: the layer's generic translation skips them.
+struct GameBuildScope {
+    GameBuildScope();
+    ~GameBuildScope();
+};
+#else
+struct GameBuildScope {};
+inline bool Enabled() {
+    return false;
+}
+inline void RegisterModule(vk::ShaderModule, std::span<const u32>) {}
+inline void Graphics(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
+                     std::span<const bool>, std::span<const VertexInput>, bool, vk::Pipeline) {}
+inline void Compute(const Vulkan::ComputePipelineKey&, vk::ShaderModule, vk::Pipeline) {}
+#endif
+
+/// bloodborne-runtime: a Vulkan graphics pipeline the pipeline cache created, in the terms above
+/// (its stages, its vertex inputs from the serialization data, the clip-emulation fragment).
+template <typename Pipeline, typename Sdata, typename Infos, typename RuntimeInfos, typename Modules>
+inline void GraphicsFromVulkan(const Vulkan::GraphicsPipelineKey& key, const Modules& modules,
+                               const Infos& infos, const RuntimeInfos& runtime_infos,
+                               const Sdata& sdata, const Pipeline& pipeline) {
+    if (!Enabled() || !pipeline) {
+        return;
+    }
+    std::array<bool, std::tuple_size_v<Infos>> has_stage{};
+    for (size_t i = 0; i < has_stage.size(); ++i) {
+        has_stage[i] = infos[i] != nullptr;
+    }
+    std::vector<VertexInput> inputs;
+    for (const auto& attribute : sdata.vertex_attributes) {
+        VertexInput in{.location = attribute.location};
+        for (const auto& binding : sdata.vertex_bindings) {
+            if (binding.binding == attribute.binding) {
+                in.per_instance = binding.inputRate == vk::VertexInputRate::eInstance;
+            }
+        }
+        for (const auto& divisor : sdata.divisors) {
+            if (divisor.binding == attribute.binding) {
+                in.divisor = divisor.divisor;
+            }
+        }
+        inputs.push_back(in);
+    }
+    constexpr size_t fragment = size_t(Shader::SwStage::Fragment);
+    const bool aux_fragment =
+        !infos[fragment] && runtime_infos[fragment].hw.fs.clip_distance_emulation;
+    Graphics(key, modules, has_stage, inputs, aux_fragment, pipeline->Handle());
+}
+
+} // namespace MetalShadow

@@ -8,7 +8,7 @@ cd -- "$(dirname -- "$0")/.."
 name=${1:?usage: tools/mac_bench.sh NAME [ENV=VALUE...]}
 shift
 base=out/bench_${name}_$(date +%m%d_%H%M%S)
-pkill -x bb-probe; sleep 1; pkill -9 -x bb-probe
+pgrep -x bb-probe > /dev/null && { echo "A game is already running: not starting another." >&2; exit 1; }
 : > out/pad; echo "${BASE_MASK:-0}" > out/toggles
 # The game stays in the background (no focus taken from the desktop; BB_BENCH_FOREGROUND=1: brought
 # to the front as usual). Input comes from the pad file either way.
@@ -20,24 +20,45 @@ env BB_GAME_DIR="${BB_GAME_DIR:-$HOME/Downloads/PS4/Bloodborne/CUSA03173}" \
     BB_MENU_TRIGGER="$PWD/out/menu.trigger" BB_DUMP_DIR="$PWD/out/grab" "$@" \
     bash run.sh > "$base.log" 2>&1 < /dev/null &
 launcher=$!
-fail() { echo "FAILED: $*  ($base.log)"; tail -20 "$base.log"; kill "$launcher" 2>/dev/null; pkill -x bb-probe; exit 1; }
+stop_owned_run() {
+    # run.sh normally execs bb-probe; with a mounted mod view it owns a bb-probe child.
+    local child
+    child=$(pgrep -P "$launcher" -x bb-probe || true)
+    kill -TERM "$launcher" 2>/dev/null || true
+    sleep 2
+    [[ -z $child ]] || kill -KILL "$child" 2>/dev/null || true
+    kill -KILL "$launcher" 2>/dev/null || true
+    wait "$launcher" 2>/dev/null || true
+}
+fail() { echo "FAILED: $*  ($base.log)"; tail -20 "$base.log"; stop_owned_run; exit 1; }
 # run.sh may still be building (sources changed): it counts as alive until it exits.
-alive() { kill -0 "$launcher" 2>/dev/null || pgrep -x bb-probe > /dev/null; }
+alive() { kill -0 "$launcher" 2>/dev/null; }
+require_alive() {
+    alive && return
+    local status=0
+    wait "$launcher" || status=$?
+    fail "the game exited $1 (launcher exit status $status)"
+}
 # Title: the pad is open and a few frame stats windows went by.
 for i in $(seq 1 ${BOOT_WAIT:-240}); do
     sleep 1
     [[ $(grep -c '^Frame stats' "$base.log") -ge ${BOOT_WINDOWS:-3} ]] && grep -q 'pad opened' "$base.log" && break
-    (( i > 20 )) && ! alive && fail "the game exited before the title"
+    (( i <= 20 )) || require_alive "before the title"
 done
 sleep "${TITLE_WAIT:-6}"
 tools/press.sh cross; sleep "${PRESS_GAP:-6}"; tools/press.sh cross
-# Level: a scene with many draws.
+echo 'title input complete'
+# Level: two frame-stat windows in a row with more than LEVEL_DRAWS draws a frame (the title and
+# loading screens draw under 50; the Hunter's Dream about 540, Central Yharnam about 1,270). The
+# old threshold of 600 missed the Hunter's Dream, so runs there sat out the whole LEVEL_WAIT.
 start=$(date +%s)
 for i in $(seq 1 $(( ${LEVEL_WAIT:-240} / 2 ))); do
     sleep 2
-    alive || fail "the game exited while loading"
-    last=$(grep '^Frame stats' "$base.log" | tail -1 | sed -E 's/.* ([0-9]+) draws\/frame.*/\1/')
-    [[ -n $last && $last =~ ^[0-9]+$ && $last -gt 600 ]] && break
+    require_alive "while loading"
+    read -r prev last < <(grep '^Frame stats' "$base.log" | tail -2 |
+        sed -E 's/.* ([0-9]+) draws\/frame.*/\1/' | tr '\n' ' ')
+    [[ $prev =~ ^[0-9]+$ && $last =~ ^[0-9]+$ && $prev -gt ${LEVEL_DRAWS:-200} &&
+       $last -gt ${LEVEL_DRAWS:-200} ]] && break
 done
 echo "level after $(( $(date +%s) - start )) s"
 mark=$(grep -c '^Frame stats' "$base.log")
@@ -61,14 +82,15 @@ fi
 # GPU utilization (IOAccelerator, no sudo needed) and the game's CPU use, once a second.
 : > "$base.load"
 for ((t = 0; t < ${HOLD:-40}; ++t)); do
+    require_alive "in the level at hold sample $t"
     gpu=$(ioreg -r -d 1 -c IOAccelerator | grep -oE '"Device Utilization %"=[0-9]+' | head -1 | cut -d= -f2)
     cpu=$(ps -o pcpu= -p "$(pgrep -x bb-probe | head -1)" 2>/dev/null | tr -d ' ')
     echo "$t ${gpu:-?} ${cpu:-?}" >> "$base.load"
     sleep 1
 done
-alive || fail "the game exited in the level"
+require_alive "in the level at the end of the hold"
 awk 'NR > 3 {g += $2; c += $3; n++} END {if (n) printf "GPU utilization %.0f%%, game CPU %.0f%% (of one core)\n", g/n, c/n}' "$base.load"
-pkill -x bb-probe; sleep 2; pkill -9 -x bb-probe
+stop_owned_run
 # Summary of the windows after the level settled.
 tail -n +1 "$base.log" | grep '^Frame stats' | tail -n +$((mark + 2)) |
     sed -E 's/Frame stats: ([0-9.]+) FPS, worst frame ([0-9.]+) ms.*GPU thread ([0-9.]+) us\/draw, ([0-9]+) draws\/frame, idle ([0-9.]+)%.*/\1 \2 \4 \5/' |

@@ -32,6 +32,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "bbport_guest_memory.h"
@@ -570,7 +571,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         return nullptr;
     }
     if (const auto found = graphics_pipelines.find(sel.graphics_key); found != graphics_pipelines.end()) {
-        return found->second.get();
+        // One the driver could not create stays empty: its draws are skipped every time, not
+        // only the first (binding it crashed MoltenVK).
+        return found->second && found->second->Handle() ? found->second.get() : nullptr;
     }
     // bbport BB_ASYNC_PIPELINES: being compiled on a worker, or to be.
     const bool skippable = AsyncSkippable(sel, indirect);
@@ -614,9 +617,11 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                           runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
                           modules = sel.modules]() mutable {
             GraphicsPipeline::SerializationSupport sdata{};
+            MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
                 instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
                 runtime_infos, fetch, modules, sdata, false);
+            MetalShadow::GraphicsFromVulkan(key, modules, infos, runtime_infos, sdata, pipeline);
             std::scoped_lock lk{job->mutex};
             job->pipeline = std::move(pipeline);
             job->sdata = std::move(sdata);
@@ -633,11 +638,18 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         CompileTimer timer;
 
         GraphicsPipeline::SerializationSupport sdata{};
-        it.value() = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
-            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+        {
+            MetalShadow::GameBuildScope game_build;
+            it.value() = std::make_unique<GraphicsPipeline>(
+                instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache,
+                sel.infos, sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+        }
+        MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos,
+                                        sel.runtime_infos, sdata, it.value());
 
-        if (!sel.graphics_key.fixed_quad_outer) {
+        // MoltenVK can reject a pipeline even when its shaders compiled. Never persist its key:
+        // preloading that key would reject it again and discard the entire shader cache.
+        if (!sel.graphics_key.fixed_quad_outer && it.value() && it.value()->Handle()) {
             RegisterPipelineData(sel.graphics_key, pipeline_hash, sdata);
         }
         ++num_new_pipelines;
@@ -659,7 +671,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
 const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey& key,
                                                       PendingPipeline& job) {
     const auto pipeline_hash = std::hash<GraphicsPipelineKey>{}(key);
-    if (!key.fixed_quad_outer) {
+    if (!key.fixed_quad_outer && job.pipeline && job.pipeline->Handle()) {
         RegisterPipelineData(key, pipeline_hash, job.sdata);
     }
     ++num_new_pipelines;
@@ -672,7 +684,7 @@ const GraphicsPipeline* PipelineCache::FinishPipeline(const GraphicsPipelineKey&
     }
     auto& slot = graphics_pipelines[key];
     slot = std::move(job.pipeline);
-    return slot.get();
+    return slot && slot->Handle() ? slot.get() : nullptr;
 }
 
 bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indirect) {
@@ -738,9 +750,15 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         CompileTimer timer;
 
         ComputePipeline::SerializationSupport sdata{};
-        it.value() = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
-                                                       *pipeline_cache, compute_key, *sel.infos[0],
-                                                       sel.modules[0], sdata, false);
+        {
+            MetalShadow::GameBuildScope game_build;
+            it.value() = std::make_unique<ComputePipeline>(
+                instance, scheduler, desc_heap, profile, *pipeline_cache, compute_key,
+                *sel.infos[0], sel.modules[0], sdata, false);
+        }
+        if (MetalShadow::Enabled()) {
+            MetalShadow::Compute(compute_key, sel.modules[0], it.value()->Handle());
+        }
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
 
@@ -792,7 +810,7 @@ static bool RectPassthrough(const PipelineSelection& sel) {
         }
         const auto buffer = attrib.GetSharp(*vs);
         const u32 components = RectAttributeComponents(
-            LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()));
+            ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())));
         if (components == 0) {
             return false;
         }
@@ -995,7 +1013,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
 
         // Apply swizzle to target mask
         key.write_masks[cb] =
-            vk::ColorComponentFlags{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
+            Backend::ColorWriteMask{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
 
         // Fill color samples
         const u8 prev_color_samples = std::exchange(color_samples, col_buf.NumSamples());
@@ -1013,8 +1031,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         color_buffer.data_format = AmdGpu::DataFormat::Format32_32_32_32;
         color_buffer.num_format = AmdGpu::NumberFormat::Float;
         color_buffer.swizzle = AmdGpu::IdentityMapping;
-        key.write_masks[mv] = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        key.write_masks[mv] = Backend::ColorWriteMask::All;
         key.color_samples[mv] = 1;
     }
 
@@ -1068,7 +1085,12 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     sel.infos.fill(nullptr);
     sel.modules.fill(nullptr);
 
-    bind_stage(HwStage::Fragment, SwStage::Fragment);
+    if (!bind_stage(HwStage::Fragment, SwStage::Fragment)) {
+        // No pixel shader: the clip-distance discard shader may still be needed, decided from
+        // this draw's registers, not a previous draw's fragment stage (bbport 0.6, 8185b88).
+        sel.runtime_infos[u32(SwStage::Fragment)] =
+            BuildRuntimeInfo(sel, HwStage::Fragment, SwStage::Fragment);
+    }
 
     const auto* fs_info = sel.infos[static_cast<u32>(SwStage::Fragment)];
     key.mrt_mask = fs_info ? fs_info->mrt_mask : 0u;
@@ -1251,6 +1273,19 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
     }
 
     const auto* vs_info = sel.infos[static_cast<u32>(SwStage::Vertex)];
+    // bbport: a draw whose vertex buffer table pointer is null has no vertex input to build:
+    // skipped (Supermedo/bloodborne_pc 2c4ddeb).
+    if (vs_info && sel.fetch_shader) {
+        for (const auto& attrib : sel.fetch_shader->attributes) {
+            if (vs_info->UdPointerNull(attrib.sgpr_base)) {
+                static std::atomic<u32> reported{0};
+                if (reported.fetch_add(1, std::memory_order_relaxed) < 5) {
+                    std::printf("GPU: draw skipped: its vertex buffer table pointer is null\n");
+                }
+                return false;
+            }
+        }
+    }
     if (vs_info && sel.fetch_shader && !instance.IsVertexInputDynamicState()) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.
@@ -1322,6 +1357,10 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         module = CompileSPV(*patch, instance.GetDevice());
     } else {
         module = CompileSPV(spv, instance.GetDevice());
+    }
+    if (MetalShadow::Enabled()) {
+        MetalShadow::RegisterModule(module, is_patched ? std::span<const u32>{*patch}
+                                                       : std::span<const u32>{spv});
     }
 
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);

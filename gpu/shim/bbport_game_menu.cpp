@@ -18,6 +18,15 @@
 
 namespace BbGameMenu {
 namespace {
+/// This menu's four output steps (16:9; the overlay menu offers every aspect ratio).
+constexpr BbSettings::OutputSize MenuOutputs[4] = {{1280, 720}, {1920, 1080}, {2560, 1440}, {3840, 2160}};
+int MenuOutputIndex(BbSettings::OutputSize size) {
+    int best = 1;
+    for (int i = 0; i < 4; ++i) {
+        if (std::abs(MenuOutputs[i].height - size.height) < std::abs(MenuOutputs[best].height - size.height)) best = i;
+    }
+    return best;
+}
 
 using u8 = std::uint8_t;
 using u32 = std::uint32_t;
@@ -133,7 +142,7 @@ u8 ChoicePosition(int choice, int count) {
 
 /// The rows' values of settings `s`.
 void Fill(const BbSettings::Values& s, int* values) {
-    values[OutputRes] = s.output_res;
+    values[OutputRes] = MenuOutputIndex(BbSettings::CurrentOutput());
     values[Upscaler] = s.upscaler;
     values[Preset] = s.preset;
     // One slider for both: 0 is sharpening off.
@@ -632,7 +641,7 @@ void Poll() {
         return;
     }
     auto& s = BbSettings::Get();
-    s.output_res = std::clamp(values[OutputRes], 0, BbSettings::OutputCount - 1);
+    s.output_res = BbSettings::PackSize(MenuOutputs[std::clamp(values[OutputRes], 0, 3)]);
     const int upscaler = std::clamp(values[Upscaler], 0, BbSettings::UpscalerCount - 1);
     s.upscaler = UpscalerAvailable(upscaler) ? upscaler : int(BbSettings::UpscalerFsr3);
     s.preset = std::clamp(values[Preset], 0, BbSettings::PresetCount - 1);

@@ -10,13 +10,14 @@
 #include "shader_recompiler/frontend/fetch_shader.h"
 #include "shader_recompiler/info.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Serialization {
 /* You should increment versions below once corresponding serialization scheme is changed. */
-static constexpr u32 ShaderBinaryVersion = 18u; // bbport: bounded motion-vector accesses; layer page-table pairs / guarded write-through stores (upstream 9)
+static constexpr u32 ShaderBinaryVersion = 21u; // rect/quad auxiliary tessellation locations deduplicated; UI edge stretch; bounded motion vectors; layer page-table pairs / guarded write-through stores
 static constexpr u32 ShaderMetaVersion = 9u; // fixed quad local output map in InfoPersistent
 static constexpr u32 PipelineKeyVersion = 6u; // fixed quad vertex pipeline key
 } // namespace Serialization
@@ -125,7 +126,11 @@ bool LoadShaderMeta(Serialization::Archive& ar, Shader::Info& info,
         return false;
     }
 
-    fetch_shader_data = spec.fetch_shader_data;
+    // Only the vertex stage has one: a later stage without one (geometry) must not erase it, or
+    // the pipeline is built with an empty fetch shader (ported from bbport 0.6-pre1, 72e5c8c).
+    if (spec.fetch_shader_data) {
+        fetch_shader_data = spec.fetch_shader_data;
+    }
     return true;
 }
 
@@ -171,9 +176,16 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
 
     // bbport: built before it is inserted: a pipeline the driver rejects while preloading throws
     // (Serialization::CorruptData) and leaves no empty entry behind.
-    auto pipeline =
-        std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile, *pipeline_cache,
-                                          compute_key, *sel.infos[0], sel.modules[0], sdata, true);
+    std::unique_ptr<ComputePipeline> pipeline;
+    {
+        MetalShadow::GameBuildScope game_build;
+        pipeline = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
+                                                     *pipeline_cache, compute_key, *sel.infos[0],
+                                                     sel.modules[0], sdata, true);
+    }
+    if (MetalShadow::Enabled()) {
+        MetalShadow::Compute(compute_key, sel.modules[0], pipeline->Handle());
+    }
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
@@ -223,9 +235,20 @@ bool GraphicsPipeline::SerializationSupport::Deserialize(Serialization::Archive&
 bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     sel.graphics_key.Deserialize(ar);
 
+    // Supermedo/bloodborne_pc f33e7617 (João Pedro Valadares): rebuild motion pipelines
+    // at first use. Cached metadata can describe a plain shader permutation, bypassing
+    // LoadShaderMeta's motion check; motion shaders also contain session-local addresses.
+    if (sel.graphics_key.motion_vectors) {
+        return false;
+    }
+
     GraphicsPipeline::SerializationSupport sdata{};
     sdata.Deserialize(ar);
 
+    // An entry left half loaded must not lend its stages to this one (bbport 0.6-pre1).
+    sel.infos.fill(nullptr);
+    sel.modules.fill(nullptr);
+    sel.fetch_shader.reset();
     for (int stage_idx = 0; stage_idx < MaxShaderStages; ++stage_idx) {
         const auto& hash = sel.graphics_key.stage_hashes[stage_idx];
         if (!hash) {
@@ -246,9 +269,15 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         }
     }
 
-    auto pipeline = std::make_unique<GraphicsPipeline>(
-        instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
-        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
+    std::unique_ptr<GraphicsPipeline> pipeline;
+    {
+        MetalShadow::GameBuildScope game_build;
+        pipeline = std::make_unique<GraphicsPipeline>(
+            instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache, sel.infos,
+            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
+    }
+    MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos, sel.runtime_infos,
+                                    sdata, pipeline);
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
@@ -293,6 +322,9 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
             {.codeSize = spv.size() * sizeof(u32), .pCode = spv.data()});
         if (result != vk::Result::eSuccess) {
             throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
+        }
+        if (MetalShadow::Enabled()) {
+            MetalShadow::RegisterModule(created, spv);
         }
         return created;
     };

@@ -5,12 +5,15 @@
 
 #pragma once
 
+#include <array>
 #include <atomic>
+#include <cstdint>
+#include <string>
 
 namespace BbSettings {
 
 enum Upscaler : int { UpscalerOff = 0, UpscalerFsr3 = 1, UpscalerFsr4 = 2, UpscalerFsr411 = 3,
-                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerCount };
+                      UpscalerTaa = 4, UpscalerDlss = 5, UpscalerMetalFx = 6, UpscalerCount };
 /// FSR 4 v07 or FSR 4.1.1: the same inputs, settings and placement in the frame.
 inline bool IsFsr4(int upscaler) {
     return upscaler == UpscalerFsr4 || upscaler == UpscalerFsr411;
@@ -18,6 +21,14 @@ inline bool IsFsr4(int upscaler) {
 enum Preset : int { NativeAA = 0, Quality, Balanced, Performance, UltraPerformance, PresetCount };
 enum DebugView : int { DebugNone = 0, DebugReactive = 1, DebugMotion = 2, DebugViewCount };
 enum class MenuLanguage { English, Russian };
+/// FPS counter: the screen's corners and edge centers (bbport.ini fps_position), and its size
+/// (fps_size: small, one line; big, with the upscaler, resolutions and a frame-time graph).
+enum FpsPosition : int { FpsTopLeft, FpsTopCenter, FpsTopRight, FpsBottomLeft, FpsBottomCenter,
+                         FpsBottomRight, FpsPositionCount };
+inline constexpr const char* FpsPositionNames[FpsPositionCount] = {
+    "top_left", "top_center", "top_right", "bottom_left", "bottom_center", "bottom_right"};
+enum FpsSize : int { FpsSmall, FpsBig, FpsSizeCount };
+inline constexpr const char* FpsSizeNames[FpsSizeCount] = {"small", "big"};
 
 /// Game effects switched by the community patches at start (patches.py EFFECTS): ini key,
 /// menu label, default (the game's own behaviour).
@@ -35,16 +46,55 @@ inline constexpr Effect Effects[] = {
     {"effect_game_aa", "Game's own anti-aliasing", "Собственное сглаживание игры", true},
     {"effect_dynamic_shadows", "Shadows from dynamic lights", "Тени от динамических источников", true},
     {"effect_ssr", "Screen-space reflections (not in original game)", "Отражения SSR (не было в игре)", false},
+    {"effect_bloom", "Bloom", "Свечение (Bloom)", true},
     {"skip_intro", "Skip startup intros", "Пропуск заставок при запуске", false},
     {"debug_camera", "Free camera (Cross + L3)", "Свободная камера (Cross + L3)", false},
     {"debug_menu", "Debug menu (requires font files)", "Debug menu (нужны файлы шрифтов)", false},
 };
 inline constexpr int EffectCount = int(sizeof(Effects) / sizeof(Effects[0]));
-/// Live output resolutions: the upscaler's output and the UI host targets.
-inline constexpr int OutputWidths[] = {1280, 1920, 2560, 3840};
-inline constexpr int OutputHeights[] = {720, 1080, 1440, 2160};
-inline constexpr int OutputCount = 4;
-inline constexpr int OutputDefault = 1; ///< 1920x1080, the game's own size
+/// The game's look (the launcher's Effects section) comes first; then the other start options.
+enum EffectIndex : int { EffectSsr = 6, EffectBloom = 7, GameEffectCount = 8, EffectSkipIntro = 8,
+                         EffectDebugCamera = 9, EffectDebugMenu = 10 };
+static_assert(EffectCount == 11);
+/// Output aspect ratios, and the output resolutions of each: the upscaler's output and the UI's
+/// targets. For another aspect ratio than 16:9 the game's camera, HUD markers and UI placement
+/// follow the output (bbport_game_hooks, the UI composition). Auto: the group of the monitor the
+/// game is on. From bbport 0.6 (8185b88, deadinside28/bloodborne_pc).
+enum Aspect : int { AspectAuto = 0, Aspect4x3, Aspect16x10, Aspect16x9, Aspect21x9, Aspect32x9, AspectCount };
+struct OutputSize {
+    int width = 1920, height = 1080;
+    bool operator==(const OutputSize&) const = default;
+};
+inline constexpr OutputSize OutputDefault{1920, 1080}; ///< the game's own size
+constexpr std::uint32_t PackSize(OutputSize s) {
+    return std::uint32_t(s.width) | std::uint32_t(s.height) << 16;
+}
+constexpr OutputSize UnpackSize(std::uint32_t v) {
+    return {int(v & 0xffff), int(v >> 16)};
+}
+/// An aspect ratio's outputs, smallest first.
+struct OutputList {
+    std::array<OutputSize, 12> sizes{};
+    int count = 0;
+    const OutputSize* begin() const { return sizes.data(); }
+    const OutputSize* end() const { return sizes.data() + count; }
+    int IndexOf(OutputSize size) const; ///< -1: not in the list
+};
+/// bbport.ini value ("auto", "4:3", "16:10", "16:9", "21:9", "32:9").
+const char* AspectKey(int aspect);
+/// The monitor the game's window is on (window.cpp): Auto follows it. 0x0 until known.
+void SetMonitor(int width, int height);
+OutputSize Monitor();
+/// Auto resolved to the group nearest the monitor's aspect ratio (16:9 until it is known).
+int ResolvedAspect(int aspect);
+/// The output resolutions of an aspect ratio (Auto: the monitor's group and its own size).
+OutputList Outputs(int aspect);
+/// The output of `aspect` nearest `size` in height: another aspect ratio keeps the height.
+OutputSize NearestOutput(int aspect, OutputSize size);
+/// The output in use: the chosen resolution in the chosen aspect ratio.
+OutputSize CurrentOutput();
+/// "2560x1080".
+std::string SizeText(OutputSize size);
 
 struct Values {
     std::atomic<MenuLanguage> menu_language{MenuLanguage::Russian};
@@ -66,6 +116,9 @@ struct Values {
     std::atomic<float> reactive_max{0.9f};
     std::atomic<int> debug_view{DebugNone};
     std::atomic<bool> show_fps{false};
+    /// Where the FPS counter is (FpsPosition) and how much it shows (FpsSize).
+    std::atomic<int> fps_position{1};
+    std::atomic<int> fps_size{0};
     /// The settings menu's position (fraction of the screen), -1 until it is moved.
     std::atomic<float> menu_x{-1.0f}, menu_y{-1.0f};
     // FSR 4 checks (menu): the provider's auto exposure, the jitter sign it is given.
@@ -75,7 +128,9 @@ struct Values {
     /// Applied at start (patches.py); the menu shows when a restart is needed.
     std::atomic<bool> effects[EffectCount]{};
     std::atomic<int> model_lod{0}; ///< -2 highest .. 2 lowest, 0 the game's
-    std::atomic<int> output_res{OutputDefault}; ///< index into OutputWidths
+    std::atomic<std::uint32_t> output_res{PackSize(OutputDefault)}; ///< PackSize
+    /// 16:9 unless chosen: Auto would change a player's output to the monitor's shape by itself.
+    std::atomic<int> aspect{Aspect16x9};
     /// Live resolution and preset changes (run.sh): 0 off by default (startup patch, fastest
     /// on the Steam Deck and older GPUs), -1 auto (strong discrete GPUs), 1 on. On restart.
     std::atomic<int> live_resolution{0};
@@ -85,6 +140,9 @@ struct Values {
     /// DLSS (gpu/dlss_bridge, NVIDIA RTX) is ready, or why not (null before the device exists).
     std::atomic<bool> dlss_supported{false};
     std::atomic<const char*> dlss_problem{nullptr};
+    /// MetalFX (macOS only); why it cannot run, or null. Set by the renderer (vk_metalfx).
+    std::atomic<bool> metalfx_supported{false};
+    std::atomic<const char*> metalfx_problem{nullptr};
 
     /// Startup settings for the explicit BB_RENDER_RES compatibility patch only.
     int startup_preset = NativeAA;
@@ -96,7 +154,7 @@ struct Values {
 #endif
     bool startup_effects[EffectCount]{};
     int startup_model_lod = 0;
-    int startup_output_res = OutputDefault;
+    std::uint32_t startup_output_res = PackSize(OutputDefault);
     int startup_live_resolution = 0;
 };
 
@@ -106,8 +164,8 @@ const char* MenuText(const char* english, const char* russian);
 
 /// Reads the file, then the environment overrides. Called once at start.
 void Load();
-/// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1.
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411);
+/// Checks the loaded choice before the first frame; unsupported FSR 4 uses FSR 3.1, MetalFX off.
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx = false);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
 /// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
@@ -116,6 +174,30 @@ int RenderPreset();
 bool ResolutionNeedsRestart();
 /// Writes the file (menu changes).
 void Save();
+/// With the launcher (BB_SETTINGS_CHANNEL=1): reads its setting changes from stdin, and makes
+/// Save send the menu's changes to it ("BBSET key=value"). Once, after Load.
+void StartLauncherChannel();
+/// Whether the launcher keeps the settings (the menu says so instead of naming bbport.ini).
+bool LauncherChannel();
+
+/// The launcher's own options that the menu also shows (launcher.json's keys and value text:
+/// true/false, numbers, names). The game starts with them in its environment (BB_FULLSCREEN, ...);
+/// the menu's changes go to the launcher as "BBSET launcher:key=value" and into the environment
+/// of an in-game restart. Fullscreen applies at once, the others at the next start.
+enum LauncherKey : int { LauncherFullscreen, LauncherDisplay, LauncherPresentMode, LauncherFpsMode,
+                         LauncherFpsLimit, LauncherMetalHud, LauncherDrawPipe, LauncherReadbacks,
+                         LauncherPreupload, LauncherRenderer, LauncherKeyCount };
+std::string Launcher(LauncherKey key);
+/// The menu's change (sent to the launcher by the next Save).
+void SetLauncher(LauncherKey key, const std::string& value);
+/// The frame rate hooks apply the launcher's frame rate limit live through `apply`.
+void SetLiveFpsLimit(void (*apply)(int fps));
+/// A launcher option that is not applied live differs from the one this run started with.
+bool LauncherNeedsRestart();
+/// Before an in-game restart: the launcher options into the environment run.sh starts with.
+void ExportLauncherEnvironment();
+/// Window thread: a fullscreen change to apply (1 on, 0 off), or -1.
+int TakeFullscreenRequest();
 
 /// Render resolution divisor of a preset (1.0 native, 1.5 quality, ...).
 float PresetScale(int preset);

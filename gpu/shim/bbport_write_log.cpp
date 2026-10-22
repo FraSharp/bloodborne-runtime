@@ -59,6 +59,19 @@ void Note(std::uint64_t address, const void* data, std::uint64_t size, Source so
 }
 
 void Record(std::uint64_t address, const void* data, std::uint64_t size, Source source) {
+    // Optional complete-qword filter for fault investigations; skips unrelated traffic.
+    static const std::uint64_t watched = [] {
+        const char* env = std::getenv("BB_WRITE_LOG_ADDRESS");
+        return env ? std::strtoull(env, nullptr, 0) : 0;
+    }();
+    if (watched) {
+        if (watched < address || watched - address > size || size - (watched - address) < 8) {
+            return;
+        }
+        data = static_cast<const unsigned char*>(data) + (watched - address);
+        address = watched;
+        size = 8;
+    }
     static thread_local const std::uint32_t tid = static_cast<std::uint32_t>(bb_gettid());
     Entry e{address, size, 0, __rdtsc(), source, tid};
     std::memcpy(&e.first, data, size < 8 ? size : 8);
@@ -111,6 +124,10 @@ extern "C" void bbgpu_dump_guest_writes(void* ucontext) {
     const auto* g = uc;
     BbFreeCheck::DumpAtFault(std::uint64_t(BB_UC_RAX(g)), std::uint64_t(BB_UC_R14(g)));
     if (Mode() == 0) {
+        return;
+    }
+    if (const char* watched = std::getenv("BB_WRITE_LOG_ADDRESS")) {
+        DumpRange(std::strtoull(watched, nullptr, 0), 8);
         return;
     }
     const std::uint64_t regs[] = {std::uint64_t(BB_UC_RAX(g)), std::uint64_t(BB_UC_RBX(g)),

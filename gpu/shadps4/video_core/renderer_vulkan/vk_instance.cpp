@@ -14,6 +14,9 @@
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "bbport_toggles.h"
 #include "bbport_metal_residency.h"
+#ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_dlss.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -78,13 +81,13 @@ std::unordered_map<vk::Format, vk::FormatProperties3> GetFormatProperties(
     vk::PhysicalDevice physical) {
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;
     for (const auto& format_info : LiverpoolToVK::SurfaceFormats()) {
-        const auto format = format_info.vk_format;
+        const auto format = ToVk(format_info.format);
         if (!format_properties.contains(format)) {
             format_properties.emplace(format, GetFormatProperties(physical, format));
         }
     }
     for (const auto& format_info : LiverpoolToVK::DepthFormats()) {
-        const auto format = format_info.vk_format;
+        const auto format = ToVk(format_info.format);
         if (!format_properties.contains(format)) {
             format_properties.emplace(format, GetFormatProperties(physical, format));
         }
@@ -316,6 +319,10 @@ bool Instance::CreateDevice() {
     // bbport: the Metal objects behind Vulkan ones, to keep the imported memory resident
     // (bbport_metal_residency.h).
     metal_objects = add_extension("VK_EXT_metal_objects");
+    // bbport: MetalFX upscaler (vk_metalfx): buffer memory exported as MTLHeaps. Optional: a
+    // driver without it leaves MetalFX unsupported (the name macro lives in vulkan_metal.h,
+    // outside this file's platform defines).
+    external_memory_metal = add_extension("VK_EXT_external_memory_metal");
 #endif
     // Optional
     maintenance_5 = add_extension(VK_KHR_MAINTENANCE_5_EXTENSION_NAME);
@@ -734,11 +741,19 @@ bool Instance::CreateDevice() {
     device = std::move(dev);
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*device);
+#ifdef BB_METAL_BACKEND
+    // The Metal backend's layer over the command functions (renderer_metal/mtl_vk_layer.h): it
+    // installs only with BB_METAL_TRACE, BB_METAL_PRESENT or BB_METAL_FRAME; MoltenVK otherwise.
+    MetalLayer::Install(&VULKAN_HPP_DEFAULT_DISPATCHER);
+#endif
     if (Dlss* dlss = Dlss::Get()) {
         dlss->Initialize(*instance, physical_device, *device);
     }
 
     graphics_queue = device->getQueue(queue_family_index, 0);
+#ifdef BB_METAL_BACKEND
+    MetalLayer::SetDevice(static_cast<VkDevice>(*device), static_cast<VkQueue>(graphics_queue));
+#endif
     present_queue = device->getQueue(queue_family_index, 0);
     if (readback_family_index != NoFamily) {
         readback_queue = device->getQueue(readback_family_index, 0);
@@ -944,23 +959,23 @@ void Instance::CollectImageFormatInfo() {
 
     // Check and log format support details.
     for (const auto& format : LiverpoolToVK::SurfaceFormats()) {
-        if (!IsFormatSupported(format.vk_format, format.flags)) {
+        if (!IsFormatSupported(ToVk(format.format), format.flags)) {
             LOG_WARNING(Render_Vulkan,
                         "Surface format data_format={}, number_format={} is not fully supported "
                         "(vk_format={}, missing features={})",
                         static_cast<u32>(format.data_format),
-                        static_cast<u32>(format.number_format), vk::to_string(format.vk_format),
-                        vk::to_string(format.flags & ~GetFormatFeatureFlags(format.vk_format)));
+                        static_cast<u32>(format.number_format), Backend::FormatName(format.format),
+                        vk::to_string(format.flags & ~GetFormatFeatureFlags(ToVk(format.format))));
         }
     }
     for (const auto& format : LiverpoolToVK::DepthFormats()) {
-        if (!IsFormatSupported(format.vk_format, format.flags)) {
+        if (!IsFormatSupported(ToVk(format.format), format.flags)) {
             LOG_WARNING(Render_Vulkan,
                         "Depth format z_format={}, stencil_format={} is not fully supported "
                         "(vk_format={}, missing features={})",
                         static_cast<u32>(format.z_format), static_cast<u32>(format.stencil_format),
-                        vk::to_string(format.vk_format),
-                        vk::to_string(format.flags & ~GetFormatFeatureFlags(format.vk_format)));
+                        Backend::FormatName(format.format),
+                        vk::to_string(format.flags & ~GetFormatFeatureFlags(ToVk(format.format))));
         }
     }
 }

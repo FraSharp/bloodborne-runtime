@@ -77,6 +77,7 @@ static void attach(GuestThread *t) {
     bb_guest_tls_set(tcb);
     if (bbcpu_enabled()) bbcpu_set_thread_pointer((uintptr_t)tcb);
     current=t;
+    bbcpu_set_thread_label(t->name);
 }
 static GuestThread *new_thread(void) {
     GuestThread *t=calloc(1,sizeof(*t));
@@ -103,10 +104,12 @@ GuestThread *runtime_thread_current(void) {
 void runtime_thread_attach_host(const char *name) {
     GuestThread *t=runtime_thread_current();
     snprintf(t->name,sizeof(t->name),"%s",name ? name : "host");
+    bbcpu_set_thread_label(t->name);
 }
 void runtime_thread_attach_main(void) {
     GuestThread *t=runtime_thread_current();
     snprintf(t->name,sizeof(t->name),"main");
+    bbcpu_set_thread_label(t->name);
 }
 /* The guest name of this thread ("" before it ran guest code). */
 const char *runtime_thread_name(void) { return current ? current->name : ""; }
@@ -214,6 +217,15 @@ static ABI int32_t attr_set_guard(ThreadAttr **slot,uint64_t size) {
     a->guard=size; return 0;
 }
 
+/* Movie-thread lifecycle only; no thread handles or guest memory in the trace. */
+static void probe_lifecycle(const GuestThread *t, const char *event) {
+    const char *probe = getenv("BB_PTHREAD_PROBE");
+    if (!probe || probe[0] != '1' || strncmp(t->name, "Mv_", 3) != 0) return;
+    const char *caller = runtime_thread_name();
+    fprintf(stderr, "Pthread probe: %s target %s, caller %s\n", event, t->name,
+            caller && *caller ? caller : "unknown");
+}
+
 /* Linux thread names hold 15 characters; longer ones would be rejected. */
 static void set_host_name(const char *name) {
     char host[16]={0};
@@ -224,6 +236,7 @@ static void *host_start(void *p) {
     GuestThread *t=p;
     attach(t);
     set_host_name(t->name);
+    probe_lifecycle(t, "entry");
     if (!setjmp(t->exit_jump)) {
 #ifdef BB_HAVE_BBCPU
         if (bbcpu_enabled()) {
@@ -234,6 +247,7 @@ static void *host_start(void *p) {
         t->result=t->entry(t->argument);
     }
     runtime_thread_keys_cleanup();
+    probe_lifecycle(t, "exit");
     pthread_mutex_lock(&lock); t->finished=1; ++exited; pthread_mutex_unlock(&lock);
     return t->result;
 }
@@ -277,11 +291,16 @@ static ABI int32_t thread_create(GuestThread **out,ThreadAttr **attr,GuestEntry 
 static ABI int32_t thread_join(GuestThread *t,void **result) {
     if (!find_thread(t) || t->host_owned) return ERR(3);
     if (t==current) return ERR(11);
-    if (t->detached || t->joined) return ERR(22);
+    if (t->detached || t->joined) {
+        probe_lifecycle(t, t->detached ? "join rejected: detached" : "join rejected: already joined");
+        return ERR(22);
+    }
+    probe_lifecycle(t, "join begin");
     t->joined=1;
     void *value=NULL;
     int e=pthread_join(t->host,&value);
     if (e) { fprintf(stderr,"STOP: host pthread_join failed: %d\n",e); exit(21); }
+    probe_lifecycle(t, "join complete");
     if (result) *result=t->result;
     pthread_mutex_lock(&lock); ++joined_count; pthread_mutex_unlock(&lock);
     return 0;
@@ -289,6 +308,7 @@ static ABI int32_t thread_join(GuestThread *t,void **result) {
 static ABI int32_t thread_detach(GuestThread *t) {
     if (!find_thread(t)) return ERR(3);
     if (t->detached) return ERR(22);
+    probe_lifecycle(t, "detach");
     t->detached=1;
     if (!t->host_owned) pthread_detach(t->host);
     return 0;
@@ -325,7 +345,7 @@ static ABI int32_t thread_rename(GuestThread *t,const char *name) {
     if (!find_thread(t)) return ERR(3);
     if (!name) return ERR(22);
     snprintf(t->name,sizeof(t->name),"%s",name);
-    if (t==current) set_host_name(t->name);
+    if (t==current) { set_host_name(t->name); bbcpu_set_thread_label(t->name); }
     return 0;
 }
 static ABI int32_t thread_equal(GuestThread *a,GuestThread *b) { return a==b; }

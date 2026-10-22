@@ -13,6 +13,15 @@ void runtime_restart(void) { abort(); }
 #include <stdatomic.h>
 #include <time.h>
 #include <unistd.h>
+#include <sys/stat.h>
+#include "gpu/bbgpu.h"
+
+/* The game's notice queue (libbbgpu) is replaced here to record which unlocks reach it. */
+static int notified[64], notified_count;
+void bbgpu_trophy_notification(const char *title,int id) {
+    (void)title;
+    if (notified_count<64) notified[notified_count++]=id;
+}
 
 typedef int (ABI *Register)(GuestCallback);
 typedef int (ABI *RegisterCxa)(void (ABI *)(void *), void *, void *);
@@ -434,6 +443,61 @@ static void rw_timeouts(void) {
     assert(rw_unlock(&f.lock)==0);
     fixture_destroy(&f);
 }
+static void trophies(void) {
+    char root[]="/tmp/bb-trophy-test-XXXXXX", previous[512], path[640], line[256];
+    snprintf(previous,sizeof(previous),"%s",runtime_file_user_dir());
+    assert(mkdtemp(root));
+    runtime_file_configure(root,root);
+    runtime_trophy_configure("SYNTH0001");
+    typedef int32_t (ABI *Unlock)(int32_t,int32_t,int32_t,int32_t *);
+    Unlock unlock=GET(Unlock,"28xmRUFao68#l#m");
+    assert(unlock && !runtime_net_symbol("sceNpTrophyUnlockTrophy"));
+    int32_t platinum=42;
+    assert(unlock(1,1,-1,&platinum)!=0 && platinum==-1);
+    assert(unlock(1,1,128,&platinum)!=0);
+    assert(unlock(1,1,7,&platinum)==0 && platinum==-1);
+    snprintf(path,sizeof(path),"%s/trophies-v1.log",root);
+    FILE *f=fopen(path,"r"); assert(f && fgets(line,sizeof(line),f));
+    long long timestamp=0; char title[17]; int id=-1;
+    assert(sscanf(line,"v1 %lld %16s %d",&timestamp,title,&id)==3);
+    assert(timestamp>0 && !strcmp(title,"SYNTH0001") && id==7 && !fgets(line,sizeof(line),f)); fclose(f);
+    struct stat before,after; assert(stat(path,&before)==0);
+    assert(unlock(1,1,7,&platinum)==0 && stat(path,&after)==0 && before.st_size==after.st_size);
+    runtime_trophy_configure("SYNTH0001"); /* Restart/reconfigure must not replay earned events. */
+    assert(unlock(1,1,7,&platinum)==0 && stat(path,&after)==0 && before.st_size==after.st_size);
+    char save[640],marker[640]; snprintf(save,sizeof(save),"%s/savedata",root); assert(mkdir(save,0700)==0);
+    snprintf(marker,sizeof(marker),"%s/savedata/.bb-edited",root);
+    f=fopen(marker,"w"); assert(f); fclose(f);
+    assert(unlock(1,1,8,&platinum)==0 && stat(path,&after)==0 && before.st_size==after.st_size);
+    setenv("BB_TROPHIES_ELIGIBLE","1",1);
+    assert(unlock(1,1,9,&platinum)==0 && stat(path,&after)==0 && before.st_size==after.st_size);
+    assert(unlink(marker)==0); setenv("BB_TROPHIES_ELIGIBLE","0",1);
+    assert(unlock(1,1,10,&platinum)==0 && stat(path,&after)==0 && before.st_size==after.st_size);
+    unsetenv("BB_TROPHIES_ELIGIBLE");
+    assert(unlink(path)==0 && symlink("/dev/null",path)==0);
+    assert(unlock(1,1,11,&platinum)==0); /* Must not follow an event-file link. */
+    assert(unlink(path)==0);
+    /* Only the first, eligible unlock reaches the notices: not repeats or edited saves. */
+    assert(notified_count==1 && notified[0]==7);
+    runtime_trophy_configure("CUSA03173");
+    for (int trophy=1;trophy<=32;++trophy) assert(unlock(1,1,trophy,&platinum)==0 && platinum==-1);
+    assert(unlock(1,1,33,&platinum)==0 && platinum==0);
+    assert(stat(path,&before)==0);
+    assert(unlock(1,1,33,&platinum)==0 && platinum==-1 && stat(path,&after)==0 && before.st_size==after.st_size);
+    assert(notified_count==35 && notified[33]==33 && notified[34]==0); /* platinum last */
+    assert(unlink(path)==0);
+    runtime_trophy_configure("SYNTH0001");
+    f=fopen(path,"w"); assert(f); fputs("v1 123 SYNTH0001 12",f); assert(fclose(f)==0);
+    assert(unlock(1,1,23,&platinum)==0);
+    f=fopen(path,"r"); assert(f && fgets(line,sizeof(line),f) && strstr(line," invalid"));
+    assert(fgets(line,sizeof(line),f) && strstr(line,"SYNTH0001 23\n")); fclose(f);
+    assert(unlink(path)==0); assert(rmdir(save)==0);
+    const char *folders[]={"temp0","download0","data"};
+    for (int i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,folders[i]); assert(rmdir(path)==0); }
+    assert(rmdir(root)==0); runtime_file_configure(previous,previous);
+    puts("PASS: local trophy events, IDs, edited-save suppression, env fallback, symlink refusal and notices");
+}
+
 int main(int argc,char **argv) {
     runtime_start(0); assert(runtime_resolve("bzQExy189ZI#q#q",0)==0);
     runtime_start(1);
@@ -461,6 +525,7 @@ int main(int argc,char **argv) {
     if (argc>1 && !strcmp(argv[1],"--rwlock-timeouts")) { rw_timeouts(); return 0; }
     libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); conditions(); direct_memory(); write_traps(); memory_primitives();
     rw_lifecycle(); rw_concurrency(); rw_timeouts();
+    trophies();
     puts("PASS: callback lifecycle, guard ABI, mutex and condition errors, shared direct memory, memory primitives, resolver scope");
     return 0;
 }

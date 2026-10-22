@@ -172,9 +172,36 @@ static uint64_t guard_lock(uint64_t cb) {
     return 0; /* table full: unguarded */
 }
 static void guard_unlock(uint64_t cookie) { pthread_mutex_unlock(&locks[cookie - 1]); }
+void runtime_cmdbuf_fault_report(void) {
+    uint64_t cookies[64];
+    const size_t count = bbcpu_guard_cookies(guard_unlock, cookies, 64);
+    char line[128];
+    int n = snprintf(line, sizeof(line), "  command-buffer guards held: %zu\n", count);
+    { ssize_t written_ = write(2, line, (size_t)n); (void)written_; }
+    for (size_t i = 0; i < count; ++i) {
+        if (!cookies[i] || cookies[i] > LOCKS) continue;
+        const uint64_t key = __atomic_load_n(&lock_keys[cookies[i] - 1], __ATOMIC_RELAXED);
+        n = snprintf(line, sizeof(line), "    guard %zu buffer %#llx\n", i, (unsigned long long)key);
+        { ssize_t written_ = write(2, line, (size_t)n); (void)written_; }
+    }
+}
+
 static uint64_t guard_method(const uint64_t regs[16], uint32_t tag) { (void)tag; return guard_lock(regs[7]); }
 /* The two functions that record a whole compute job: the command buffer is rdi + 0x10. */
 static uint64_t guard_context(const uint64_t regs[16], uint32_t tag) { (void)tag; return guard_lock(regs[7] + 0x10); }
+
+/* A movie frame snapshots, changes and restores the graphics input state. The render task
+ * list resets that same state between draw groups. Packet-method guards do not cover either
+ * transaction's direct stores or memset. Both scopes use the context's existing buffer lock. */
+static uint64_t guard_movie_state(const uint64_t regs[16], uint32_t tag) {
+    uint64_t context = regs[6];
+    if (tag) {
+        /* Empty lists do not access the context; preserve that contract. */
+        if ((uint32_t)regs[1] == 0 || !context) return 0;
+        context = __atomic_load_n((const uint64_t *)(uintptr_t)(context + 8), __ATOMIC_RELAXED);
+    }
+    return context ? guard_lock(context + 0x10) : 0;
+}
 
 static int prologue_matches(uint64_t address, const uint8_t *bytes, size_t n) {
     return memcmp((const void *)(uintptr_t)address, bytes, n) == 0;
@@ -229,6 +256,26 @@ static void guard_load(uint64_t base) {
         bbcpu_set_guard(base + jobs[i].offset, guard_context, guard_unlock, 0);
         ++used;
     }
+    const char *movie_guard = getenv("BB_MOVIE_STATE_GUARD");
+    if (!movie_guard || movie_guard[0] != '0') {
+        static const struct { uint64_t offset; uint32_t tag; } scopes[] = {
+            {0x28fe7c0, 0}, /* movie frame: context in rsi */
+            {0x21b4d00, 1}, /* render task list: context at [rsi + 8] */
+        };
+        static const uint8_t prologue[] = {0x55, 0x48, 0x89, 0xe5};
+        size_t protected_scopes = 0;
+        for (size_t i = 0; i < sizeof(scopes) / sizeof(scopes[0]); ++i) {
+            if (!prologue_matches(base + scopes[i].offset, prologue, sizeof(prologue))) {
+                ++mismatched;
+                continue;
+            }
+            bbcpu_set_guard(base + scopes[i].offset, guard_movie_state, guard_unlock, scopes[i].tag);
+            ++used;
+            ++protected_scopes;
+        }
+        printf("Movie graphics state: %zu/2 transactions guarded (BB_MOVIE_STATE_GUARD=0: off)\n",
+               protected_scopes);
+    }
     printf("Command buffers: %zu game functions write one buffer at a time (%zu do not match the 1.09 "
            "eboot; BB_CB_GUARD=0: off)\n", used, mismatched);
     pthread_t thread;
@@ -255,4 +302,5 @@ void runtime_cmdbuf_load(uint64_t base) {
 }
 #else
 void runtime_cmdbuf_load(uint64_t base) { (void)base; }
+void runtime_cmdbuf_fault_report(void) {}
 #endif

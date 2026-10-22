@@ -273,7 +273,7 @@ Runtime::TransferMark::TransferMark(Runtime& runtime, const char* what,
                     (u64(info.pixel_format) << 40) ^ (u64(info.size.width) << 16) ^
                     info.size.height ^ 0x7A5Full;
     profiler->Mark(key, [&] {
-        return fmt::format("{} {} {}x{}", what, vk::to_string(info.pixel_format),
+        return fmt::format("{} {} {}x{}", what, Backend::FormatName(info.pixel_format),
                            info.size.width, info.size.height);
     });
 }
@@ -294,7 +294,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
         Transit(dst, vk::ImageLayout::eTransferDstOptimal, vk::PipelineStageFlagBits2::eCopy,
                 vk::AccessFlagBits2::eTransferWrite);
     for (const auto& copy : upload_copies) {
-        const auto copy_size = BufferImageCopySize(copy, dst->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, ToVk(dst->info.pixel_format));
         needs_flush |= IsBufferAccessed(src, copy.bufferOffset, copy_size);
     }
     if (needs_flush) {
@@ -308,7 +308,7 @@ void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
     });
 
     for (const auto& copy : upload_copies) {
-        const auto copy_size = BufferImageCopySize(copy, dst->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, ToVk(dst->info.pixel_format));
         AccessBuffer(src, copy.bufferOffset, copy_size, vk::PipelineStageFlagBits2::eCopy,
                      vk::AccessFlagBits2::eTransferRead);
     }
@@ -326,7 +326,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
         Transit(src, vk::ImageLayout::eTransferSrcOptimal, vk::PipelineStageFlagBits2::eCopy,
                 vk::AccessFlagBits2::eTransferRead);
     for (const auto& copy : download_copies) {
-        const auto copy_size = BufferImageCopySize(copy, src->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, ToVk(src->info.pixel_format));
         needs_flush |= IsBufferAccessed(dst, copy.bufferOffset, copy_size, true);
     }
     if (needs_flush) {
@@ -340,7 +340,7 @@ void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
     });
 
     for (const auto& copy : download_copies) {
-        const auto copy_size = BufferImageCopySize(copy, src->info.pixel_format);
+        const auto copy_size = BufferImageCopySize(copy, ToVk(src->info.pixel_format));
         AccessBuffer(dst, copy.bufferOffset, copy_size, vk::PipelineStageFlagBits2::eCopy,
                      vk::AccessFlagBits2::eTransferWrite);
     }
@@ -354,7 +354,7 @@ void Runtime::CopyImage(VideoCore::Image* src, VideoCore::Image* dst) {
         LOG_DEBUG(Render_Vulkan,
                   "Copy between different formats: src={}, dst={}. "
                   "Result may be undefined.",
-                  vk::to_string(src->info.pixel_format), vk::to_string(dst->info.pixel_format));
+                  Backend::FormatName(src->info.pixel_format), Backend::FormatName(dst->info.pixel_format));
     }
 
     const u32 base_width = src->info.size.width;
@@ -468,7 +468,7 @@ void Runtime::CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
         .imageOffset = {0, 0, 0},
         .imageExtent = {src->info.size.width, src->info.size.height, src->info.size.depth},
     };
-    const auto copy_size = BufferImageCopySize(buffer_copy, src->info.pixel_format);
+    const auto copy_size = BufferImageCopySize(buffer_copy, ToVk(src->info.pixel_format));
 
     scheduler.EndRendering();
 
@@ -841,7 +841,7 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
         Vulkan::SetObjectName(instance.GetDevice(), new_backing->image.image,
                               "Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{} (backing)",
                               info.size.width, info.size.height, info.size.depth,
-                              AmdGpu::NameOf(info.tile_mode), vk::to_string(info.pixel_format),
+                              AmdGpu::NameOf(info.tile_mode), Backend::FormatName(info.pixel_format),
                               info.guest_address, info.guest_size, info.resources.layers,
                               info.resources.levels, num_samples);
     } else {

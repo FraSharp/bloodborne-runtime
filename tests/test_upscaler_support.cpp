@@ -46,7 +46,7 @@ int main() {
                 assert(s.fsr4_supported == fsr4);
                 assert(s.fsr411_supported == (fsr4 && fsr411));
                 assert(bool(s.fsr4_problem.load()) == unsupported);
-                assert(s.preset == Performance && s.output_res == 2);
+                assert(s.preset == Performance && s.output_res == PackSize({2560, 1440}));
                 // Startup patch settings still describe the already applied guest patches.
                 assert(s.startup_upscaler == requested);
                 ConfigureUpscalerSupport(fsr4, fsr411);
@@ -70,8 +70,8 @@ int main() {
     s.upscaler = UpscalerTaa;          // TAA needs native guest targets
     assert(ResolutionNeedsRestart());
     s.upscaler = UpscalerFsr4;
-    const int output = s.startup_output_res;
-    s.output_res = (output + 1) % OutputCount;
+    const auto output = s.startup_output_res;
+    s.output_res = PackSize({2560, 1600}); // another output (here another aspect ratio too)
     assert(ResolutionNeedsRestart());
     s.output_res = output;
     setenv("BB_RENDER_RES", "", 1);

@@ -7,6 +7,8 @@
 // BB_RESIDENCY_SET=0 turns it off.
 #pragma once
 
+#include <cstdint>
+
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
@@ -25,5 +27,15 @@ void RemoveMemory(VkDeviceMemory memory);
 /// An image's MTLTexture (MoltenVK gives each image its own), until removed before destruction.
 void AddImage(VkImage image);
 void RemoveImage(VkImage image);
+
+/// The set is attached to the queue, so every command buffer committed before a removal keeps
+/// the removed allocation in its residency until it completes. Removed objects are therefore
+/// kept alive (retained) until the GPU has completed the submission open at the removal: freed
+/// at once, Metal failed those command buffers ("destroyed while still required to be alive by
+/// the command buffer": a device loss reported as VK_ERROR_OUT_OF_DEVICE_MEMORY). The scheduler
+/// gives the ticks: `current` the open submission's, `completed` the GPU's last known one.
+void SetTicks(std::uint64_t (*current)(void*), std::uint64_t (*completed)(void*), void* context);
+/// Releases the removed objects whose submission has completed (each submission calls it).
+void ReleaseRetired();
 
 } // namespace BbMetalResidency

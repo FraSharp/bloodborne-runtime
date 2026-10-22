@@ -2,6 +2,11 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <xxhash.h>
+#include <array>
+#include <atomic>
+#include <chrono>
+#include <cstdlib>
+#include <cstring>
 
 #include "bbport_toggles.h"
 #include "bbport_free_check.h"
@@ -26,6 +31,88 @@ namespace VideoCore {
 static constexpr u64 PageShift = 12;
 static constexpr u64 NumFramesBeforeRemoval = 32;
 
+namespace {
+bool UploadBaselinesEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_IMAGE_UPLOAD_BASELINE");
+        return value && std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
+bool UploadHashStatsEnabled() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_IMAGE_UPLOAD_HASH_STATS");
+        return value && std::strcmp(value, "0") != 0;
+    }();
+    return enabled;
+}
+
+struct UploadHashCounters {
+    struct Bucket {
+        std::atomic<u64> calls{}, bytes{}, ns{};
+    };
+    // Existing GPU-image checks, extra small-mip baselines, extra large writable baselines.
+    std::array<Bucket, 3> buckets{};
+    std::atomic<u64> skips{}, first_baselines{};
+} upload_hash_counters;
+
+void ReportUploadHashStats() {
+    if (!UploadHashStatsEnabled()) {
+        return;
+    }
+    using Clock = std::chrono::steady_clock;
+    static auto last = Clock::now();
+    const auto now = Clock::now();
+    const double seconds = std::chrono::duration<double>(now - last).count();
+    if (seconds < 5.0) {
+        return;
+    }
+    last = now;
+    std::string report = fmt::format("Image upload hashes: {:.2f} s", seconds);
+    constexpr std::array<const char*, 3> names{"shared", "extra-small", "extra-writable"};
+    for (std::size_t i = 0; i < names.size(); ++i) {
+        auto& b = upload_hash_counters.buckets[i];
+        const auto calls = b.calls.exchange(0, std::memory_order_relaxed);
+        const auto bytes = b.bytes.exchange(0, std::memory_order_relaxed);
+        const auto ns = b.ns.exchange(0, std::memory_order_relaxed);
+        report += fmt::format("; {} {} calls, {:.3f} MiB, {:.3f} ms", names[i], calls,
+                              bytes / 1048576.0, ns / 1e6);
+    }
+    report += fmt::format("; {} skips, {} first baselines",
+                          upload_hash_counters.skips.exchange(0, std::memory_order_relaxed),
+                          upload_hash_counters.first_baselines.exchange(0, std::memory_order_relaxed));
+    std::printf("%s\n", report.c_str());
+}
+
+u64 HashUploadGuestMemory(VAddr address, u64 size, bool shared) {
+    const bool stats = UploadHashStatsEnabled();
+    const auto start = stats ? std::chrono::steady_clock::now()
+                             : std::chrono::steady_clock::time_point{};
+    static const bool precise =
+        EmulatorSettings.GetReadbacksMode() == GpuReadbacksMode::Precise;
+    const void* source = reinterpret_cast<const void*>(address);
+    // Precise readbacks protect GPU-written guest pages against reads. The GPU thread must
+    // inspect the CPU baseline through the backing view, without requesting its own readback.
+    if (precise) {
+        thread_local std::vector<u8> scratch;
+        scratch.resize(size);
+        Core::Memory::Instance()->ReadBacking(address, scratch.data(), size);
+        source = scratch.data();
+    }
+    const u64 hash = XXH3_64bits(source, size);
+    if (stats) {
+        auto& bucket = upload_hash_counters.buckets[shared ? 0 : size <= 64 * 1024 ? 1 : 2];
+        const auto ns = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                            std::chrono::steady_clock::now() - start).count();
+        bucket.calls.fetch_add(1, std::memory_order_relaxed);
+        bucket.bytes.fetch_add(size, std::memory_order_relaxed);
+        bucket.ns.fetch_add(ns, std::memory_order_relaxed);
+    }
+    return hash;
+}
+} // namespace
+
 TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
                            Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
                            BufferCache& buffer_cache_, PageManager& tracker_)
@@ -33,7 +120,7 @@ TextureCache::TextureCache(const Vulkan::Instance& instance_, Vulkan::Scheduler&
       buffer_cache{buffer_cache_}, tracker{tracker_}, blit_helper{instance, scheduler},
       tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
-
+    std::printf("Texture upload baselines: %s\n", UploadBaselinesEnabled() ? "on" : "off");
     u32 max_samplers = instance.GetMaxSamplerAllocationCount();
     trigger_gc_samplers = max_samplers * 3 / 4;
     pressure_gc_samplers = max_samplers * 7 / 8;
@@ -184,8 +271,9 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
 void TextureCache::MarkAsMaybeDirty(ImageId image_id, Image& image) {
     if (image.hash == 0) {
         // Initialize hash
-        const u8* addr = std::bit_cast<u8*>(image.info.guest_address);
-        image.hash = XXH3_64bits(addr, image.info.guest_size);
+        // A fault handler can hold the texture-cache lock here. Precise readbacks must
+        // inspect the backing view, rather than fault recursively on protected guest pages.
+        image.hash = HashUploadGuestMemory(image.info.guest_address, image.info.guest_size, true);
     }
     image.flags |= ImageFlagBits::MaybeCpuDirty;
     UntrackImage(image_id);
@@ -333,11 +421,13 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
 
         // Inherit image usage
         auto& new_image = slot_images[new_image_id];
-        new_image.usage = cache_image.usage;
+        // Supermedo/bloodborne_pc 3a7cde8: reacquire after inserting an image.
+        auto& source_image = slot_images[cache_image_id];
+        new_image.usage = source_image.usage;
         new_image.flags &= ~ImageFlagBits::Dirty;
         // When creating a depth buffer through overlap resolution don't clear it on first use.
         new_image.info.meta_info.htile_clear_mask = 0;
-        runtime.CopyColorAndDepth(&cache_image, &new_image);
+        runtime.CopyColorAndDepth(&source_image, &new_image);
 
         // Free the cache image.
         FreeImage(cache_image_id);
@@ -487,7 +577,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
                   // Old image details
                   cache_image.info.guest_address, cache_image.info.guest_size,
-                  vk::to_string(cache_image.info.pixel_format),
+                  Backend::FormatName(cache_image.info.pixel_format),
                   static_cast<int>(cache_image.info.type), cache_image.info.size.width,
                   cache_image.info.size.height, cache_image.info.size.depth, cache_image.info.pitch,
                   cache_image.info.resources.levels, cache_image.info.resources.layers,
@@ -498,7 +588,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
                   // New image details
                   image_info.guest_address, image_info.guest_size,
-                  vk::to_string(image_info.pixel_format), static_cast<int>(image_info.type),
+                  Backend::FormatName(image_info.pixel_format), static_cast<int>(image_info.type),
                   image_info.size.width, image_info.size.height, image_info.size.depth,
                   image_info.pitch, image_info.resources.levels, image_info.resources.layers,
                   image_info.num_samples, static_cast<u32>(image_info.tile_mode),
@@ -863,10 +953,11 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
         }
         Image& stencil_image = slot_images[stencil_id];
         TouchImage(stencil_image);
-        stencil_image.AssociateDepth(image_id, image.image_uid);
+        // Supermedo/bloodborne_pc 3a7cde8: look up the depth image after insertion.
+        stencil_image.AssociateDepth(image_id, slot_images[image_id].image_uid);
     }
 
-    return image.FindView(desc.view_info, false);
+    return slot_images[image_id].FindView(desc.view_info, false);
 }
 
 void TextureCache::RefreshImage(Image& image) {
@@ -879,15 +970,15 @@ void TextureCache::RefreshImage(Image& image) {
     RENDERER_TRACE;
     TRACE_HINT(fmt::format("{:x}:{:x}", image.info.guest_address, image.info.guest_size));
 
+    // An unchanged CPU copy cannot suppress an upload from a newer GPU buffer source.
     if (True(image.flags & ImageFlagBits::MaybeCpuDirty) &&
-        False(image.flags & ImageFlagBits::CpuDirty)) {
+        False(image.flags & (ImageFlagBits::CpuDirty | ImageFlagBits::GpuDirty))) {
         // The image size should be less than page size to be considered MaybeCpuDirty
         // So this calculation should be very uncommon and reasonably fast
         // bbport (from bmy/bbport-mac): the whole image, as MarkAsMaybeDirty hashes it. Its first
         // 64 pixels alone missed writes elsewhere in it: the item picture on the loading screen
         // (its corner stays transparent) stayed empty until loading ended.
-        const auto addr = std::bit_cast<u8*>(image.info.guest_address);
-        const u64 hash = XXH3_64bits(addr, image.info.guest_size);
+        const u64 hash = HashUploadGuestMemory(image.info.guest_address, image.info.guest_size, true);
         if (image.hash == hash) {
             image.flags &= ~ImageFlagBits::MaybeCpuDirty;
             return;
@@ -945,6 +1036,10 @@ void TextureCache::RefreshImage(Image& image) {
     }
     BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
     boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
+    const bool baseline = UploadBaselinesEnabled();
+    const bool protect = is_gpu_modified && !is_gpu_dirty;
+    const bool writable = image.usage.storage || image.usage.render_target ||
+                          image.usage.depth_target;
     for (u32 m = 0; m < num_mips; m++) {
         const u32 width = std::max(image.info.size.width >> m, 1u);
         const u32 height = std::max(image.info.size.height >> m, 1u);
@@ -952,14 +1047,37 @@ void TextureCache::RefreshImage(Image& image) {
             image.info.props.is_volume ? std::max(image.info.size.depth >> m, 1u) : 1u;
         const auto [mip_size, mip_pitch, mip_height, mip_offset] = image.info.mips_layout[m];
 
-        // Protect GPU modified resources from accidental CPU reuploads.
-        if (is_gpu_modified && !is_gpu_dirty) {
-            const u8* addr = std::bit_cast<u8*>(image.info.guest_address);
-            const u64 hash = XXH3_64bits(addr + mip_offset, mip_size);
-            if (image.mip_hashes[m] == hash) {
-                continue;
+        // Supermedo/bloodborne_pc 7e8bd6c1 (devilismyfriend), with 136a72d0's
+        // upload-cost limit (Supermedo): establish the CPU baseline before a GPU write.
+        // Unchanged guest bytes must not replace newer image contents. Large streamed
+        // textures are not hashed unless writable or already modified by the GPU.
+        // Without baselines: every upload of a GPU-modified image keeps its mip hashes, the first
+        // one too (it is GpuDirty), else the first refresh after the GPU wrote it found no hash
+        // and uploaded unchanged guest memory over the GPU's data: the character creator's
+        // exposure (1x1, written by a compute shader) went to 0, no character. From bbport 0.6
+        // (8185b88, deadinside28/bloodborne_pc, issue #178).
+        if (baseline ? NeedsImageUploadHash(mip_size, is_gpu_modified, is_gpu_dirty, writable)
+                     : is_gpu_modified) {
+            const u64 hash = HashUploadGuestMemory(image.info.guest_address + mip_offset, mip_size,
+                                                 protect);
+            auto& state = image.mip_hashes[m];
+            if (baseline) {
+                if (UploadHashStatsEnabled() && !state.valid) {
+                    upload_hash_counters.first_baselines.fetch_add(1, std::memory_order_relaxed);
+                }
+                if (!state.ShouldUpload(hash, is_gpu_modified, is_gpu_dirty)) {
+                    if (UploadHashStatsEnabled()) {
+                        upload_hash_counters.skips.fetch_add(1, std::memory_order_relaxed);
+                    }
+                    continue;
+                }
+            } else {
+                // Diagnostic comparison with the previous baseline timing.
+                if (protect && state.value == hash) {
+                    continue;
+                }
+                state.value = hash;
             }
-            image.mip_hashes[m] = hash;
         }
 
         const u32 extent_width = mip_pitch ? std::min(mip_pitch, width) : width;
@@ -1273,7 +1391,16 @@ void TextureCache::GarbageCollectImages() {
         // tiled ones cannot be written back at all) neither use up the deletions nor stay first
         // in line. The oldest ten being such render targets stopped the collector for good, and
         // VRAM grew with every area visited up to the pressure mark (~10 GB on 16 GB).
-        if ((tiled && download) || (download && !pressured)) {
+        // MaybeCpuDirty can mean a write to a neighboring byte on the same tracked page.
+        // A GPU-modified image with that flag still has its only valid contents on the GPU:
+        // SafeToDownload() rejects it, but freeing it would discard those contents. This is
+        // visible as lost exposure/material lighting after the 1440p scene crosses the GC mark.
+        // Over the critical mark memory comes first: kept without a limit, these images could
+        // grow VRAM the way the render targets above did.
+        const bool gpu_contents_unresolved =
+            True(image.flags & ImageFlagBits::GpuModified) && !download &&
+            False(image.flags & ImageFlagBits::CpuDirty) && !aggresive;
+        if ((tiled && download) || (download && !pressured) || gpu_contents_unresolved) {
             lru_cache.Touch(image.lru_id, gc_tick);
             BbStats::gc_kept_images.fetch_add(1, std::memory_order_relaxed);
             return false;
@@ -1387,6 +1514,7 @@ void TextureCache::NoteVramShort() {
 }
 
 void TextureCache::RunGarbageCollector() {
+    ReportUploadHashStats();
     SCOPE_EXIT {
         ++gc_tick;
     };
@@ -1427,8 +1555,9 @@ void TextureCache::DeleteImage(ImageId image_id) {
         }
     }
 
-    // Reclaim image and any image views it references.
-    scheduler.DeferOperation([this, image_id] {
+    // Reclaim image and any image views it references (bbport: past the next submission, which
+    // can still hold draws the draw pipeline prepared before this deletion).
+    scheduler.DeferOperationPastNext([this, image_id] {
         Image& image = slot_images[image_id];
         for (auto& backing : image.backing_images) {
             for (const ImageViewId image_view_id : backing.image_view_ids) {

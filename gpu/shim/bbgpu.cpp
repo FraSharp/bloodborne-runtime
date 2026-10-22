@@ -1,6 +1,8 @@
 #include "bbport_write_log.h"
 #include "bbport_game_menu.h"
 #include "bbport_gnm_hooks.h"
+#include "bbport_frame_rate.h"
+#include "bbport_game_hooks.h"
 // bbport: glue between the C loader and the vendored shadPS4 video core.
 #include "bbport_overlay.h"
 #include "bbport_settings.h"
@@ -113,6 +115,9 @@ void MemoryManager::SetRasterizer(Vulkan::Rasterizer* rasterizer_) {
     runtime_memory_set_cpu_write_hook([](uintptr_t address, uint64_t size) {
         Memory::Instance()->GetRasterizer()->OnCpuWrite(address, size);
     });
+}
+bool MemoryManager::HostCopiesPendingFor(VAddr address, u64 size) {
+    return rasterizer && rasterizer->HostCopiesPendingFor(address, size);
 }
 void MemoryManager::InvalidateMemory(VAddr address, u64 size) {
     if (rasterizer) rasterizer->InvalidateMemory(address, size);
@@ -263,8 +268,13 @@ static void StartProfileWriter() {
 }
 #endif
 
+extern "C" void bbgpu_trophy_notification(const char* title, int id) {
+    BbOverlay::TrophyUnlocked(title, id);
+}
+
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
+    BbSettings::StartLauncherChannel();
     // What the translator knows about this game (games/), before anything asks for it.
     Game::Select(config->serial);
 #ifdef BB_PGO_GENERATE
@@ -344,9 +354,28 @@ extern "C" int bbgpu_handle_fault(void* ucontext, void* address) {
     return BbFreeCheck::OnStaleTrapFault(reinterpret_cast<std::uint64_t>(address)) ? 1 : 0;
 }
 
+extern "C" void bbgpu_mouse_capture(void) {
+    if (g_window) {
+        g_window->RequestMouseCapture();
+    }
+}
+
+extern "C" int bbgpu_free_camera(void) {
+    return BbGameHooks::FreeCameraActive() ? 1 : 0;
+}
+
+extern "C" int bbgpu_camera_look(float yaw, float pitch) {
+    if (!BbGameHooks::CameraLookAvailable()) {
+        return 0;
+    }
+    return BbGameHooks::CameraLookAdd(pitch, yaw) ? 1 : 0;
+}
+
 extern "C" void bbgpu_patch_image(unsigned char* image, uint64_t size) {
     BbGnmHooks::PatchImage(image, size);
     BbGameMenu::PatchImage(image, size);
+    BbFrameRate::PatchImage(image, size);
+    BbGameHooks::PatchImage(image, size);
 }
 
 extern "C" unsigned bbgpu_symbol_count(void) {

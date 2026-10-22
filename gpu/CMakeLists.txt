@@ -115,6 +115,8 @@ add_custom_target(host_shaders DEPENDS ${SHADER_HEADERS})
 file(GLOB_RECURSE VIDEO_CORE CONFIGURE_DEPENDS shadps4/video_core/*.cpp)
 file(GLOB_RECURSE RECOMPILER CONFIGURE_DEPENDS shadps4/shader_recompiler/*.cpp)
 list(FILTER VIDEO_CORE EXCLUDE REGEX "renderdoc\\.cpp$")
+# The Metal backend (R5, docs/NATIVE_RENDERER.md) is macOS only; added below.
+list(FILTER VIDEO_CORE EXCLUDE REGEX "/renderer_metal/")
 set(COMMON
     shadps4/common/decoder.cpp shadps4/common/error.cpp
     shadps4/common/io_file.cpp shadps4/common/native_clock.cpp shadps4/common/number_utils.cpp
@@ -128,7 +130,7 @@ file(GLOB SHIM_SOURCES CONFIGURE_DEPENDS shim/*.cpp shim/*/*.cpp)
 file(GLOB LAYER_SOURCES CONFIGURE_DEPENDS layer/*.cpp)
 # Game profiles (what the translator knows about one game, out of its core): games/.
 file(GLOB GAME_SOURCES CONFIGURE_DEPENDS games/*.cpp)
-# The translator's own command processor (docs/TRANSLATOR_ARCHITECTURE.ru.md, step 2): cp/.
+# The translator's own command processor (bbport's docs/TRANSLATOR_ARCHITECTURE.ru.md, step 2): cp/.
 file(GLOB CP_SOURCES CONFIGURE_DEPENDS cp/*.cpp)
 add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} ${LAYER_SOURCES} ${GAME_SOURCES} ${CP_SOURCES}
     shadps4/core/libraries/gnmdriver/gnmdriver.cpp
@@ -150,10 +152,14 @@ set_source_files_properties(third_party/imgui/imgui.cpp third_party/imgui/imgui_
     third_party/imgui/imgui_tables.cpp third_party/imgui/imgui_widgets.cpp
     third_party/imgui/backends/imgui_impl_vulkan.cpp PROPERTIES
     COMPILE_OPTIONS "-fvisibility=hidden;-fvisibility-inlines-hidden")
+# The menu's fonts match the launcher's: Inter (text) and Cinzel (headings), SIL OFL 1.1; DejaVu
+# fills in the scripts they lack (Bitstream Vera license).
 target_compile_definitions(bbgpu PRIVATE IMGUI_IMPL_VULKAN_NO_PROTOTYPES
-    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+    BB_FONT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf"
+    BB_FONT_TEXT_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Inter.ttf"
+    BB_FONT_HEADING_PATH="${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Cinzel.ttf")
 set_source_files_properties(shim/bbport_overlay.cpp PROPERTIES
-    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf")
+    OBJECT_DEPENDS "${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/DejaVuSans.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Inter.ttf;${CMAKE_CURRENT_SOURCE_DIR}/third_party/fonts/Cinzel.ttf")
 # The in-game menu's texts (shim/locales/*.json) as a C++ table for shim/bbport_text.cpp.
 find_package(Python3 REQUIRED COMPONENTS Interpreter)
 file(GLOB BB_TEXT_LOCALES CONFIGURE_DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/*.json)
@@ -163,6 +169,11 @@ add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_text_data.inc
     COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_DIR}/bbport_text_data.inc
     DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/locales/gen_text.py ${BB_TEXT_LOCALES} VERBATIM)
 target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_text_data.inc)
+add_custom_command(OUTPUT ${BB_TEXT_DIR}/bbport_trophy_data.inc
+    COMMAND ${CMAKE_COMMAND} -E make_directory ${BB_TEXT_DIR}
+    COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/shim/gen_trophy_catalog.py ${BB_TEXT_DIR}/bbport_trophy_data.inc
+    DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/shim/gen_trophy_catalog.py ${CMAKE_CURRENT_SOURCE_DIR}/shim/trophy_catalog.json VERBATIM)
+target_sources(bbgpu PRIVATE ${BB_TEXT_DIR}/bbport_trophy_data.inc)
 target_include_directories(bbgpu PRIVATE ${BB_TEXT_DIR})
 target_include_directories(bbgpu PRIVATE . fsr4_metal shim layer games cp shadps4 ${SHADER_INCLUDE} third_party/gcn/include third_party/half/include ../src ../recomp/src)
 target_compile_definitions(bbgpu PRIVATE BOOST_ASIO_STANDALONE NDEBUG)
@@ -200,6 +211,13 @@ if (APPLE)
         add_custom_target(fsr4_metal_metallibs DEPENDS ${METALLIB_DIR}/fsr411_helpers.metallib ${METALLIB_DIR}/fsr411_simd.metallib)
         add_dependencies(bbgpu fsr4_metal_metallibs)
     endif()
+    # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
+    # at run time, so nothing links against it; ARC is required by the ObjC objects.
+    enable_language(OBJCXX)
+    set_source_files_properties(shim/bbport_metalfx.mm PROPERTIES LANGUAGE OBJCXX
+        COMPILE_OPTIONS "-fobjc-arc")
+    target_sources(bbgpu PRIVATE shim/bbport_metalfx.mm)
+    target_link_libraries(bbgpu PUBLIC "-framework QuartzCore" "-framework Metal" "-framework Cocoa")
     # Zydis's package names Zycore by -lZycore only: the deps prefix's lib directory.
     target_link_directories(bbgpu PRIVATE ${CMAKE_PREFIX_PATH}/lib)
 else()
@@ -207,6 +225,28 @@ else()
     # TLS descriptor call (_dl_tlsdesc_return was ~2% of the draw recording thread).
     target_compile_options(bbgpu PRIVATE -ftls-model=initial-exec)
     target_link_options(bbgpu PRIVATE -Wl,--allow-shlib-undefined)
+endif()
+# The Metal backend (R5 N5, docs/NATIVE_RENDERER.md): SPIR-V to MSL through SPIRV-Cross, Metal
+# pipeline states built from the shared pipeline keys. Adapted from Wooloomooloo2/
+# bloodborne_mac_port (0b50589) and Huax-1839/bloodborne-macos (GPL-2.0-or-later). MoltenVK stays
+# the renderer; BB_METAL_SHADOW=1 only builds a Metal pipeline beside each Vulkan one.
+if (APPLE)
+    enable_language(OBJCXX)
+    find_package(spirv_cross_core CONFIG REQUIRED)
+    find_package(spirv_cross_glsl CONFIG REQUIRED)
+    find_package(spirv_cross_msl CONFIG REQUIRED)
+    file(GLOB METAL_SOURCES CONFIGURE_DEPENDS shadps4/video_core/renderer_metal/*.cpp
+         shadps4/video_core/renderer_metal/*.mm)
+    target_sources(bbgpu PRIVATE ${METAL_SOURCES})
+    foreach(source IN LISTS METAL_SOURCES)
+        if (source MATCHES "\\.mm$")
+            set_source_files_properties(${source} PROPERTIES COMPILE_OPTIONS
+                "-fobjc-arc;-UVK_USE_PLATFORM_METAL_EXT;-Wno-unguarded-availability-new")
+        endif()
+    endforeach()
+    target_link_libraries(bbgpu PRIVATE spirv-cross-msl spirv-cross-glsl spirv-cross-core
+        "-framework Metal" "-framework QuartzCore" "-framework Foundation")
+    target_compile_definitions(bbgpu PRIVATE BB_METAL_BACKEND=1)
 endif()
 target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
@@ -216,6 +256,27 @@ if (NOT APPLE)
 endif()
 
 # Explicit test targets; neither launches the game nor needs a Vulkan device.
+find_package(Threads REQUIRED)
+add_executable(image-upload-hash-test EXCLUDE_FROM_ALL ../tests/test_image_upload_hash.cpp)
+target_compile_options(image-upload-hash-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(image-upload-hash-test PRIVATE shadps4)
+target_link_libraries(image-upload-hash-test PRIVATE PkgConfig::XXHASH)
+add_executable(slot-vector-test EXCLUDE_FROM_ALL ../tests/test_slot_vector.cpp
+    shim/common/slot_vector_pages.cpp)
+target_compile_options(slot-vector-test PRIVATE -UNDEBUG -D_DEBUG -Wall -Wextra -Werror)
+target_include_directories(slot-vector-test PRIVATE shim shadps4)
+target_link_libraries(slot-vector-test PRIVATE fmt::fmt)
+add_executable(handle-table-test EXCLUDE_FROM_ALL ../tests/test_handle_table.cpp)
+target_compile_options(handle-table-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(handle-table-test PRIVATE shadps4)
+add_executable(avplayer-queue-test EXCLUDE_FROM_ALL ../tests/test_avplayer_queue.cpp)
+target_compile_options(avplayer-queue-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(avplayer-queue-test PRIVATE shadps4)
+target_link_libraries(avplayer-queue-test PRIVATE Threads::Threads)
+add_executable(avplayer-clock-test EXCLUDE_FROM_ALL ../tests/test_avplayer_clock.cpp)
+target_compile_options(avplayer-clock-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
+target_include_directories(avplayer-clock-test PRIVATE shadps4)
+target_link_libraries(avplayer-clock-test PRIVATE Threads::Threads)
 add_executable(fixed-quad-tessellation-test EXCLUDE_FROM_ALL ../tests/test_fixed_quad_tessellation.cpp)
 target_compile_options(fixed-quad-tessellation-test PRIVATE -UNDEBUG -Wall -Wextra -Werror)
 target_include_directories(fixed-quad-tessellation-test PRIVATE shadps4)
@@ -266,6 +327,10 @@ set_source_files_properties(../tests/test_translation_memory.cpp PROPERTIES
 target_link_libraries(translation-memory-test PRIVATE bbgpu)
 
 # bbport: FSR 4 benchmark outside the game (tools/fsr4_bench.cpp): ninja -C out/gpu fsr4-bench.
+add_executable(trophy-queue-test EXCLUDE_FROM_ALL ../tests/test_trophy_queue.cpp)
+target_include_directories(trophy-queue-test PRIVATE shim)
+target_compile_options(trophy-queue-test PRIVATE -UNDEBUG)
+
 add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_support.cpp
     shim/bbport_settings.cpp)
 target_include_directories(upscaler-support-test PRIVATE shim)

@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
 
 #include <algorithm>
@@ -7,6 +8,7 @@
 #include <filesystem>
 #include <format>
 #include <mutex>
+#include <string_view>
 
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image_info.h"
@@ -31,6 +33,7 @@ struct Entry {
     std::vector<u64> shaders; ///< vs/ps pairs (graphics) or cs (compute), first few
     std::vector<std::pair<Target, bool>> sampled; ///< textures (false) and storage images (true)
     std::string note;
+    std::vector<std::string> commands; ///< bounded per-command binding metadata
     std::vector<std::string> buffers; ///< dumped constants, per draw
 };
 
@@ -49,6 +52,24 @@ void AddBuffers(Entry& entry) {
     }
     pending_buffers.clear();
 }
+std::string pending_command;
+u32 captured_commands = 0;
+u32 pending_binding_count = 0;
+constexpr u32 MaxCommands = 65536;
+constexpr u32 MaxBindings = 128;
+
+void AddCommand(Entry& entry, u64 shader0, u64 shader1, u32 count0, u32 count1) {
+    if (!FrameCapture::Detailed() || pending_command.empty()) return;
+    if (captured_commands < MaxCommands) {
+        entry.commands.push_back(std::format(
+            "  command {} shaders {:016x}/{:016x} counts {}/{} {}",
+            captured_commands, shader0, shader1, count0, count1, pending_command));
+    } else if (captured_commands == MaxCommands) {
+        entry.commands.emplace_back("  command capture truncated at 65536 commands");
+    }
+    ++captured_commands;
+    pending_command.clear();
+}
 bool pass_open = false;
 std::mutex display_mutex;
 std::vector<VAddr> display_buffers;
@@ -57,7 +78,7 @@ std::array<std::atomic<VAddr>, 16> display_list{};
 std::atomic<u32> display_count{0};
 
 Target ToTarget(const VideoCore::ImageInfo& info) {
-    return {info.guest_address, info.pixel_format, info.size.width, info.size.height};
+    return {info.guest_address, ToVk(info.pixel_format), info.size.width, info.size.height};
 }
 
 std::string Describe(const Target& t) {
@@ -117,6 +138,9 @@ void Write(VAddr presented) {
         if (!e.note.empty()) {
             std::fprintf(f, "  note: %s\n", e.note.c_str());
         }
+        for (const auto& command : e.commands) {
+            std::fprintf(f, "%s\n", command.c_str());
+        }
         for (const auto& b : e.buffers) {
             std::fprintf(f, "%s\n", b.c_str());
         }
@@ -141,6 +165,40 @@ void FrameCapture::OnFlip(VAddr presented_address) {
 }
 
 void FrameCapture::Poll() {}
+
+bool FrameCapture::Detailed() {
+    static const bool enabled = [] {
+        const char* value = std::getenv("BB_CAPTURE_DRAWS");
+        return value && std::string_view(value) == "1";
+    }();
+    return enabled;
+}
+
+void FrameCapture::BeginCommand(const char* kind, u64 tick, u64 completed) {
+    if (!Active() || !Detailed()) return;
+    // Early returns must not leave another draw's buffers or sampled images attached.
+    pending_buffers.clear();
+    pending_sampled.clear();
+    pending_command.clear();
+    pending_binding_count = 0;
+    if (Detailed()) {
+        pending_command = std::format("{} tick {} completed_cached {}", kind, tick, completed);
+    }
+}
+
+void FrameCapture::Binding(const char* kind, u64 stage, u32 slot, VAddr guest, u64 size,
+                           u64 host_base, u64 offset, bool written) {
+    if (!Active() || !Detailed() || pending_command.empty()) return;
+    if (pending_binding_count < MaxBindings) {
+        pending_command += std::format(
+            "\n    {} stage {:016x} slot {} guest {:#x} bytes {} host_base {:#x} "
+            "offset {} {}", kind, stage, slot, guest, size, host_base, offset,
+            written ? "write" : "read");
+    } else if (pending_binding_count == MaxBindings) {
+        pending_command += "\n    bindings truncated at 128";
+    }
+    ++pending_binding_count;
+}
 
 bool FrameCapture::IsDisplayBuffer(VAddr address) {
     const u32 count = display_count.load(std::memory_order_acquire);
@@ -196,6 +254,7 @@ void FrameCapture::BeginPass(const VideoCore::ImageInfo* const* colors, u32 num_
         pending_sampled.clear();
         pending_buffers.clear();
         pass_open = false;
+        captured_commands = 0;
         state.store(Recording, std::memory_order_release);
     }
     if (state.load(std::memory_order_relaxed) != Recording) {
@@ -218,6 +277,7 @@ void FrameCapture::Draw(u64 vs_hash, u64 ps_hash, u32 num_indices, u32 num_insta
         return;
     }
     auto& e = entries.back();
+    AddCommand(e, vs_hash, ps_hash, num_indices, num_instances);
     ++e.draws;
     e.indices += u64(num_indices) * std::max(num_instances, 1u);
     AddShader(e, vs_hash);
@@ -239,12 +299,14 @@ void FrameCapture::Dispatch(u64 cs_hash, u32 x, u32 y, u32 z) {
         entries.push_back({.compute = true, .draws = 1, .shaders = {cs_hash}});
         entries.back().note = std::format("groups {}x{}x{}", x, y, z);
     }
+    AddCommand(entries.back(), cs_hash, 0, x, y);
     AddSampled(entries.back());
     AddBuffers(entries.back());
     pass_open = false;
 }
 
 void FrameCapture::Buffer(u64 stage_hash, u32 slot, VAddr address, const void* data, u64 size) {
+    if (Detailed()) return; // Metadata mode does not sample unsynchronized guest contents.
     const u64 bytes = std::min<u64>(size, 1024) & ~u64(3);
     std::string out = std::format("  buffer stage {:016x} slot {} at {:#x} size {}:", stage_hash,
                                   slot, address, size);

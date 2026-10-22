@@ -1,4 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "bbport_game_hooks.h"
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -10,6 +12,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <string>
 
 #include <vk_mem_alloc.h>
@@ -147,6 +150,19 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
     std::printf("Dump: frame %d -> %s\n", frame, dir.c_str());
 }
 
+/// bbport: the menu reads the reason from another thread: keep each one alive (as FSR 4 does).
+void PublishMetalFxProblem(const char* problem) {
+    static std::deque<std::string> kept;
+    auto& setting = BbSettings::Get().metalfx_problem;
+    if (!problem) {
+        setting = nullptr;
+    } else {
+        // The menu may still be reading an older pointer: never reuse its storage.
+        if (kept.empty() || kept.back() != problem) kept.emplace_back(problem);
+        setting = kept.back().c_str();
+    }
+}
+
 void PrintIssues(const char* what, u64 issues) {
     std::printf("Upscaler: %s invalid:", what);
     for (u32 bit = 0; bit < 64; ++bit) {
@@ -177,8 +193,12 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
     : instance{instance_}, scheduler{scheduler_}, texture_cache{texture_cache_},
       runtime{runtime_}, camera_motion{camera_motion_}, scene_targets{scene_targets_} {
     // Reject unsupported shaders before allocating resources or recording a frame.
+    metalfx = std::make_unique<MetalFxUpscaler>(instance, scheduler);
     BbSettings::ConfigureUpscalerSupport(instance.IsFsr4Int8Supported(),
-                                         instance.IsFsr411Supported());
+                                         instance.IsFsr411Supported(), metalfx->Supported());
+#ifdef __APPLE__
+    PublishMetalFxProblem(metalfx->Problem());
+#endif
     fsr4 = std::make_unique<Fsr4Upscaler>(instance, scheduler);
     {
         const Dlss* dlss = Dlss::Get();
@@ -247,16 +267,17 @@ bool TemporalUpscaler::Active() const {
            (BbSettings::Get().upscaler == BbSettings::UpscalerFsr3 ||
             BbSettings::IsFsr4(BbSettings::Get().upscaler) ||
             BbSettings::Get().upscaler == BbSettings::UpscalerTaa ||
-            BbSettings::Get().upscaler == BbSettings::UpscalerDlss) &&
+            BbSettings::Get().upscaler == BbSettings::UpscalerDlss ||
+            BbSettings::Get().upscaler == BbSettings::UpscalerMetalFx) &&
            !BbToggle::Disabled(1u << 24);
 }
 
 bool TemporalUpscaler::ReactiveOn() const {
     // FSR 4 takes no reactive mask itself: the mask blends its output afterwards
-    // (RecordFsr4Reactive).
-    // DLSS takes no reactive mask.
+    // (RecordFsr4Reactive). DLSS and MetalFX take none.
     return BbSettings::Get().reactive && !BbToggle::Disabled(1u << 27) && !UseDlss() &&
-           BbSettings::Get().upscaler != BbSettings::UpscalerTaa;
+           BbSettings::Get().upscaler != BbSettings::UpscalerTaa &&
+           BbSettings::Get().upscaler != BbSettings::UpscalerMetalFx;
 }
 
 void TemporalUpscaler::RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w,
@@ -333,8 +354,10 @@ bool TemporalUpscaler::OnFrameStart() {
                 value < BbSettings::PresetCount) {
                 BbSettings::Get().preset.store(value);
             }
-            if (fields >= 2 && output >= 0 && output < BbSettings::OutputCount) {
-                BbSettings::Get().output_res.store(output);
+            // The output: its number in the current aspect ratio's list.
+            const auto outputs = BbSettings::Outputs(BbSettings::Get().aspect);
+            if (fields >= 2 && output >= 0 && output < outputs.count) {
+                BbSettings::Get().output_res.store(BbSettings::PackSize(outputs.sizes[output]));
             }
             if (fields == 3 && provider >= 0 && provider < BbSettings::UpscalerCount) {
                 BbSettings::Get().upscaler.store(provider);
@@ -353,14 +376,22 @@ bool TemporalUpscaler::OnFrameStart() {
     const bool active = Active();
     const bool jitter_on = active && settings.jitter && !BbToggle::Disabled(1u << 25);
     const int upscaler = settings.upscaler.load();
-    const int output = settings.output_res.load();
+    const auto output_size = BbSettings::CurrentOutput();
+    const u32 output = BbSettings::PackSize(output_size);
     const bool output_changed = !scaled_session && applied_output != output;
     if (output_changed) {
-        target_width = BbSettings::OutputWidths[output];
-        target_height = BbSettings::OutputHeights[output];
+        target_width = u32(output_size.width);
+        target_height = u32(output_size.height);
         std::printf("Output resolution: %ux%u (live)\n", target_width, target_height);
         failed = false;
         fsr4_failed = false;
+        metalfx->Retry();
+    }
+    // The game's camera, HUD markers and UI follow the output's aspect ratio (bbport_game_hooks).
+    if (const float aspect = enabled ? float(target_width) / float(target_height) : 16.0f / 9.0f;
+        aspect != applied_aspect) {
+        applied_aspect = aspect;
+        BbGameHooks::SetDisplayAspect(aspect);
     }
     const bool changed = output_changed || applied_preset != preset || active != last_active ||
                          jitter_on != last_jitter || applied_upscaler != upscaler;
@@ -371,6 +402,7 @@ bool TemporalUpscaler::OnFrameStart() {
         if (BbSettings::IsFsr4(upscaler)) BbSettings::Get().fsr4_problem = nullptr;
     }
     if (applied_upscaler != upscaler) fsr4_failed = false; // retry after a menu change
+    if (applied_upscaler != upscaler) metalfx->Retry();
     // Dynamic scene resolution scaling (live preset switching) works on all GPUs.
     // On GPUs without D32S8 blit support, UI depth is cleared instead of copied from scene.
     if (!scaled_session) {
@@ -439,15 +471,18 @@ void TemporalUpscaler::OnDispatch(u64 cs_hash) {
 }
 
 bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
-    // DLSS, like FSR 4, has its own context: no portable FSR 3 context is made.
+    // DLSS, like FSR 4, has its own context: no portable FSR 3 context is made. MetalFX has its
+    // own scaler (vk_metalfx).
     const bool use_fsr4 = UseFsr4() || UseDlss();
     const bool use_taa = BbSettings::Get().upscaler == BbSettings::UpscalerTaa;
+    const bool use_metalfx = UseMetalFx();
     if (use_taa && (w != ow || h != oh)) {
         std::printf("TAA: remove BB_RENDER_RES to use native-resolution TAA\n");
         return false;
     }
     if (resources_ready && w == width && h == height && ow == out_width && oh == out_height &&
-        hdr == context_hdr && use_fsr4 == resources_fsr4 && use_taa == resources_taa) {
+        hdr == context_hdr && use_fsr4 == resources_fsr4 && use_taa == resources_taa &&
+        use_metalfx == resources_metalfx) {
         return true;
     }
     const auto device = instance.GetDevice();
@@ -485,8 +520,9 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
                             : 0;
     create_info.maxRenderSize = {w, h};
     create_info.maxOutputSize = {ow, oh};
-    // FSR 4 has its own model context (vk_fsr4); the images below are shared.
-    if (!use_fsr4 && !use_taa) {
+    // FSR 4 has its own model context (vk_fsr4), DLSS its own bridge, MetalFX its own scaler
+    // (vk_metalfx); the images below are shared.
+    if (!use_fsr4 && !use_taa && !use_metalfx) {
         if (const u64 issues = ffxVkPortableValidateUpscaleCreateInfo(&create_info)) {
             PrintIssues("create info", issues);
             return false;
@@ -593,6 +629,11 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     resources_ready = true;
     resources_fsr4 = use_fsr4;
     resources_taa = use_taa;
+    resources_metalfx = use_metalfx;
+    if (use_metalfx) {
+        std::printf("Upscaler: MetalFX inputs %ux%u -> %ux%u\n", w, h, ow, oh);
+        return true;
+    }
     if (use_taa) {
         std::printf("TAA: context %ux%u -> %ux%u (%s), no FSR model\n", w, h, ow, oh,
                     hdr ? "HDR scene color" : "tonemapped frame");
@@ -844,9 +885,10 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
     taa_next = 1 - taa_next;
 }
 
-void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h) {
+void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, float applied) {
     const auto& settings = BbSettings::Get();
-    const float extra = std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - 1.0f;
+    // MetalFX applies no RCAS (applied = 0), so the full sharpness is the extra pass.
+    const float extra = std::clamp(settings.sharpness.load(), 0.0f, 2.0f) - applied;
     if (!settings.sharpen || extra <= 0.0f) {
         return;
     }
@@ -959,7 +1001,7 @@ void TemporalUpscaler::OnBlendedSceneDraw() {
     const auto scene = Scaled() ? SceneSize(ow, oh) : std::array<u32, 2>{ow, oh};
     const u32 w = reduced ? scene_targets.Size().width : scene[0];
     const u32 h = reduced ? scene_targets.Size().height : scene[1];
-    if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
+    if (ToVk(color.info.pixel_format) != vk::Format::eR16G16B16A16Sfloat ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eTransferSrc)) {
         return;
     }
@@ -1133,7 +1175,7 @@ void TemporalUpscaler::Run() {
     const bool reduced = ReducedScene(color) && scene_targets.EligibleScene(depth);
     const u32 w = reduced ? scene_targets.Size().width : ow;
     const u32 h = reduced ? scene_targets.Size().height : oh;
-    if (color.info.pixel_format != vk::Format::eR16G16B16A16Sfloat ||
+    if (ToVk(color.info.pixel_format) != vk::Format::eR16G16B16A16Sfloat ||
         depth.info.size.width != ow || depth.info.size.height != oh ||
         !(color.usage_flags & vk::ImageUsageFlagBits::eStorage)) {
         return;
@@ -1142,7 +1184,7 @@ void TemporalUpscaler::Run() {
         failed = true;
         return;
     }
-    const auto depth_format = depth.info.pixel_format;
+    const auto depth_format = ToVk(depth.info.pixel_format);
     const auto depth_view =
         CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
     const auto color_view =
@@ -1167,9 +1209,7 @@ void TemporalUpscaler::Run() {
         input_color_view = c.view;
         input_depth_view = d.view;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    const Breadcrumbs::Scope crumb{cmdbuf, scheduler.CrumbStream(), "TAA"};
-
+    auto cmdbuf = scheduler.CommandBuffer();
     const auto own_barrier = [&](vk::Image image, vk::ImageLayout old_layout,
                                  vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access,
                                  vk::ImageLayout new_layout, vk::PipelineStageFlags2 dst_stage,
@@ -1188,6 +1228,14 @@ void TemporalUpscaler::Run() {
     };
     const auto all = vk::PipelineStageFlagBits2::eAllCommands;
     const auto rw = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite;
+    bool dispatched = false;
+    const bool use_metalfx = UseMetalFx();
+    bool metal_pending = false;
+    bool has_reactive = false; // debug-view block below reads it (bbport: MetalFX port hoist)
+    {
+    // bbport: the crumb must end on the command buffer MetalFX submits (it flushes it), so the
+    // MetalFX dispatch itself runs after this scope closes, on the new command buffer.
+    const Breadcrumbs::Scope crumb{cmdbuf, scheduler.CrumbStream(), "TAA"};
     // Previous contents are not needed: the layouts start from undefined every frame.
     own_barrier(vk::Image(motion_image), vk::ImageLayout::eUndefined, all,
                 vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
@@ -1200,7 +1248,7 @@ void TemporalUpscaler::Run() {
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
                 vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
 
-    const bool has_reactive = mask_ready || RecordReactive(input_color_view);
+    has_reactive = mask_ready || RecordReactive(input_color_view);
 
     const auto now = std::chrono::steady_clock::now();
     float frame_ms = std::chrono::duration<float, std::milli>(now - last_frame).count();
@@ -1209,7 +1257,6 @@ void TemporalUpscaler::Run() {
     }
     last_frame = now;
 
-    bool dispatched = false;
     if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
         RecordTaa(cmdbuf, input_color_view, input_depth_view);
         dispatched = true;
@@ -1222,14 +1269,19 @@ void TemporalUpscaler::Run() {
     } else if (UseDlss()) {
         dispatched = RecordDlss(
             cmdbuf,
-            {input_color, input_color_view, color.info.pixel_format, vk::ImageAspectFlagBits::eColor, w, h},
+            {input_color, input_color_view, ToVk(color.info.pixel_format), vk::ImageAspectFlagBits::eColor, w, h},
             {input_depth, input_depth_view, depth_format, vk::ImageAspectFlagBits::eDepth, w, h}, w, h,
             ow, oh, frame_ms, true);
+    } else if (use_metalfx) {
+        // bbport: MetalFX submits the frame recorded so far (its copies must reach the GPU
+        // before MetalFX reads them), so the dispatch runs after the crumb scope closes: the
+        // crumb must end on this command buffer, not on the new one the copy back goes into.
+        metal_pending = true;
     } else {
         FfxVkPortableUpscaleDispatchInfo info{};
         info.structSize = sizeof(info);
         info.commandBuffer = cmdbuf;
-        info.color = Describe(input_color, color.info.pixel_format, w, h,
+        info.color = Describe(input_color, ToVk(color.info.pixel_format), w, h,
                               color.usage_flags, vk::ImageAspectFlagBits::eColor,
                               FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
         info.depth = Describe(input_depth, depth_format, w, h, depth.usage_flags,
@@ -1294,17 +1346,26 @@ void TemporalUpscaler::Run() {
             dispatched = true;
         }
     }
+    }
+    if (metal_pending) {
+        // The crumb ended on the command buffer MetalFX submits; continue on the new one.
+        dispatched = RecordMetalFx({input_color, ToVk(color.info.pixel_format),
+                                    vk::ImageAspectFlagBits::eColor},
+                                   {input_depth, depth_format, vk::ImageAspectFlagBits::eDepth}, w,
+                                   h, ow, oh, true);
+        cmdbuf = scheduler.CommandBuffer();
+    }
     if (dispatched) {
         reset = false;
         dispatched_last_frame = true;
         if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
-            ExtraSharpen(vk::Image(output_image), false, ow, oh);
+            ExtraSharpen(vk::Image(output_image), false, ow, oh, use_metalfx ? 0.0f : 1.0f);
         }
         // bbport: BB_DUMP_TRIGGER on this (HDR scene color) path too: the upscaler's inputs and
         // its result, for ghosting and history checks (tools/dump_view.py).
         if (const int dump = DumpFrame(); dump >= 0) {
             camera_motion.PrintState(dump);
-            const vk::Format format = color.info.pixel_format;
+            const vk::Format format = ToVk(color.info.pixel_format);
             const bool rgba16f = format == vk::Format::eR16G16B16A16Sfloat;
             const bool r11g11b10 = format == vk::Format::eB10G11R11UfloatPack32;
             if (rgba16f || r11g11b10) {
@@ -1446,7 +1507,7 @@ void TemporalUpscaler::OnColorTarget(VideoCore::ImageId color) {
     }
     const auto& image = texture_cache.GetImage(color);
     const auto& depth = texture_cache.GetImage(camera_motion.Depth());
-    if (image.info.pixel_format == vk::Format::eR8G8B8A8Unorm &&
+    if (ToVk(image.info.pixel_format) == vk::Format::eR8G8B8A8Unorm &&
         image.info.size.width == depth.info.size.width &&
         image.info.size.height == depth.info.size.height) {
         ldr_target = color;
@@ -1466,7 +1527,7 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         const auto& ui_target = texture_cache.GetImage(ui_color);
         if (depth_image.info.size.width == ui_target.info.size.width &&
             depth_image.info.size.height == ui_target.info.size.height) {
-            EnsureUiResources(ui_width, ui_height, ui_format, depth_image.info.pixel_format);
+            EnsureUiResources(ui_width, ui_height, ui_format, ToVk(depth_image.info.pixel_format));
             PrepareUiDepth(depth);
             ui_depth = depth;
         }
@@ -1479,7 +1540,7 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
         // A UI movie can start without stencil and enable it for later text/masks.
         if (color == ui_color && depth && depth != ui_depth) {
             EnsureUiResources(ui_width, ui_height, ui_format,
-                              texture_cache.GetImage(depth).info.pixel_format);
+                              ToVk(texture_cache.GetImage(depth).info.pixel_format));
             PrepareUiDepth(depth);
             ui_depth = depth;
         }
@@ -1491,12 +1552,12 @@ void TemporalUpscaler::OnDraw(u64 vs_hash, VideoCore::ImageId color,
     if (ui_trace_on && ui_trace.size() < 1500) {
         ui_trace += fmt::format(" [vs {:x} {}x{} fmt {} movie {} display {}]", vs_hash,
                                 image.info.size.width, image.info.size.height,
-                                u32(image.info.pixel_format), movie ? 1 : 0,
+                                u32(ToVk(image.info.pixel_format)), movie ? 1 : 0,
                                 FrameCapture::IsDisplayBuffer(image.info.guest_address) ? 1 : 0);
     }
     const bool ui_draw = movie &&
-        (image.info.pixel_format == vk::Format::eR8G8B8A8Unorm ||
-         image.info.pixel_format == vk::Format::eR8G8B8A8Srgb) &&
+        (ToVk(image.info.pixel_format) == vk::Format::eR8G8B8A8Unorm ||
+         ToVk(image.info.pixel_format) == vk::Format::eR8G8B8A8Srgb) &&
         RenderTarget(image.info.size.width, image.info.size.height) &&
         !FrameCapture::IsDisplayBuffer(image.info.guest_address);
     switch (UiComposition::Choose(Scaled(), ui_draw,
@@ -1583,7 +1644,7 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
                                                       : vk::ImageAspectFlags{});
     // Copy depth if blit is supported; otherwise just clear it (UI depth test still works).
     const bool copy = depth_id && depth_blit &&
-        texture_cache.GetImage(depth_id).info.pixel_format == ui_depth_format;
+        ToVk(texture_cache.GetImage(depth_id).info.pixel_format) == ui_depth_format;
     if (copy) {
         runtime.Transit(&texture_cache.GetImage(depth_id), vk::ImageLayout::eTransferSrcOptimal,
                         vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
@@ -1647,9 +1708,9 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
         profiler->Mark(0xF5A1'0000ull, [] { return std::string{"upscaler RunUiOnly"}; });
     }
     const auto& color = texture_cache.GetImage(color_id);
-    const auto depth_format = depth_id ? texture_cache.GetImage(depth_id).info.pixel_format
+    const auto depth_format = depth_id ? ToVk(texture_cache.GetImage(depth_id).info.pixel_format)
                                       : vk::Format::eD32SfloatS8Uint;
-    EnsureUiResources(target_width, target_height, color.info.pixel_format, depth_format);
+    EnsureUiResources(target_width, target_height, ToVk(color.info.pixel_format), depth_format);
     PrepareUiDepth(depth_id);
     // Copy only the background already drawn. The subsequent menu/HUD/text draws execute
     // directly at output resolution, including frames with no scene or camera at all.
@@ -1732,9 +1793,9 @@ void TemporalUpscaler::RunScaled() {
         failed = true;
         return;
     }
-    EnsureUiResources(ow, oh, color.info.pixel_format, depth.info.pixel_format);
+    EnsureUiResources(ow, oh, ToVk(color.info.pixel_format), ToVk(depth.info.pixel_format));
     PrepareUiDepth(camera_motion.Depth());
-    const auto depth_format = depth.info.pixel_format;
+    const auto depth_format = ToVk(depth.info.pixel_format);
     // Views kept across frames: FSR 4 registers images by view in a registry of eight.
     runtime.ResolvePendingClear(&depth, Runtime::ClearResolveReason::Copy);
     runtime.ResolvePendingClear(&color, Runtime::ClearResolveReason::Copy);
@@ -1744,7 +1805,7 @@ void TemporalUpscaler::RunScaled() {
     if (!scaled_session) {
         VideoCore::ImageViewInfo ci, di;
         ci.format = color.info.pixel_format;
-        di.format = depth_format;
+        di.format = FromVk(depth_format);
         const auto cp = scene_targets.Read(ldr_target, ci);
         const auto dp = scene_targets.Read(camera_motion.Depth(), di);
         color_image = cp.image;
@@ -1755,7 +1816,7 @@ void TemporalUpscaler::RunScaled() {
         source_height = h;
     } else {
         depth_view = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
-        color_view = CachedView(color, color.info.pixel_format, vk::ImageAspectFlagBits::eColor);
+        color_view = CachedView(color, ToVk(color.info.pixel_format), vk::ImageAspectFlagBits::eColor);
         runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                         vk::AccessFlagBits2::eShaderRead);
         runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
@@ -1808,19 +1869,28 @@ void TemporalUpscaler::RunScaled() {
     }
     last_frame = now;
 
-    // bbport: FSR 4 writes its HDR-format output, copied into the output-size UI image.
-    if (UseFsr4() || UseDlss() || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
-        const auto cmdbuf = scheduler.CommandBuffer(); // after the commands recorded above
+    // bbport: FSR 4, DLSS and MetalFX write their HDR-format output, copied into the output-size
+    // UI image. MetalFX also submits the frame so far and continues in a new command buffer.
+    const bool use_metalfx = UseMetalFx();
+    if (UseFsr4() || UseDlss() || use_metalfx || BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
+        // bbport: not const: MetalFX submits the frame so far and continues in a new command buffer.
+        auto cmdbuf = scheduler.CommandBuffer(); // after the commands recorded above
         barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                 vk::ImageLayout::eUndefined, all, vk::AccessFlagBits2::eNone,
                 vk::ImageLayout::eGeneral, all, rw);
         bool ok4 = true;
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
             RecordTaa(cmdbuf, color_view, depth_view);
+        } else if (use_metalfx) {
+            ok4 = RecordMetalFx({color_image, ToVk(color.info.pixel_format),
+                                 vk::ImageAspectFlagBits::eColor},
+                                {depth_image, depth_format, vk::ImageAspectFlagBits::eDepth}, w, h,
+                                ow, oh, false);
+            cmdbuf = scheduler.CommandBuffer();
         } else if (UseDlss()) {
             fsr4_linear_frame = false;
             ok4 = RecordDlss(cmdbuf,
-                             {color_image, color_view, color.info.pixel_format,
+                             {color_image, color_view, ToVk(color.info.pixel_format),
                               vk::ImageAspectFlagBits::eColor, source_width, source_height},
                              {depth_image, depth_view, depth_format, vk::ImageAspectFlagBits::eDepth,
                               source_width, source_height},
@@ -1835,7 +1905,7 @@ void TemporalUpscaler::RunScaled() {
             }();
             // An sRGB-format frame is decoded by its view already (and encoded by the blit).
             const bool srgb_format =
-                vk::to_string(color.info.pixel_format).find("Srgb") != std::string::npos;
+                vk::to_string(ToVk(color.info.pixel_format)).find("Srgb") != std::string::npos;
             fsr4_linear_frame = linear_env && fsr4_linear_image && !srgb_format &&
                                 !BbToggle::Disabled(BbToggle::Fsr4EncodedInput);
             Fsr4Upscaler::Image input{color_image, color_view, source_width, source_height};
@@ -1845,7 +1915,7 @@ void TemporalUpscaler::RunScaled() {
                     reported = int(fsr4_linear_frame);
                     std::printf("Upscaler: FSR 4 input %s (%s)\n",
                                 fsr4_linear_frame ? "decoded to linear light" : "as it is",
-                                vk::to_string(color.info.pixel_format).c_str());
+                                vk::to_string(ToVk(color.info.pixel_format)).c_str());
                 }
             }
             if (fsr4_linear_frame) {
@@ -1925,7 +1995,7 @@ void TemporalUpscaler::RunScaled() {
         }
         if (ok4) {
             if (BbSettings::Get().upscaler != BbSettings::UpscalerTaa) {
-                ExtraSharpen(vk::Image(output_image), false, ow, oh);
+                ExtraSharpen(vk::Image(output_image), false, ow, oh, use_metalfx ? 0.0f : 1.0f);
             }
             barrier(vk::Image(output_image), vk::ImageAspectFlagBits::eColor,
                     vk::ImageLayout::eGeneral, all, rw, vk::ImageLayout::eGeneral,
@@ -1986,7 +2056,7 @@ void TemporalUpscaler::RunScaled() {
     const auto& settings = BbSettings::Get();
     FfxVkPortableUpscaleDispatchInfo info{};
     info.structSize = sizeof(info);
-    info.color = Describe(color_image, color.info.pixel_format, source_width, source_height,
+    info.color = Describe(color_image, ToVk(color.info.pixel_format), source_width, source_height,
                           color.usage_flags, vk::ImageAspectFlagBits::eColor,
                           FFX_VK_PORTABLE_RESOURCE_STATE_GENERIC_READ);
     info.depth = Describe(depth_image, depth_format, source_width, source_height, depth.usage_flags,
@@ -2091,7 +2161,7 @@ vk::ImageView TemporalUpscaler::Mirror(vk::Image image, std::vector<MirrorView>&
 bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
                                      const VideoCore::ImageViewInfo& view_info, Target& target) {
     if (ui_phase && color == ui_color) {
-        target = {Mirror(vk::Image(ui_image), ui_views, view_info.format, {}),
+        target = {Mirror(vk::Image(ui_image), ui_views, ToVk(view_info.format), {}),
                   vk::ImageLayout::eGeneral, ui_width, ui_height, true};
         return true;
     }
@@ -2107,16 +2177,16 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         display.valid = false; // not upscaled: the presenter shows the guest buffer
         return false;
     }
-    if (!display.image || display.format != image.info.pixel_format ||
+    if (!display.image || display.format != ToVk(image.info.pixel_format) ||
         display.width != ui_width || display.height != ui_height) {
         std::printf("Upscaler: display image %#llx %ux%u format %d\n",
                     static_cast<unsigned long long>(address), ui_width, ui_height,
-                    int(image.info.pixel_format));
+                    int(ToVk(image.info.pixel_format)));
         const auto device = instance.GetDevice();
         scheduler.Finish();
         display.views.clear();
         std::printf("Display: host buffer %ux%u (live)\n", ui_width, ui_height);
-        display.format = image.info.pixel_format;
+        display.format = ToVk(image.info.pixel_format);
         display.width = ui_width;
         display.height = ui_height;
         display.image = VideoCore::UniqueImage(device, instance.GetAllocator());
@@ -2150,7 +2220,7 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
     });
     display.valid = true;
-    target = {Mirror(vk::Image(display.image), display.views, view_info.format, {}),
+    target = {Mirror(vk::Image(display.image), display.views, ToVk(view_info.format), {}),
               vk::ImageLayout::eGeneral, ui_width, ui_height};
     return true;
 }
@@ -2186,7 +2256,7 @@ bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
             cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
         });
     }
-    view = Mirror(vk::Image(ui_image), ui_views, info.format, info.mapping);
+    view = Mirror(vk::Image(ui_image), ui_views, ToVk(info.format), info.mapping);
     layout = vk::ImageLayout::eGeneral;
     return true;
 }
@@ -2330,6 +2400,40 @@ bool TemporalUpscaler::RecordDlss(vk::CommandBuffer cmdbuf, const Dlss::Resource
         std::printf("Upscaler: DLSS failed; falling back to FSR 3.1\n");
         BbSettings::Get().upscaler = BbSettings::UpscalerFsr3;
         dlss_failed = true; // EnsureResources creates the FSR 3 context next frame
+        reset = true;
+    }
+    return ok;
+}
+
+bool TemporalUpscaler::UseMetalFx() const {
+    return BbSettings::Get().upscaler == BbSettings::UpscalerMetalFx && metalfx->Supported() &&
+           !metalfx->Fatal();
+}
+
+bool TemporalUpscaler::RecordMetalFx(const MetalFxUpscaler::Input& color,
+                                     const MetalFxUpscaler::Input& depth, u32 w, u32 h, u32 ow,
+                                     u32 oh, bool hdr) {
+    // Same jitter convention as FSR 3; toggle 1 << 26 flips it for tests.
+    const float sign = BbToggle::Disabled(1u << 26) ? -1.0f : 1.0f;
+    const bool ok = metalfx->Run({
+        .color = color,
+        .depth = depth,
+        .motion = {vk::Image(motion_image), vk::Format::eR16G16Sfloat,
+                   vk::ImageAspectFlagBits::eColor},
+        .width = w,
+        .height = h,
+        .output = vk::Image(output_image),
+        .out_width = ow,
+        .out_height = oh,
+        .hdr = hdr,
+        .jitter = {sign * jitter[0], sign * jitter[1]},
+        .reset = reset,
+    });
+    PublishMetalFxProblem(metalfx->Problem());
+    if (!ok && metalfx->Fatal()) {
+        // Off rather than FSR 3.1: neither is proven on this driver. The menu shows the reason.
+        std::printf("Upscaler: MetalFX failed; upscaler off (select it again to retry)\n");
+        BbSettings::Get().upscaler = BbSettings::UpscalerOff;
         reset = true;
     }
     return ok;

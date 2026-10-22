@@ -1,7 +1,9 @@
 // SPDX-FileCopyrightText: Copyright 2024-2026 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <chrono>
+#include <cstdlib>
 #include <thread>
 #include <pthread.h>
 #include <sys/resource.h>
@@ -1056,7 +1058,7 @@ bool IsDrawOpcode(PM4ItOpcode op) {
 }
 
 // bbport BB_CP_SHADOW=1: the translator's own decoder (gpu/cp, step 2 of
-// docs/TRANSLATOR_ARCHITECTURE.ru.md) decodes every top-level graphics buffer as well, from the
+// bbport's docs/TRANSLATOR_ARCHITECTURE.ru.md) decodes every top-level graphics buffer as well, from the
 // same state. Once this decoder is done with the buffer both register files must be equal (the
 // compute program's SH range aside: this one keeps it per queue); the first differences are
 // printed and the shadow takes this state again. Off with the PM4 self-test (its packets are not
@@ -1492,14 +1494,28 @@ Liverpool::Task Liverpool::ProcessGraphics(std::span<const u32> dcb, std::span<c
                                     ? copy->guest_dcb : nullptr;
         switch (type) {
         default:
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth, guest_base);
-            UNREACHABLE_MSG("Wrong PM4 type {}", type);
-            break;
-        case 0:
-            ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth, guest_base);
-            UNREACHABLE_MSG("Unimplemented PM4 type 0, base reg: {}, size: {}",
-                            header->type0.base.Value(), header->type0.NumWords());
-            break;
+        case 0: {
+            // bbport: a dword that is not a type 2 or 3 header (a command buffer the game was
+            // already reusing) stopped the whole game. The rest of this buffer is dropped instead
+            // and the loop ends normally, so the submission's cleanup still runs; the first 16
+            // are reported. BB_PM4_STOP=1: stop as before. From Supermedo/bloodborne_pc c07f0ff
+            // (idea from parsifal295, PR #57).
+            static const bool stop = [] {
+                const char* env = std::getenv("BB_PM4_STOP");
+                return env && env[0] == '1';
+            }();
+            static std::atomic<u32> reported{0};
+            if (stop || reported.fetch_add(1, std::memory_order_relaxed) < 16) {
+                ReportBadPacket(base_addr, dcb_dwords, dcb.data(), seq, dcb_depth, guest_base);
+            }
+            if (stop) {
+                UNREACHABLE_MSG("Wrong PM4 type {}", type);
+            }
+            LOG_WARNING(Render, "PM4 header {:#010x} (type {}): rest of the buffer dropped",
+                        header->raw, type);
+            dcb = {};
+            continue;
+        }
         case 2:
             // Type-2 packet are used for padding purposes
             dcb = NextPacket(dcb, 1);
