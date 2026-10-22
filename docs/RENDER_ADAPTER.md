@@ -122,8 +122,8 @@ the roadmap item about the shadow layer keeping every shader for the session.
   surface (CAMetalLayer on macOS).
 - `NativeHandle(object)` returns the backend's object (`VkImage`, `id<MTLTexture>`, a command
   buffer) for code that must call a vendor library directly: FSR 3.1 (portable Vulkan
-  FidelityFX), FSR 4 and DLSS on the Vulkan backend, MetalFX on the Metal backend, and ImGui's
-  renderer. These are the only places outside a backend that see a native API, each in its own
+  FidelityFX), FSR 4 and DLSS on the Vulkan backend, MetalFX and FSR 4.1.1 (`vk_fsr4_metal`) on
+  the Metal backend, and ImGui's renderer. These are the only places outside a backend that see a native API, each in its own
   file.
 
 ## Order of work
@@ -229,7 +229,9 @@ Taken by the maintainer on 2026-10-22:
    upstream fixes are ported by hand.
 2. **Vocabulary:** own enums, with Vulkan's numeric values at first, so the shader and pipeline
    caches stay valid.
-3. **FSR 4 and DLSS** stay Vulkan-backend only.
+3. **DLSS and FSR 4's Vulkan path** stay Vulkan-backend only. FSR 4.1.1 on macOS runs in Metal
+   (`vk_fsr4_metal`, merged 2026-10-23), reaching the images through `VK_EXT_metal_objects`;
+   on the Metal backend it takes them through `NativeHandle`.
 
 Open until M3: FSR 3.1 on the Metal backend (a FidelityFX port to Metal, as the fork has, or
 MetalFX only on that backend).
