@@ -2,7 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22; step A0 is next. The decisions are at the end.
+**State:** approved on 2026-10-22. A0 is done; A1 (own vocabulary) is next. The decisions are
+at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -134,7 +135,7 @@ Metal backend draws everything; then the interception layer is removed.
 
 | Step | Work | Accepted when |
 |---|---|---|
-| A0 | Adapter headers; a Vulkan backend that wraps today's objects; `Device` owns instance, queue and VMA | No behavior change; FPS and p90 unchanged in alternating runs |
+| A0 ✓ | Adapter headers; a Vulkan backend that wraps today's objects; `Device` owns instance, queue and VMA | No behavior change; FPS and p90 unchanged in alternating runs |
 | A1 | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
 | A2 | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
 | A3 | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
@@ -149,6 +150,16 @@ Metal backend draws everything; then the interception layer is removed.
 Wooloomooloo2's fork reached its Metal-only renderer in a similar order (device and queue,
 command recording and caches, pipelines and rasterizer, presenter, upscalers and overlay, then
 FSR 3.1). Their code is taken where it fits and credited in the commit that brings it.
+
+### Done
+
+- **A0:** `renderer_backend/device.h` (the `Device` interface: API, capabilities, ticks,
+  deferred release), `renderer_backend/handle_table.h` (generation-checked handles, tested by
+  `handle-table-test`) and the Vulkan backend's `BackendDevice` (`vk_backend_device.h`), which
+  owns the Vulkan instance and the draw scheduler; the presenter holds it. Deferred release
+  waits past the next submission, as the draw pipeline needs. `BB_GFX_BACKEND` is read; only
+  `vulkan` exists. Same frame time as main in a copied-save run on MoltenVK (29.6 against 29.5
+  FPS, p90 35.0 against 35.1 ms, with other GPU work running on the Mac).
 
 ## Decisions
 

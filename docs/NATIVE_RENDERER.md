@@ -29,7 +29,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N1 · frame planning | 100% `████████████████████` | Deferred clears accepted; tessellation moved to N5 |
 | N2 · shaders ahead of time | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: inventory the shader variants |
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
-| N4 · render adapter | 10% `██░░░░░░░░░░░░░░░░░░` | Restarted: [specification](RENDER_ADAPTER.md) approved; next: A0, the adapter over today's Vulkan objects |
+| N4 · render adapter | 20% `████░░░░░░░░░░░░░░░░` | [Specification](RENDER_ADAPTER.md) approved; A0 done (the adapter's device over today's Vulkan objects); next: A1, own vocabulary |
 | N5 · Metal backend | 35% `███████░░░░░░░░░░░░░` | The frame draws through Metal behind an option; next: resources in Metal |
 | N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
 
