@@ -155,9 +155,10 @@ if needed dxc; then
     cp "$work/dxc/lib/libdxcompiler.dylib" "$prefix/lib/"
     mark dxc
 fi
-if needed fsr4-native-macos; then
+if needed fsr4-native-macos && ! command -v spirv-val >/dev/null; then
+    echo '== fsr4-native-macos skipped: no spirv-val (brew install spirv-tools); FSR 4.1.1 on Metal is not built'
+elif needed fsr4-native-macos; then
     echo "== fsr4-native-macos"
-    command -v spirv-val >/dev/null || { echo 'Missing spirv-val: brew install spirv-tools' >&2; exit 1; }
     fetch fsr4-native-macos "https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos/archive/$FSR4_NATIVE_COMMIT.tar.gz"
     tree=$prefix/share/fsr4-native-macos
     rm -rf "${prefix:?}/share/fsr4-native-macos"; mkdir -p "$tree/tools/bin"

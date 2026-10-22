@@ -198,11 +198,34 @@ if (APPLE)
         set(BB_FSR4_NATIVE_SRC ${CMAKE_PREFIX_PATH}/share/fsr4-native-macos)
     endif()
     set(BB_FSR4_METAL_OUT ${CMAKE_BINARY_DIR}/../fsr4_metal)
-    if (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
+    # The kernels need Apple's Metal compiler: Xcode with its Metal Toolchain component
+    # (xcodebuild -downloadComponent MetalToolchain). The Command Line Tools have none, so with
+    # xcode-select pointing at them, Xcode's own is tried.
+    set(BB_METAL_DEVELOPER_DIR "")
+    execute_process(COMMAND xcrun -sdk macosx metal --version
+                    RESULT_VARIABLE metal_result OUTPUT_QUIET ERROR_QUIET)
+    if (NOT metal_result EQUAL 0 AND EXISTS /Applications/Xcode.app/Contents/Developer)
+        execute_process(COMMAND ${CMAKE_COMMAND} -E env
+                                DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer
+                                xcrun -sdk macosx metal --version
+                        RESULT_VARIABLE metal_result OUTPUT_QUIET ERROR_QUIET)
+        if (metal_result EQUAL 0)
+            set(BB_METAL_DEVELOPER_DIR /Applications/Xcode.app/Contents/Developer)
+        endif()
+    endif()
+    if (NOT metal_result EQUAL 0)
+        message(WARNING "No Metal compiler (Xcode and its Metal Toolchain: xcodebuild "
+                        "-downloadComponent MetalToolchain): FSR 4.1.1 on Metal is not built")
+    elseif (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
         file(GLOB BB_FSR4_METAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.metal
              ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.h ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.py)
+        set(metal_env)
+        if (BB_METAL_DEVELOPER_DIR)
+            set(metal_env DEVELOPER_DIR=${BB_METAL_DEVELOPER_DIR})
+        endif()
         add_custom_command(OUTPUT ${BB_FSR4_METAL_OUT}/.built
-            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
+            COMMAND ${CMAKE_COMMAND} -E env ${metal_env} $<TARGET_FILE:Python3::Interpreter>
+                    ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
                     --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
             COMMAND ${CMAKE_COMMAND} -E touch ${BB_FSR4_METAL_OUT}/.built
             DEPENDS ${BB_FSR4_METAL_SOURCES} VERBATIM)
