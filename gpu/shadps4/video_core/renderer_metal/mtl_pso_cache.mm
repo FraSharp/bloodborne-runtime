@@ -470,7 +470,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
     @autoreleasepool {
         do {
             // ---- primitive and encoder state ----
-            const auto topology = L::PrimitiveType(key.prim_type);
+            const auto topology = Vulkan::ToVk(L::PrimitiveType(key.prim_type));
             VkToMtl::PrimitiveInfo primitive = VkToMtl::PrimitiveType(topology);
             if (input.rect_list_triangles) {
                 // The rewritten vertex shader emits the two triangles of each rectangle.
@@ -500,7 +500,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
             pipeline->primitive_emulated = primitive.needs_emulation;
             pipeline->rect_list = key.prim_type == AmdGpu::PrimitiveType::RectList;
             pipeline->quad_list = key.prim_type == AmdGpu::PrimitiveType::QuadList;
-            const VkToMtl::FillInfo fill = VkToMtl::PolygonMode(L::PolygonMode(key.polygon_mode));
+            const VkToMtl::FillInfo fill = VkToMtl::PolygonMode(Vulkan::ToVk(L::PolygonMode(key.polygon_mode)));
             pipeline->fill_mode = fill.mode;
             pipeline->fill_point = fill.needs_emulation;
             pipeline->depth_clip = key.depth_clip_enable;
@@ -572,22 +572,22 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                     MTLRenderPipelineColorAttachmentDescriptor* att = desc.colorAttachments[i];
                     att.pixelFormat = static_cast<MTLPixelFormat>(pixel_format);
                     att.writeMask = static_cast<MTLColorWriteMask>(
-                        VkToMtl::ColorWriteMask(key.write_masks[i]));
+                        VkToMtl::ColorWriteMask(Vulkan::ToVk(key.write_masks[i])));
                     const Vulkan::AttachmentBlend blend = Vulkan::AttachmentBlendState(key, i);
                     att.blendingEnabled = blend.enable;
                     if (blend.enable) {
                         att.sourceRGBBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.src_color));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.src_color)));
                         att.destinationRGBBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.dst_color));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.dst_color)));
                         att.rgbBlendOperation =
-                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(blend.color_op));
+                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(Vulkan::ToVk(blend.color_op)));
                         att.sourceAlphaBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.src_alpha));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.src_alpha)));
                         att.destinationAlphaBlendFactor =
-                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(blend.dst_alpha));
+                            static_cast<MTLBlendFactor>(VkToMtl::BlendFactor(Vulkan::ToVk(blend.dst_alpha)));
                         att.alphaBlendOperation =
-                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(blend.alpha_op));
+                            static_cast<MTLBlendOperation>(VkToMtl::BlendOp(Vulkan::ToVk(blend.alpha_op)));
                     }
                 }
                 if (!error.empty()) {

@@ -51,16 +51,16 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
     auto eff_src_alpha = src_alpha;
     auto eff_dst_alpha = dst_alpha;
     auto eff_alpha_blend = alpha_blend;
-    if (alpha_blend == vk::BlendOp::eMin || alpha_blend == vk::BlendOp::eMax) {
-        const bool takes_max = alpha_blend == vk::BlendOp::eMax;
-        if (src_alpha == vk::BlendFactor::eOne && dst_alpha == vk::BlendFactor::eZero) {
-            eff_alpha_blend = vk::BlendOp::eAdd;
-            eff_src_alpha = takes_max ? vk::BlendFactor::eOne : vk::BlendFactor::eZero;
-            eff_dst_alpha = vk::BlendFactor::eZero;
-        } else if (src_alpha == vk::BlendFactor::eZero && dst_alpha == vk::BlendFactor::eOne) {
-            eff_alpha_blend = vk::BlendOp::eAdd;
-            eff_src_alpha = vk::BlendFactor::eZero;
-            eff_dst_alpha = takes_max ? vk::BlendFactor::eOne : vk::BlendFactor::eZero;
+    if (alpha_blend == Backend::BlendOp::Min || alpha_blend == Backend::BlendOp::Max) {
+        const bool takes_max = alpha_blend == Backend::BlendOp::Max;
+        if (src_alpha == Backend::BlendFactor::One && dst_alpha == Backend::BlendFactor::Zero) {
+            eff_alpha_blend = Backend::BlendOp::Add;
+            eff_src_alpha = takes_max ? Backend::BlendFactor::One : Backend::BlendFactor::Zero;
+            eff_dst_alpha = Backend::BlendFactor::Zero;
+        } else if (src_alpha == Backend::BlendFactor::Zero && dst_alpha == Backend::BlendFactor::One) {
+            eff_alpha_blend = Backend::BlendOp::Add;
+            eff_src_alpha = Backend::BlendFactor::Zero;
+            eff_dst_alpha = takes_max ? Backend::BlendFactor::One : Backend::BlendFactor::Zero;
         }
     }
 
@@ -74,20 +74,20 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
         .alpha_op = eff_alpha_blend,
     };
     const auto color_scaled_min_max =
-        (color_blend == vk::BlendOp::eMin || color_blend == vk::BlendOp::eMax) &&
-        (src_color != vk::BlendFactor::eOne || dst_color != vk::BlendFactor::eOne) &&
+        (color_blend == Backend::BlendOp::Min || color_blend == Backend::BlendOp::Max) &&
+        (src_color != Backend::BlendFactor::One || dst_color != Backend::BlendFactor::One) &&
         !key.color_buffers[i].blend_self_scale;
     const auto alpha_scaled_min_max =
-        (eff_alpha_blend == vk::BlendOp::eMin || eff_alpha_blend == vk::BlendOp::eMax) &&
-        (eff_src_alpha != vk::BlendFactor::eOne || eff_dst_alpha != vk::BlendFactor::eOne);
+        (eff_alpha_blend == Backend::BlendOp::Min || eff_alpha_blend == Backend::BlendOp::Max) &&
+        (eff_src_alpha != Backend::BlendFactor::One || eff_dst_alpha != Backend::BlendFactor::One);
     blend.unimplemented_min_max = color_scaled_min_max || alpha_scaled_min_max;
 
     // The shader squares its color output for this attachment (see PsColorBuffer), so the
     // factors must not scale the operands again.
     if (key.color_buffers[i].blend_self_scale) {
         blend.self_scaled = true;
-        blend.src_color = vk::BlendFactor::eOne;
-        blend.dst_color = vk::BlendFactor::eOne;
+        blend.src_color = Backend::BlendFactor::One;
+        blend.dst_color = Backend::BlendFactor::One;
     }
 
     // On GCN GPU there is an additional mask which allows to control color components exported
@@ -98,17 +98,17 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
     // such cases and override alpha value in order to emulate HW behaviour.
     const auto has_alpha_masked_out =
         (key.cb_shader_mask.GetMask(i) & AmdGpu::ColorBufferMask::ComponentA) == 0;
-    const auto has_src_alpha_in_src_blend = src_color == vk::BlendFactor::eSrcAlpha ||
-                                            src_color == vk::BlendFactor::eOneMinusSrcAlpha;
-    const auto has_src_alpha_in_dst_blend = dst_color == vk::BlendFactor::eSrcAlpha ||
-                                            dst_color == vk::BlendFactor::eOneMinusSrcAlpha;
+    const auto has_src_alpha_in_src_blend = src_color == Backend::BlendFactor::SrcAlpha ||
+                                            src_color == Backend::BlendFactor::OneMinusSrcAlpha;
+    const auto has_src_alpha_in_dst_blend = dst_color == Backend::BlendFactor::SrcAlpha ||
+                                            dst_color == Backend::BlendFactor::OneMinusSrcAlpha;
     if (has_alpha_masked_out && has_src_alpha_in_src_blend) {
-        blend.src_color = src_color == vk::BlendFactor::eSrcAlpha ? vk::BlendFactor::eOne
-                                                                   : vk::BlendFactor::eZero; // 1-A
+        blend.src_color = src_color == Backend::BlendFactor::SrcAlpha ? Backend::BlendFactor::One
+                                                                   : Backend::BlendFactor::Zero; // 1-A
     }
     if (has_alpha_masked_out && has_src_alpha_in_dst_blend) {
-        blend.dst_color = dst_color == vk::BlendFactor::eSrcAlpha ? vk::BlendFactor::eOne
-                                                                   : vk::BlendFactor::eZero; // 1-A
+        blend.dst_color = dst_color == Backend::BlendFactor::SrcAlpha ? Backend::BlendFactor::One
+                                                                   : Backend::BlendFactor::Zero; // 1-A
     }
     return blend;
 }
@@ -168,7 +168,7 @@ GraphicsPipeline::GraphicsPipeline(
         .pVertexAttributeDescriptions = sdata.vertex_attributes.data(),
     };
 
-    const auto topology = LiverpoolToVK::PrimitiveType(key.prim_type);
+    const auto topology = ToVk(LiverpoolToVK::PrimitiveType(key.prim_type));
     const vk::PipelineInputAssemblyStateCreateInfo input_assembly = {
         .topology = topology,
     };
@@ -184,7 +184,7 @@ GraphicsPipeline::GraphicsPipeline(
             .depthClampEnable = key.depth_clamp_enable &&
                                 (!key.depth_clip_enable || instance.IsDepthClipEnableSupported()),
             .rasterizerDiscardEnable = false,
-            .polygonMode = LiverpoolToVK::PolygonMode(key.polygon_mode),
+            .polygonMode = ToVk(LiverpoolToVK::PolygonMode(key.polygon_mode)),
             .lineWidth = 1.0f,
         },
         vk::PipelineRasterizationProvokingVertexStateCreateInfoEXT{
@@ -405,24 +405,24 @@ GraphicsPipeline::GraphicsPipeline(
         }
         attachments[i] = vk::PipelineColorBlendAttachmentState{
             .blendEnable = blend.enable,
-            .srcColorBlendFactor = blend.src_color,
-            .dstColorBlendFactor = blend.dst_color,
-            .colorBlendOp = blend.color_op,
-            .srcAlphaBlendFactor = blend.src_alpha,
-            .dstAlphaBlendFactor = blend.dst_alpha,
-            .alphaBlendOp = blend.alpha_op,
+            .srcColorBlendFactor = ToVk(blend.src_color),
+            .dstColorBlendFactor = ToVk(blend.dst_color),
+            .colorBlendOp = ToVk(blend.color_op),
+            .srcAlphaBlendFactor = ToVk(blend.src_alpha),
+            .dstAlphaBlendFactor = ToVk(blend.dst_alpha),
+            .alphaBlendOp = ToVk(blend.alpha_op),
             .colorWriteMask =
                 instance.IsDynamicColorWriteMaskSupported()
                     ? vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
                           vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA
-                    : key.write_masks[i],
+                    : ToVk(key.write_masks[i]),
         };
     }
 
     const vk::PipelineColorBlendStateCreateInfo color_blending = {
         .logicOpEnable =
             instance.IsLogicOpSupported() && key.logic_op != AmdGpu::ColorControl::LogicOp::Copy,
-        .logicOp = LiverpoolToVK::LogicOp(key.logic_op),
+        .logicOp = ToVk(LiverpoolToVK::LogicOp(key.logic_op)),
         .attachmentCount = key.num_color_attachments,
         .pAttachments = attachments.data(),
         .blendConstants = std::array{1.0f, 1.0f, 1.0f, 1.0f},

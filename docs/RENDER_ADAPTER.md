@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 is done; A1 is in progress (formats done; the state enums
-next). The decisions are at the end.
+**State:** approved on 2026-10-22. A0 and A1 are done; A2 (resources through the adapter) is
+next. The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -136,7 +136,7 @@ Metal backend draws everything; then the interception layer is removed.
 | Step | Work | Accepted when |
 |---|---|---|
 | A0 ✓ | Adapter headers; a Vulkan backend that wraps today's objects; `Device` owns instance, queue and VMA | No behavior change; FPS and p90 unchanged in alternating runs |
-| A1 | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
+| A1 ✓ | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
 | A2 | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
 | A3 | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
 | A4 | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
@@ -168,6 +168,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   it calls Vulkan. Both caches stayed warm: the Vulkan pipeline cache loaded with no compiles,
   and Metal's binary archive served every pipeline in a second run (35.5 FPS, p90 30.3 ms,
   against 36.1 FPS and 29.3 ms before).
+- **A1, pipeline state:** `renderer_backend/state.h` (blend factors and operations, compare and
+  stencil operations, cull mode, winding, topology, polygon mode, logic operations, color write
+  masks), checked against Vulkan in `vk_state.h`. The pipeline key's write masks, the shared
+  blend rules (`AttachmentBlend`) and the PS4-state conversions use it. Same warm caches and
+  frame times. Sampler and view settings, usages, aspects and layouts move with A2, where
+  sampler, view and image creation go through the adapter.
 
 ## Decisions
 

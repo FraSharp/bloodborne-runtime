@@ -1013,7 +1013,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
 
         // Apply swizzle to target mask
         key.write_masks[cb] =
-            vk::ColorComponentFlags{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
+            Backend::ColorWriteMask{key.color_buffers[cb].swizzle.ApplyMask(target_mask)};
 
         // Fill color samples
         const u8 prev_color_samples = std::exchange(color_samples, col_buf.NumSamples());
@@ -1031,8 +1031,7 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
         color_buffer.data_format = AmdGpu::DataFormat::Format32_32_32_32;
         color_buffer.num_format = AmdGpu::NumberFormat::Float;
         color_buffer.swizzle = AmdGpu::IdentityMapping;
-        key.write_masks[mv] = vk::ColorComponentFlagBits::eR | vk::ColorComponentFlagBits::eG |
-                              vk::ColorComponentFlagBits::eB | vk::ColorComponentFlagBits::eA;
+        key.write_masks[mv] = Backend::ColorWriteMask::All;
         key.color_samples[mv] = 1;
     }
 

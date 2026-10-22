@@ -5247,7 +5247,7 @@ void Rasterizer::UpdateDepthStencilState() const {
     if (depth_test_enabled) {
         dynamic_state.SetDepthWriteEnabled(regs.depth_control.depth_write_enable &&
                                            !regs.depth_render_control.depth_clear_enable);
-        dynamic_state.SetDepthCompareOp(LiverpoolToVK::CompareOp(regs.depth_control.depth_func));
+        dynamic_state.SetDepthCompareOp(ToVk(LiverpoolToVK::CompareOp(regs.depth_control.depth_func)));
     }
 
     const auto depth_bounds_test_enabled = regs.depth_control.depth_bounds_enable;
@@ -5271,16 +5271,16 @@ void Rasterizer::UpdateDepthStencilState() const {
     dynamic_state.SetStencilTestEnabled(stencil_test_enabled);
     if (stencil_test_enabled) {
         const StencilOps front_ops{
-            .fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_front),
-            .pass_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_front),
-            .depth_fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_front),
-            .compare_op = LiverpoolToVK::CompareOp(regs.depth_control.stencil_ref_func),
+            .fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_front)),
+            .pass_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_front)),
+            .depth_fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_front)),
+            .compare_op = ToVk(LiverpoolToVK::CompareOp(regs.depth_control.stencil_ref_func)),
         };
         const StencilOps back_ops = regs.depth_control.backface_enable ? StencilOps{
-            .fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_back),
-            .pass_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_back),
-            .depth_fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_back),
-            .compare_op = LiverpoolToVK::CompareOp(regs.depth_control.stencil_bf_func),
+            .fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_back)),
+            .pass_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_back)),
+            .depth_fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_back)),
+            .compare_op = ToVk(LiverpoolToVK::CompareOp(regs.depth_control.stencil_bf_func)),
         } : front_ops;
         dynamic_state.SetStencilOps(front_ops, back_ops);
 
@@ -5330,7 +5330,7 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
                                : regs.primitive_type;
 
     const auto is_list_topology = [](const AmdGpu::PrimitiveType type) {
-        const auto topology = LiverpoolToVK::PrimitiveType(type);
+        const auto topology = ToVk(LiverpoolToVK::PrimitiveType(type));
         return topology == vk::PrimitiveTopology::ePointList ||
                topology == vk::PrimitiveTopology::eLineList ||
                topology == vk::PrimitiveTopology::eTriangleList ||
@@ -5352,9 +5352,9 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
                "Primitive restart index other than -1 is not supported yet");
 
     const auto cull_mode = LiverpoolToVK::IsPrimitiveCulled(primitive)
-                               ? LiverpoolToVK::CullMode(regs.polygon_control.CullingMode())
+                               ? ToVk(LiverpoolToVK::CullMode(regs.polygon_control.CullingMode()))
                                : vk::CullModeFlagBits::eNone;
-    const auto front_face = LiverpoolToVK::FrontFace(regs.polygon_control.front_face);
+    const auto front_face = ToVk(LiverpoolToVK::FrontFace(regs.polygon_control.front_face));
 
     dynamic_state.SetPrimitiveRestartEnabled(prim_restart);
     dynamic_state.SetRasterizerDiscardEnabled(regs.clipper_control.dx_rasterization_kill);
@@ -5372,7 +5372,7 @@ void Rasterizer::UpdateColorBlendingState(const GraphicsPipeline* pipeline) cons
     const auto& regs = Regs();
     auto& dynamic_state = scheduler.GetDynamicState();
     dynamic_state.SetBlendConstants(regs.blend_constants);
-    dynamic_state.SetColorWriteMasks(pipeline->GetGraphicsKey().write_masks);
+    dynamic_state.SetColorWriteMasks(ToVk(pipeline->GetGraphicsKey().write_masks));
     dynamic_state.SetAttachmentFeedbackLoopEnabled(attachment_feedback_loop);
 }
 

@@ -16,30 +16,30 @@ namespace Vulkan::LiverpoolToVK {
 
 using DepthBuffer = AmdGpu::DepthBuffer;
 
-vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
+Backend::StencilOp StencilOp(AmdGpu::StencilFunc op) {
     switch (op) {
     case AmdGpu::StencilFunc::Keep:
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     case AmdGpu::StencilFunc::Zero:
-        return vk::StencilOp::eZero;
+        return Backend::StencilOp::Zero;
     case AmdGpu::StencilFunc::ReplaceTest:
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::AddClamp:
-        return vk::StencilOp::eIncrementAndClamp;
+        return Backend::StencilOp::IncrementAndClamp;
     case AmdGpu::StencilFunc::SubClamp:
-        return vk::StencilOp::eDecrementAndClamp;
+        return Backend::StencilOp::DecrementAndClamp;
     case AmdGpu::StencilFunc::Invert:
-        return vk::StencilOp::eInvert;
+        return Backend::StencilOp::Invert;
     case AmdGpu::StencilFunc::AddWrap:
-        return vk::StencilOp::eIncrementAndWrap;
+        return Backend::StencilOp::IncrementAndWrap;
     case AmdGpu::StencilFunc::SubWrap:
-        return vk::StencilOp::eDecrementAndWrap;
+        return Backend::StencilOp::DecrementAndWrap;
     case AmdGpu::StencilFunc::ReplaceOp:
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::Ones:
         LOG_WARNING(Render_Vulkan, "Unsupported stencil op {}, using Replace.",
                     static_cast<u32>(op));
-        return vk::StencilOp::eReplace;
+        return Backend::StencilOp::Replace;
     case AmdGpu::StencilFunc::And:
     case AmdGpu::StencilFunc::Or:
     case AmdGpu::StencilFunc::Xor:
@@ -49,34 +49,34 @@ vk::StencilOp StencilOp(AmdGpu::StencilFunc op) {
         // Bitwise stencil operations have no Vulkan equivalent; eKeep is the safest fallback.
         LOG_WARNING(Render_Vulkan, "Unsupported bitwise stencil op {}, using Keep.",
                     static_cast<u32>(op));
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     default:
         UNREACHABLE();
-        return vk::StencilOp::eKeep;
+        return Backend::StencilOp::Keep;
     }
 }
 
-vk::CompareOp CompareOp(AmdGpu::CompareFunc func) {
+Backend::CompareOp CompareOp(AmdGpu::CompareFunc func) {
     switch (func) {
     case AmdGpu::CompareFunc::Always:
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     case AmdGpu::CompareFunc::Equal:
-        return vk::CompareOp::eEqual;
+        return Backend::CompareOp::Equal;
     case AmdGpu::CompareFunc::GreaterEqual:
-        return vk::CompareOp::eGreaterOrEqual;
+        return Backend::CompareOp::GreaterOrEqual;
     case AmdGpu::CompareFunc::Greater:
-        return vk::CompareOp::eGreater;
+        return Backend::CompareOp::Greater;
     case AmdGpu::CompareFunc::LessEqual:
-        return vk::CompareOp::eLessOrEqual;
+        return Backend::CompareOp::LessOrEqual;
     case AmdGpu::CompareFunc::Less:
-        return vk::CompareOp::eLess;
+        return Backend::CompareOp::Less;
     case AmdGpu::CompareFunc::NotEqual:
-        return vk::CompareOp::eNotEqual;
+        return Backend::CompareOp::NotEqual;
     case AmdGpu::CompareFunc::Never:
-        return vk::CompareOp::eNever;
+        return Backend::CompareOp::Never;
     default:
         UNREACHABLE();
-        return vk::CompareOp::eAlways;
+        return Backend::CompareOp::Always;
     }
 }
 
@@ -107,126 +107,126 @@ bool IsPrimitiveCulled(AmdGpu::PrimitiveType type) {
     }
 }
 
-vk::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type) {
+Backend::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type) {
     switch (type) {
     case AmdGpu::PrimitiveType::PointList:
-        return vk::PrimitiveTopology::ePointList;
+        return Backend::PrimitiveTopology::PointList;
     case AmdGpu::PrimitiveType::LineList:
-        return vk::PrimitiveTopology::eLineList;
+        return Backend::PrimitiveTopology::LineList;
     case AmdGpu::PrimitiveType::LineStrip:
-        return vk::PrimitiveTopology::eLineStrip;
+        return Backend::PrimitiveTopology::LineStrip;
     case AmdGpu::PrimitiveType::TriangleList:
-        return vk::PrimitiveTopology::eTriangleList;
+        return Backend::PrimitiveTopology::TriangleList;
     case AmdGpu::PrimitiveType::TriangleFan:
     case AmdGpu::PrimitiveType::Polygon:
-        return vk::PrimitiveTopology::eTriangleFan;
+        return Backend::PrimitiveTopology::TriangleFan;
     case AmdGpu::PrimitiveType::TriangleStrip:
-        return vk::PrimitiveTopology::eTriangleStrip;
+        return Backend::PrimitiveTopology::TriangleStrip;
     case AmdGpu::PrimitiveType::QuadStrip:
         LOG_WARNING(Render_Vulkan, "Unimplemented primitive type, using TriangleStrip.");
-        return vk::PrimitiveTopology::eTriangleStrip;
+        return Backend::PrimitiveTopology::TriangleStrip;
     case AmdGpu::PrimitiveType::AdjLineList:
-        return vk::PrimitiveTopology::eLineListWithAdjacency;
+        return Backend::PrimitiveTopology::LineListWithAdjacency;
     case AmdGpu::PrimitiveType::AdjLineStrip:
-        return vk::PrimitiveTopology::eLineStripWithAdjacency;
+        return Backend::PrimitiveTopology::LineStripWithAdjacency;
     case AmdGpu::PrimitiveType::AdjTriangleList:
-        return vk::PrimitiveTopology::eTriangleListWithAdjacency;
+        return Backend::PrimitiveTopology::TriangleListWithAdjacency;
     case AmdGpu::PrimitiveType::AdjTriangleStrip:
-        return vk::PrimitiveTopology::eTriangleStripWithAdjacency;
+        return Backend::PrimitiveTopology::TriangleStripWithAdjacency;
     case AmdGpu::PrimitiveType::PatchPrimitive:
-        return vk::PrimitiveTopology::ePatchList;
+        return Backend::PrimitiveTopology::PatchList;
     case AmdGpu::PrimitiveType::QuadList:
     case AmdGpu::PrimitiveType::RectList:
-        return vk::PrimitiveTopology::ePatchList;
+        return Backend::PrimitiveTopology::PatchList;
     default:
         UNREACHABLE_MSG("Unimplemented primitive type: {}", static_cast<u32>(type));
-        return vk::PrimitiveTopology::eTriangleList;
+        return Backend::PrimitiveTopology::TriangleList;
     }
 }
 
-vk::PolygonMode PolygonMode(AmdGpu::PolygonMode mode) {
+Backend::PolygonMode PolygonMode(AmdGpu::PolygonMode mode) {
     switch (mode) {
     case AmdGpu::PolygonMode::Point:
-        return vk::PolygonMode::ePoint;
+        return Backend::PolygonMode::Point;
     case AmdGpu::PolygonMode::Line:
-        return vk::PolygonMode::eLine;
+        return Backend::PolygonMode::Line;
     case AmdGpu::PolygonMode::Fill:
-        return vk::PolygonMode::eFill;
+        return Backend::PolygonMode::Fill;
     default:
         UNREACHABLE();
-        return vk::PolygonMode::eFill;
+        return Backend::PolygonMode::Fill;
     }
 }
 
-vk::CullModeFlags CullMode(AmdGpu::CullMode mode) {
+Backend::CullMode CullMode(AmdGpu::CullMode mode) {
     switch (mode) {
     case AmdGpu::CullMode::None:
-        return vk::CullModeFlagBits::eNone;
+        return Backend::CullMode::None;
     case AmdGpu::CullMode::Front:
-        return vk::CullModeFlagBits::eFront;
+        return Backend::CullMode::Front;
     case AmdGpu::CullMode::Back:
-        return vk::CullModeFlagBits::eBack;
+        return Backend::CullMode::Back;
     case AmdGpu::CullMode::FrontAndBack:
-        return vk::CullModeFlagBits::eFrontAndBack;
+        return Backend::CullMode::FrontAndBack;
     default:
         UNREACHABLE();
-        return vk::CullModeFlagBits::eNone;
+        return Backend::CullMode::None;
     }
 }
 
-vk::FrontFace FrontFace(AmdGpu::FrontFace face) {
+Backend::FrontFace FrontFace(AmdGpu::FrontFace face) {
     switch (face) {
     case AmdGpu::FrontFace::Clockwise:
-        return vk::FrontFace::eClockwise;
+        return Backend::FrontFace::Clockwise;
     case AmdGpu::FrontFace::CounterClockwise:
-        return vk::FrontFace::eCounterClockwise;
+        return Backend::FrontFace::CounterClockwise;
     default:
         UNREACHABLE();
-        return vk::FrontFace::eClockwise;
+        return Backend::FrontFace::Clockwise;
     }
 }
 
-vk::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
+Backend::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
     using BlendFactor = AmdGpu::BlendControl::BlendFactor;
     switch (factor) {
     case BlendFactor::Zero:
-        return vk::BlendFactor::eZero;
+        return Backend::BlendFactor::Zero;
     case BlendFactor::One:
-        return vk::BlendFactor::eOne;
+        return Backend::BlendFactor::One;
     case BlendFactor::SrcColor:
-        return vk::BlendFactor::eSrcColor;
+        return Backend::BlendFactor::SrcColor;
     case BlendFactor::OneMinusSrcColor:
-        return vk::BlendFactor::eOneMinusSrcColor;
+        return Backend::BlendFactor::OneMinusSrcColor;
     case BlendFactor::SrcAlpha:
-        return vk::BlendFactor::eSrcAlpha;
+        return Backend::BlendFactor::SrcAlpha;
     case BlendFactor::OneMinusSrcAlpha:
-        return vk::BlendFactor::eOneMinusSrcAlpha;
+        return Backend::BlendFactor::OneMinusSrcAlpha;
     case BlendFactor::DstAlpha:
-        return vk::BlendFactor::eDstAlpha;
+        return Backend::BlendFactor::DstAlpha;
     case BlendFactor::OneMinusDstAlpha:
-        return vk::BlendFactor::eOneMinusDstAlpha;
+        return Backend::BlendFactor::OneMinusDstAlpha;
     case BlendFactor::DstColor:
-        return vk::BlendFactor::eDstColor;
+        return Backend::BlendFactor::DstColor;
     case BlendFactor::OneMinusDstColor:
-        return vk::BlendFactor::eOneMinusDstColor;
+        return Backend::BlendFactor::OneMinusDstColor;
     case BlendFactor::SrcAlphaSaturate:
-        return vk::BlendFactor::eSrcAlphaSaturate;
+        return Backend::BlendFactor::SrcAlphaSaturate;
     case BlendFactor::ConstantColor:
-        return vk::BlendFactor::eConstantColor;
+        return Backend::BlendFactor::ConstantColor;
     case BlendFactor::OneMinusConstantColor:
-        return vk::BlendFactor::eOneMinusConstantColor;
+        return Backend::BlendFactor::OneMinusConstantColor;
     case BlendFactor::Src1Color:
-        return vk::BlendFactor::eSrc1Color;
+        return Backend::BlendFactor::Src1Color;
     case BlendFactor::InvSrc1Color:
-        return vk::BlendFactor::eOneMinusSrc1Color;
+        return Backend::BlendFactor::OneMinusSrc1Color;
     case BlendFactor::Src1Alpha:
-        return vk::BlendFactor::eSrc1Alpha;
+        return Backend::BlendFactor::Src1Alpha;
     case BlendFactor::InvSrc1Alpha:
-        return vk::BlendFactor::eOneMinusSrc1Alpha;
+        return Backend::BlendFactor::OneMinusSrc1Alpha;
     case BlendFactor::ConstantAlpha:
-        return vk::BlendFactor::eConstantAlpha;
+        return Backend::BlendFactor::ConstantAlpha;
     case BlendFactor::OneMinusConstantAlpha:
-        return vk::BlendFactor::eOneMinusConstantAlpha;
+        return Backend::BlendFactor::OneMinusConstantAlpha;
     default:
         UNREACHABLE_MSG("Unknown blend factor: {}", static_cast<u32>(factor));
     }
@@ -245,63 +245,63 @@ bool IsDualSourceBlendFactor(AmdGpu::BlendControl::BlendFactor factor) {
     }
 }
 
-vk::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func) {
+Backend::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func) {
     using BlendFunc = AmdGpu::BlendControl::BlendFunc;
     switch (func) {
     case BlendFunc::Add:
-        return vk::BlendOp::eAdd;
+        return Backend::BlendOp::Add;
     case BlendFunc::Subtract:
-        return vk::BlendOp::eSubtract;
+        return Backend::BlendOp::Subtract;
     case BlendFunc::Min:
-        return vk::BlendOp::eMin;
+        return Backend::BlendOp::Min;
     case BlendFunc::Max:
-        return vk::BlendOp::eMax;
+        return Backend::BlendOp::Max;
     case BlendFunc::ReverseSubtract:
-        return vk::BlendOp::eReverseSubtract;
+        return Backend::BlendOp::ReverseSubtract;
     default:
         UNREACHABLE_MSG("Unknown blend op: {}", static_cast<u32>(func));
     }
 }
 
-vk::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op) {
+Backend::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op) {
     using LogicOp = AmdGpu::ColorControl::LogicOp;
     switch (logic_op) {
     case LogicOp::Clear:
-        return vk::LogicOp::eClear;
+        return Backend::LogicOp::Clear;
     case LogicOp::Nor:
-        return vk::LogicOp::eNor;
+        return Backend::LogicOp::Nor;
     case LogicOp::AndInverted:
-        return vk::LogicOp::eAndInverted;
+        return Backend::LogicOp::AndInverted;
     case LogicOp::CopyInverted:
-        return vk::LogicOp::eCopyInverted;
+        return Backend::LogicOp::CopyInverted;
     case LogicOp::AndReverse:
-        return vk::LogicOp::eAndReverse;
+        return Backend::LogicOp::AndReverse;
     case LogicOp::Invert:
-        return vk::LogicOp::eInvert;
+        return Backend::LogicOp::Invert;
     case LogicOp::BrushXor:
         LOG_WARNING(Render_Vulkan, "Unimplemented logic op {:#x}, using closest equivalent",
                     u32(logic_op));
         [[fallthrough]];
     case LogicOp::Xor:
-        return vk::LogicOp::eXor;
+        return Backend::LogicOp::Xor;
     case LogicOp::Nand:
-        return vk::LogicOp::eNand;
+        return Backend::LogicOp::Nand;
     case LogicOp::And:
-        return vk::LogicOp::eAnd;
+        return Backend::LogicOp::And;
     case LogicOp::Equiv:
-        return vk::LogicOp::eEquivalent;
+        return Backend::LogicOp::Equivalent;
     case LogicOp::Noop:
-        return vk::LogicOp::eNoOp;
+        return Backend::LogicOp::NoOp;
     case LogicOp::OrInverted:
-        return vk::LogicOp::eOrInverted;
+        return Backend::LogicOp::OrInverted;
     case LogicOp::Copy:
-        return vk::LogicOp::eCopy;
+        return Backend::LogicOp::Copy;
     case LogicOp::OrReverse:
-        return vk::LogicOp::eOrReverse;
+        return Backend::LogicOp::OrReverse;
     case LogicOp::Or:
-        return vk::LogicOp::eOr;
+        return Backend::LogicOp::Or;
     case LogicOp::Set:
-        return vk::LogicOp::eSet;
+        return Backend::LogicOp::Set;
     default:
         UNREACHABLE_MSG("Unknown logic op {}", u32(logic_op));
     }

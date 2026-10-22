@@ -13,30 +13,31 @@
 #include "video_core/amdgpu/resource.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_format.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Vulkan::LiverpoolToVK {
 
-vk::StencilOp StencilOp(AmdGpu::StencilFunc op);
+Backend::StencilOp StencilOp(AmdGpu::StencilFunc op);
 
-vk::CompareOp CompareOp(AmdGpu::CompareFunc func);
+Backend::CompareOp CompareOp(AmdGpu::CompareFunc func);
 
 bool IsPrimitiveCulled(AmdGpu::PrimitiveType type);
 
-vk::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type);
+Backend::PrimitiveTopology PrimitiveType(AmdGpu::PrimitiveType type);
 
-vk::PolygonMode PolygonMode(AmdGpu::PolygonMode mode);
+Backend::PolygonMode PolygonMode(AmdGpu::PolygonMode mode);
 
-vk::CullModeFlags CullMode(AmdGpu::CullMode mode);
+Backend::CullMode CullMode(AmdGpu::CullMode mode);
 
-vk::FrontFace FrontFace(AmdGpu::FrontFace mode);
+Backend::FrontFace FrontFace(AmdGpu::FrontFace mode);
 
-vk::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor);
+Backend::BlendFactor BlendFactor(AmdGpu::BlendControl::BlendFactor factor);
 
 bool IsDualSourceBlendFactor(AmdGpu::BlendControl::BlendFactor factor);
 
-vk::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func);
+Backend::BlendOp BlendOp(AmdGpu::BlendControl::BlendFunc func);
 
-vk::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op);
+Backend::LogicOp LogicOp(AmdGpu::ColorControl::LogicOp logic_op);
 
 vk::SamplerAddressMode ClampMode(AmdGpu::ClampMode mode);
 
