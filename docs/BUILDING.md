@@ -59,9 +59,10 @@ Switches for single features are listed where the feature is described in
 
 - `bash build.sh --test`: the native tests (settings, the AV player's clock and queue, stable
   slot storage, texture upload hashing, ...). They need no game or GPU and also run in Linux CI.
-- `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS 19
-  Linux-packaging cases fail, and `test_probe.LoaderTests` fails (its images use 4 KiB
-  segments; Macs have 16 KiB pages): known, not regressions.
+- `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS the
+  Linux-only cases fail (`test_packaged_vulkan`, the Intel tonemap check), and
+  `test_probe.LoaderTests` fails (its images use 4 KiB segments; Macs have 16 KiB pages): known,
+  not regressions.
 
 ## Running the game for tests
 
