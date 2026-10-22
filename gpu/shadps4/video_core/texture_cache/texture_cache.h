@@ -101,7 +101,7 @@ public:
     /// bbport: FindImage's access tick for an image found by a memoized lookup. The LRU touch
     /// FindImage also does happens in UpdateImage (FindTexture), which every binding reaches.
     void MarkFound(ImageId image_id) {
-        slot_images[image_id].tick_accessed_last = scheduler.CurrentTick();
+        slot_images[image_id].tick_accessed_last = device.CurrentTick();
     }
 
     TileManager& GetTileManager() noexcept {

@@ -583,7 +583,7 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
             Layer().RemoveMirror(old.base);
             auto node = layer_mirrors.extract(old.base);
             if (!node.empty()) {
-                layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+                layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
             }
         }
         Layer().AddMirror(start, bytes, target->Handle(), target->BufferDeviceAddress(), target);
@@ -699,7 +699,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
         auto node = layer_mirrors.extract(mirror.base);
         if (!node.empty()) {
             BbStats::residency_alloc_bytes.fetch_sub(mirror.size, std::memory_order_relaxed);
-            layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+            layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
         }
     }
     ++layer_generation;
@@ -875,7 +875,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
             BbStats::residency_alloc_bytes.fetch_add(size, std::memory_order_relaxed);
             kept += size;
         }
-        layer_retired.push_back({std::move(node.mapped()), scheduler.CurrentTick()});
+        layer_retired.push_back({std::move(node.mapped()), device.CurrentTick()});
         LayerRepublish(lo, hi); // paged bindings find the new buffers
         ++layer_generation;
         freed += old_size - kept;
@@ -1279,7 +1279,7 @@ void BufferCache::LayerCopyBack(u64 first, u64 end) {
                 const vk::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
                 runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                 layer_copied_back_bytes += w_to - w_from;
-                layer_copy_back_tick = scheduler.CurrentTick();
+                layer_copy_back_tick = device.CurrentTick();
             }
         });
         gpu_modified_ranges.Subtract(from, bytes);

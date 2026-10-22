@@ -903,7 +903,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 // GPU write completes. Wait submits a still-open chunk before waiting for it.
                 const u64 tick = WriteTicks().Newest(device_addr, size);
                 if (tick) {
-                    scheduler.Wait(tick);
+                    device.Wait(tick);
                 }
                 memory_tracker->UnmarkRegionAsGpuModified(device_addr, size);
                 if (is_write) {
@@ -951,7 +951,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                                                                              start, end - start));
                                                });
             if (gpu_bytes != 0 && gpu_bytes <= TwinsMaxBytes() && tick != 0 &&
-                !scheduler.IsFree(tick)) {
+                !device.IsComplete(tick)) {
                 {
                     std::scoped_lock lk{twins_mutex};
                     gpu_modified_ranges.ForEachInRange(
@@ -984,7 +984,7 @@ void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool as
                 window_start, window_end - window_start, [&](VAddr start, VAddr end) {
                     window_tick = std::max(window_tick, WriteTicks().Newest(start, end - start));
                 });
-            if (window_tick != 0 && !scheduler.IsFree(window_tick)) {
+            if (window_tick != 0 && !device.IsComplete(window_tick)) {
                 download_start = Common::AlignDown(device_addr, TRACKER_BYTES_PER_PAGE);
                 download_end = Common::AlignUp(device_addr + size, TRACKER_BYTES_PER_PAGE);
             }
@@ -1036,8 +1036,8 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
     }
     bool copied = copies.empty();
     if (!copies.empty()) {
-        if (tick != 0 && !scheduler.IsFree(tick)) {
-            scheduler.Wait(tick); // submitted, and done
+        if (tick != 0 && !device.IsComplete(tick)) {
+            device.Wait(tick); // submitted, and done
         }
         auto& readback = SharedReadback(instance);
         if (readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
@@ -1059,8 +1059,8 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
             scheduler.Finish();
         }
         layer_read_trap_bytes.fetch_add(total, std::memory_order_relaxed);
-    } else if (layer_copy_back_tick != 0 && !scheduler.IsFree(layer_copy_back_tick)) {
-        scheduler.Wait(layer_copy_back_tick); // a copy back recorded is not done yet
+    } else if (layer_copy_back_tick != 0 && !device.IsComplete(layer_copy_back_tick)) {
+        device.Wait(layer_copy_back_tick); // a copy back recorded is not done yet
     }
     std::scoped_lock lk{layer_read_trap_mutex};
     BbLayer::WriteTraps::Set(from, block_size, BbLayer::WriteTraps::VramData, false);
@@ -1118,7 +1118,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
         }
     };
     const auto wait_start = std::chrono::steady_clock::now();
-    const u64 tick_before = scheduler.CurrentTick();
+    const u64 tick_before = device.CurrentTick();
     // bbport: the readback queue copies the data once the GPU has done the newest write into
     // it (waiting for that submission only when it is still queued); the graphics queue would
     // first run all queued work (~a frame: 20-30 ms stutters whenever the game wrote into
@@ -1127,12 +1127,12 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     for (const auto& copy : copies) {
         write_tick = std::max(write_tick, WriteTicks().Newest(arena_base + copy.srcOffset, copy.size));
     }
-    const bool write_done = write_tick != 0 && scheduler.IsFree(write_tick);
+    const bool write_done = write_tick != 0 && device.IsComplete(write_tick);
     bool fast = false;
     auto& readback = SharedReadback(instance);
     if (write_tick != 0 && readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
         if (!write_done) {
-            scheduler.Wait(write_tick);
+            device.Wait(write_tick);
         }
         {
             std::scoped_lock lk{fast_readback_mutex};
@@ -1372,7 +1372,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         }
         if (IsInPlace(device_addr, size)) {
             if (is_written) {
-                WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+                WriteTicks().Note(device_addr, size, device.CurrentTick());
             }
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             if (is_written) {
@@ -1445,10 +1445,10 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
     }
     if (is_written) {
         gpu_modified_ranges.Add(device_addr, size);
-        WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+        WriteTicks().Note(device_addr, size, device.CurrentTick());
         if (Readbacks()) {
             written_bindings[written_head.fetch_add(1) % written_bindings.size()] =
-                WrittenBinding{device_addr, size, scheduler.CurrentTick()};
+                WrittenBinding{device_addr, size, device.CurrentTick()};
         }
     }
     TraceBinding(device_addr, size, is_written, is_written ? 1 : 4);
@@ -1490,7 +1490,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
         }
         const auto target = LayerInPlace(device_addr, size);
         if (target) {
-            WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+            WriteTicks().Note(device_addr, size, device.CurrentTick());
         }
         return target;
     }
@@ -1501,7 +1501,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::CommandWriteTarget(VAd
     if (!IsInPlace(device_addr, size)) {
         return std::nullopt;
     }
-    WriteTicks().Note(device_addr, size, scheduler.CurrentTick());
+    WriteTicks().Note(device_addr, size, device.CurrentTick());
     return std::pair<const Buffer*, u64>{arena, arena->Offset(device_addr)};
 }
 
@@ -2044,7 +2044,7 @@ void BufferCache::ReleaseResidencySlot(vk::DeviceMemory memory, u64 offset) {
         it->second.used -= block_size;
         if (it->second.used == 0) {
             it->second.empty_second = BbStats::coarse_second.load(std::memory_order_relaxed);
-            it->second.empty_tick = scheduler.CurrentTick();
+            it->second.empty_tick = device.CurrentTick();
         }
     }
     NoteResidencyUnused();
@@ -2075,7 +2075,7 @@ void BufferCache::EvictVramBlock(u64 block) {
     memory_tracker->MarkRegionAsCpuModified(address, block_size);
     ReleaseResidencySlot(memory, offset);
     // After the work submitted so far: it may still read the block.
-    bind_wait_tick = std::max(bind_wait_tick, scheduler.CurrentTick() - 1);
+    bind_wait_tick = std::max(bind_wait_tick, device.CurrentTick() - 1);
     BbStats::vram_unmapped_bytes.fetch_add(block_size, std::memory_order_relaxed);
 }
 
@@ -2092,7 +2092,7 @@ void BufferCache::ProcessIdleBlocks() {
     }
     // Blocks in VRAM whose 2 MiB were not bound for the idle time go back in place
     // (ProcessDemotions: only blocks of the game's direct memory without GPU-written data).
-    const u64 tick = scheduler.CurrentTick();
+    const u64 tick = device.CurrentTick();
     for (const auto& range : resident_ranges) {
         if (!residency_chunks.contains(static_cast<VkDeviceMemory>(range.memory))) {
             continue; // in place
@@ -2280,14 +2280,14 @@ void BufferCache::ProcessDemotions() {
     // bbport: the waiting requests become ready only once their tick is submitted: rescanned
     // when a new tick began or a request came (it ran for every draw and dispatch).
     const bool requested = demotes_requested.load(std::memory_order_acquire);
-    if (!requested && demotions_scanned_tick == scheduler.CurrentTick()) {
+    if (!requested && demotions_scanned_tick == device.CurrentTick()) {
         return;
     }
-    demotions_scanned_tick = scheduler.CurrentTick();
+    demotions_scanned_tick = device.CurrentTick();
     if (requested) {
         std::scoped_lock lk{dynamic_mutex};
         for (const u64 block : demote_requests) {
-            demotions_waiting.push_back({block, scheduler.CurrentTick(), true});
+            demotions_waiting.push_back({block, device.CurrentTick(), true});
         }
         demote_requests.clear();
         demotes_requested.store(false, std::memory_order_release);
@@ -2296,7 +2296,7 @@ void BufferCache::ProcessDemotions() {
         return;
     }
     static std::atomic<u64> moved_bytes{0}, kept{0};
-    const u64 submitted_below = scheduler.CurrentTick(); // ticks under it are submitted
+    const u64 submitted_below = device.CurrentTick(); // ticks under it are submitted
     std::erase_if(demotions_waiting, [&](const Demotion& request) {
         const auto [block, tick, cpu_written, idle, force] = request;
         if (tick >= submitted_below) {
@@ -2556,7 +2556,7 @@ void BufferCache::ProcessPendingAssets() {
                         copy_back_blocks.Add({block, block + 1});
                         continue;
                     }
-                    demotions_waiting.push_back({block, scheduler.CurrentTick(), false});
+                    demotions_waiting.push_back({block, device.CurrentTick(), false});
                 }
                 memory_tracker->MarkRegionAsCpuModified(from, to - from);
             }
@@ -2740,7 +2740,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         IsRegionGpuModified(addr, size)) {
         return std::nullopt;
     }
-    if (const u64 tick = scheduler.CurrentTick(); tick != shadow_tick) {
+    if (const u64 tick = device.CurrentTick(); tick != shadow_tick) {
         shadows.clear();
         shadow_tick = tick;
     }
@@ -3574,7 +3574,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
                         image.info.size.height, u32(image.info.pixel_format),
                         u32(image.info.tile_mode), (unsigned long long)image.info.guest_size,
                         (unsigned long long)device_addr, size,
-                        image.gpu_write_tick ? (long long)(scheduler.CurrentTick() -
+                        image.gpu_write_tick ? (long long)(device.CurrentTick() -
                                                            image.gpu_write_tick)
                                              : -1ll,
                         u32(image.flags));
@@ -3607,7 +3607,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         if (UnifiedCpuSyncEnabled()) {
             NoteWriteTick(device_addr, image.info.guest_size);
         } else if (UnifiedAccessProbeEnabled()) {
-            UnifiedWriteHistory().Note(device_addr, image.info.guest_size, scheduler.CurrentTick());
+            UnifiedWriteHistory().Note(device_addr, image.info.guest_size, device.CurrentTick());
         }
     }
     DropShadows(device_addr, size);
@@ -3862,7 +3862,7 @@ std::pair<const Buffer*, u64> BufferCache::UnifiedCopy(VAddr addr, u64 size, boo
 
 void BufferCache::SubmitPendingArenaBinds(Vulkan::SubmitInfo& info) {
     // The submission going out has the tick before the current one.
-    const u64 submitted = scheduler.CurrentTick() - 1;
+    const u64 submitted = device.CurrentTick() - 1;
     if (pending_binds.empty()) {
         QueueCopyBacks(submitted);
         QueuePromotions(submitted);
@@ -3948,7 +3948,7 @@ void BufferCache::ReportArenaBinds() {
 
 namespace VideoCore {
 void BufferCache::NoteWriteTick(VAddr address, u64 size) {
-    WriteTicks().Note(address, size, scheduler.CurrentTick());
+    WriteTicks().Note(address, size, device.CurrentTick());
     if (UnifiedGuestMemory() && UnifiedCpuSyncEnabled() && size) {
         // The GPU already writes the imported pool. Reuse page-state transitions without
         // uploading CPU bytes: protect reads/writes until the binding's work completes.

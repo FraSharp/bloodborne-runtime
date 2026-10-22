@@ -445,7 +445,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
                                                            ImageId merged_image_id) {
     auto& cache_image = slot_images[cache_image_id];
     const bool safe_to_delete =
-        scheduler.CurrentTick() - cache_image.tick_accessed_last > NumFramesBeforeRemoval;
+        device.CurrentTick() - cache_image.tick_accessed_last > NumFramesBeforeRemoval;
 
     // Equal address
     if (image_info.guest_address == cache_image.info.guest_address) {
@@ -620,8 +620,8 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
                   static_cast<s64>(image_info.guest_size) - static_cast<s64>(expected_size),
                   (static_cast<double>(image_info.guest_size) / expected_size - 1.0) * 100.0,
 
-                  merged_image_id.index, static_cast<int>(binding), scheduler.CurrentTick(),
-                  scheduler.CurrentTick() - cache_image.tick_accessed_last);
+                  merged_image_id.index, static_cast<int>(binding), device.CurrentTick(),
+                  device.CurrentTick() - cache_image.tick_accessed_last);
 
         UNREACHABLE_MSG("Encountered unresolvable image overlap with equal memory address.");
     }
@@ -721,7 +721,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         cached.levels == info.resources.levels && cached.layers == info.resources.layers &&
         !BbToggle::Disabled(BbToggle::FindImageCache)) {
         Image& image = slot_images[cached.image_id];
-        image.tick_accessed_last = scheduler.CurrentTick();
+        image.tick_accessed_last = device.CurrentTick();
         TouchImage(image);
         if (cached.view_mip > 0) {
             desc.view_info.range.base.level = cached.view_mip;
@@ -798,7 +798,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
 
     Image& image = slot_images[image_id];
-    image.tick_accessed_last = scheduler.CurrentTick();
+    image.tick_accessed_last = device.CurrentTick();
     TouchImage(image);
 
     // If the image requested is a subresource of the image from cache record its location.
@@ -863,7 +863,7 @@ ImageView& TextureCache::FindTexture(ImageId image_id, const ImageDesc& desc, Vi
     WatchImage(image, refresh ? "texture (refresh)" : "texture (no refresh)");
     if (desc.type == BindingType::Storage) {
         image.flags |= ImageFlagBits::GpuModified;
-        image.gpu_write_tick = scheduler.CurrentTick();
+        image.gpu_write_tick = device.CurrentTick();
         if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8) &&
             image.info.guest_address != 0) {
             std::unique_lock lk{download_images_mutex};
@@ -894,7 +894,7 @@ ImageView& TextureCache::FindRenderTarget(ImageId image_id, const ImageDesc& des
     Image& image = slot_images[image_id];
     WatchImage(image, "render target");
     image.flags |= ImageFlagBits::GpuModified;
-    image.gpu_write_tick = scheduler.CurrentTick();
+    image.gpu_write_tick = device.CurrentTick();
     if (readback_linear_images && (!image.info.props.is_tiled || image.info.size.width <= 8)) {
         std::unique_lock lk{download_images_mutex};
         download_images.emplace(image_id);
@@ -923,7 +923,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
     Image& image = slot_images[image_id];
     WatchImage(image, "depth target");
     image.flags |= ImageFlagBits::GpuModified;
-    image.gpu_write_tick = scheduler.CurrentTick();
+    image.gpu_write_tick = device.CurrentTick();
     image.usage.depth_target = 1u;
     UpdateImage(image_id);
 
@@ -1556,7 +1556,7 @@ void TextureCache::DeleteImage(ImageId image_id) {
 
     // Reclaim image and any image views it references (bbport: past the next submission, which
     // can still hold draws the draw pipeline prepared before this deletion).
-    scheduler.DeferOperationPastNext([this, image_id] {
+    device.DeferRelease([this, image_id] {
         Image& image = slot_images[image_id];
         for (auto& backing : image.backing_images) {
             for (const ImageViewId image_view_id : backing.image_view_ids) {
