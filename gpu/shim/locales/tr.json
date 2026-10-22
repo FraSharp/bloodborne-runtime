@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Apple'ın zamansal ölçekleyicisi",
   "launcher.options.upscaler.off": "Kapalı",
-  "launcher.options.upscaler.offHint": "Yerel çözünürlük"
+  "launcher.options.upscaler.offHint": "Yerel çözünürlük",
+  "trophies.earned": "Kupa kazanıldı",
+  "trophies.preview": "Bildirim önizlemesi",
+  "trophies.platinum": "Platin",
+  "trophies.gold": "Altın",
+  "trophies.silver": "Gümüş",
+  "trophies.bronze": "Bronz",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

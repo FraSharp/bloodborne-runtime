@@ -9,6 +9,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <deque>
 #include <filesystem>
 #include <mutex>
 #include <string>
@@ -83,6 +84,38 @@ extern "C" void runtime_restart(void); // bb-probe (probe.c)
 namespace BbOverlay {
 
 namespace {
+
+struct TrophyText {
+    int id;
+    const char* language;
+    const char* name;
+    const char* description;
+    const char* grade;
+    const char* group;
+};
+#include "bbport_trophy_data.inc"
+
+struct TrophyNotice {
+    int id;
+    std::chrono::steady_clock::time_point at;
+    bool preview;
+};
+std::mutex trophy_mutex;
+std::deque<TrophyNotice> trophy_queue;
+std::atomic<bool> trophy_pending{false};
+TrophyNotice trophy_active{-1, {}, false}; // present thread only
+std::chrono::steady_clock::time_point trophy_started{};
+std::chrono::steady_clock::time_point trophy_until{}, trophy_next{};
+
+const TrophyText* TrophyTextFor(int id, const char* language) {
+    const TrophyText* english = nullptr;
+    for (const auto& row : kTrophyTexts) {
+        if (row.id != id) continue;
+        if (std::strcmp(row.language, language) == 0) return &row;
+        if (std::strcmp(row.language, "en") == 0) english = &row;
+    }
+    return english;
+}
 
 // The launcher's design tokens (bloodborne-launcher src/index.css): the menu looks like the app.
 namespace Theme {
@@ -1465,7 +1498,91 @@ void ApplyTheme() {
     c[ImGuiCol_NavCursor] = Theme::PrimaryForeground;
 }
 
+void TrophyToast(std::chrono::steady_clock::time_point now) {
+    if (trophy_active.id >= 0 && now >= trophy_until) {
+        trophy_active.id = -1;
+        trophy_next = now + std::chrono::seconds(1);
+    }
+    if (trophy_active.id < 0 && now >= trophy_next) {
+        std::scoped_lock lock{trophy_mutex};
+        while (!trophy_queue.empty() && now - trophy_queue.front().at > std::chrono::seconds(30))
+            trophy_queue.pop_front();
+        if (!trophy_queue.empty()) {
+            trophy_active = trophy_queue.front();
+            trophy_queue.pop_front();
+            trophy_started = now;
+            trophy_until = now + std::chrono::seconds(trophy_active.id == 0 ? 7 : 5);
+        }
+        trophy_pending = trophy_active.id >= 0 || !trophy_queue.empty();
+    }
+    if (trophy_active.id < 0) return;
+
+    const TrophyText* text = TrophyTextFor(trophy_active.id, BbText::Language());
+    const TrophyText* english = TrophyTextFor(trophy_active.id, "en");
+    if (!text || !english) return;
+    const char* description = text->description[0] ? text->description : english->description;
+    const ImVec4 metal = std::strcmp(text->grade, "platinum") == 0 ? Theme::Hex(0xcfdee4)
+                         : std::strcmp(text->grade, "gold") == 0 ? Theme::Hex(0xe8c976)
+                         : std::strcmp(text->grade, "silver") == 0 ? Theme::Hex(0xd7dbdd)
+                         : Theme::Hex(0xce9e78);
+    const float elapsed = std::chrono::duration<float>(now - trophy_started).count();
+    const float left = std::chrono::duration<float>(trophy_until - now).count();
+    const float alpha = std::clamp(std::min(elapsed / 0.3f, left / 0.3f), 0.0f, 1.0f);
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    const float width = std::min(S(420), viewport->WorkSize.x - S(24));
+    const bool fps_top_right = BbSettings::Get().show_fps && BbSettings::Get().fps_position == BbSettings::FpsTopRight && !menu_open;
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x - S(14),
+                                   viewport->WorkPos.y + S(fps_top_right ? 115 : 14)),
+                            ImGuiCond_Always, ImVec2(1, 0));
+    ImGui::SetNextWindowSize(ImVec2(width, 0));
+    ImGui::PushStyleVar(ImGuiStyleVar_Alpha, alpha);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(12));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(18), S(14)));
+    ImGui::PushStyleColor(ImGuiCol_WindowBg, Theme::Card);
+    ImGui::PushStyleColor(ImGuiCol_Border, metal);
+    ImGui::Begin("##trophy_notice", nullptr, ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                 ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav | ImGuiWindowFlags_NoFocusOnAppearing);
+    ImDrawList* draw = ImGui::GetWindowDrawList();
+    const ImVec2 badge = ImGui::GetCursorScreenPos();
+    draw->AddCircleFilled(ImVec2(badge.x + S(23), badge.y + S(27)), S(22), ImGui::GetColorU32(metal));
+    draw->AddCircleFilled(ImVec2(badge.x + S(23), badge.y + S(27)), S(17), ImGui::GetColorU32(Theme::Card));
+    draw->AddText(ImVec2(badge.x + S(15), badge.y + S(18)), ImGui::GetColorU32(metal), "✦");
+    ImGui::Dummy(ImVec2(S(54), S(55)));
+    ImGui::SameLine();
+    ImGui::BeginGroup();
+    ImGui::PushStyleColor(ImGuiCol_Text, metal);
+    ImGui::TextUnformatted(T(trophy_active.preview ? "trophies.preview" : "trophies.earned"));
+    ImGui::PopStyleColor();
+    ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.1f);
+    ImGui::TextWrapped("%s", text->name);
+    ImGui::PopFont();
+    if (description[0]) {
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        ImGui::TextWrapped("%s", description);
+        ImGui::PopStyleColor();
+    }
+    ImGui::PushStyleColor(ImGuiCol_Text, metal);
+    ImGui::Text("%s · %s", T(std::string("trophies.") + text->grade),
+                T(std::string("trophies.") + text->group));
+    ImGui::PopStyleColor();
+    ImGui::EndGroup();
+    ImGui::End();
+    ImGui::PopStyleColor(2);
+    ImGui::PopStyleVar(3);
+}
+
 } // namespace
+
+void TrophyUnlocked(const char* title, int id) {
+    if (!title || std::strcmp(title, "CUSA03173") || id < 0 || id >= 40) return;
+    const char* off = std::getenv("BB_TROPHY_OVERLAY");
+    if (off && std::strcmp(off, "0") == 0) return;
+    std::scoped_lock lock{trophy_mutex};
+    if (trophy_queue.size() < 16) {
+        trophy_queue.push_back({id, std::chrono::steady_clock::now(), false});
+        trophy_pending = true;
+    }
+}
 
 void SetTextPrompt(bool active, const std::string& prompt, const std::string& text) {
     {
@@ -1582,6 +1699,15 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
         return;
     }
     initialized = true;
+    const char* notices_off = std::getenv("BB_TROPHY_OVERLAY");
+    if (const char* preview = std::getenv("BB_TROPHY_OVERLAY_PREVIEW");
+        preview && std::strcmp(preview, "1") == 0 &&
+        (!notices_off || std::strcmp(notices_off, "0") != 0)) {
+        std::scoped_lock notice_lock{trophy_mutex};
+        for (int id : {21, 7, 1, 0, 35})
+            trophy_queue.push_back({id, std::chrono::steady_clock::now(), true});
+        trophy_pending = true;
+    }
 #ifdef __APPLE__
     std::printf("Overlay: menu ready (F1 or L3+R3)\n");
 #else
@@ -1735,7 +1861,7 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps);
+    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || trophy_pending);
 }
 
 bool MenuOpen() {
@@ -1796,6 +1922,7 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     if (prompt_active && !menu_open) {
         TextPrompt();
     }
+    TrophyToast(now);
     ImGui::Render();
 
     const vk::RenderingAttachmentInfo attachment{

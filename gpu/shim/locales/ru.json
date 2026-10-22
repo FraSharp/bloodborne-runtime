@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Временной апскейлер Apple",
   "launcher.options.upscaler.off": "Выключен",
-  "launcher.options.upscaler.offHint": "Родное разрешение"
+  "launcher.options.upscaler.offHint": "Родное разрешение",
+  "trophies.earned": "Трофей получен",
+  "trophies.preview": "Предпросмотр уведомления",
+  "trophies.platinum": "Платина",
+  "trophies.gold": "Золото",
+  "trophies.silver": "Серебро",
+  "trophies.bronze": "Бронза",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

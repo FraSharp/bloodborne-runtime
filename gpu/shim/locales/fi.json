@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Applein ajallinen ylöskaalaus",
   "launcher.options.upscaler.off": "Pois",
-  "launcher.options.upscaler.offHint": "Natiivitarkkuus"
+  "launcher.options.upscaler.offHint": "Natiivitarkkuus",
+  "trophies.earned": "Pokaali ansaittu",
+  "trophies.preview": "Ilmoituksen esikatselu",
+  "trophies.platinum": "Platina",
+  "trophies.gold": "Kulta",
+  "trophies.silver": "Hopea",
+  "trophies.bronze": "Pronssi",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

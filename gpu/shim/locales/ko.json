@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Apple의 시간 기반 업스케일러",
   "launcher.options.upscaler.off": "끔",
-  "launcher.options.upscaler.offHint": "네이티브 해상도"
+  "launcher.options.upscaler.offHint": "네이티브 해상도",
+  "trophies.earned": "트로피 획득",
+  "trophies.preview": "알림 미리 보기",
+  "trophies.platinum": "플래티넘",
+  "trophies.gold": "골드",
+  "trophies.silver": "실버",
+  "trophies.bronze": "브론즈",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

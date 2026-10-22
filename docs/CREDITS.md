@@ -40,7 +40,9 @@ Changes taken from other ports of bbport, with thanks:
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
   (GPL-2.0-or-later, `79d44f0`, authored by Ambrose): the per-user trophy event persistence
   approach. Adapted here with a versioned title-aware protocol, checked file operations and
-  edited-save eligibility. No trophy catalog, game code or assets were taken.
+  edited-save eligibility. The notification overlay embeds the project's reviewed public
+  catalog (names from PSN100 and Exophase, original requirement summaries); no game trophy
+  files, game code or assets were taken.
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/f33e7617bc1486dec0698786bd87baa40c02eab7)
   (GPL-2.0-or-later, `f33e7617`, authored by João Pedro Valadares): skip motion-vector
   graphics pipelines during cache preload. This extends the existing motion-shader rejection

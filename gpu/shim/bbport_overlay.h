@@ -30,7 +30,10 @@ void UpdateTextInput(SDL_Window* window);
 /// monitor names the menu offers.
 void ApplyWindowSettings(SDL_Window* window);
 
-/// Whether anything is drawn this frame (menu open or FPS counter on).
+/// Guest thread: a newly persisted unlock, after the edited-save and duplicate checks.
+void TrophyUnlocked(const char* title, int id);
+
+/// Whether anything is drawn this frame (menu, FPS counter or trophy notice).
 bool Visible();
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).

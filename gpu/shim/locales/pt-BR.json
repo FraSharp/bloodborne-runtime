@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Upscaler temporal da Apple",
   "launcher.options.upscaler.off": "Desligado",
-  "launcher.options.upscaler.offHint": "Resolução nativa"
+  "launcher.options.upscaler.offHint": "Resolução nativa",
+  "trophies.earned": "Troféu conquistado",
+  "trophies.preview": "Prévia de notificação",
+  "trophies.platinum": "Platina",
+  "trophies.gold": "Ouro",
+  "trophies.silver": "Prata",
+  "trophies.bronze": "Bronze",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Apple 的时域超分辨率",
   "launcher.options.upscaler.off": "关",
-  "launcher.options.upscaler.offHint": "原生分辨率"
+  "launcher.options.upscaler.offHint": "原生分辨率",
+  "trophies.earned": "已获得奖杯",
+  "trophies.preview": "通知预览",
+  "trophies.platinum": "白金",
+  "trophies.gold": "金",
+  "trophies.silver": "银",
+  "trophies.bronze": "铜",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }

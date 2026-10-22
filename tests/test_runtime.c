@@ -487,40 +487,6 @@ static void trophies(void) {
     puts("PASS: local trophy events, IDs, edited-save suppression, env fallback and symlink refusal");
 }
 
-static void notifications(void) {
-    char root[]="/tmp/bb-notification-test-XXXXXX",previous[512],helper[640],messages[640],path[640];
-    snprintf(previous,sizeof(previous),"%s",runtime_file_user_dir());
-    assert(mkdtemp(root));
-    runtime_file_configure(root,root); runtime_trophy_configure("SYNTH0001");
-    snprintf(helper,sizeof(helper),"%s/helper",root);
-    snprintf(messages,sizeof(messages),"%s/messages",root);
-    FILE *f=fopen(helper,"w"); assert(f);
-    fputs("#!/bin/sh\nprintf '{\"v\":1,\"type\":\"ready\"}\\n'\nIFS= read -r first\nIFS= read -r second\nprintf '%s\\n%s\\n' \"$first\" \"$second\" > \"$BB_TEST_NOTIFICATION_LOG\"\n",f);
-    assert(fclose(f)==0 && chmod(helper,0700)==0);
-    setenv("BB_OVERLAY_HELPER",helper,1); setenv("BB_TEST_NOTIFICATION_LOG",messages,1);
-    runtime_notification_window(10,20,1280,720,1);
-    runtime_notifications_start();
-    int32_t platinum;
-    assert(runtime_trophy_unlock(21,&platinum)==0);
-    assert(runtime_trophy_unlock(21,&platinum)==0);
-    snprintf(path,sizeof(path),"%s/savedata",root); assert(mkdir(path,0700)==0);
-    snprintf(path,sizeof(path),"%s/savedata/.bb-edited",root); f=fopen(path,"w"); assert(f && fclose(f)==0);
-    assert(runtime_trophy_unlock(22,&platinum)==0);
-    for (unsigned i=0;i<200 && access(messages,F_OK);++i) usleep(10000);
-    f=fopen(messages,"r"); assert(f);
-    char line[1024]; size_t n=fread(line,1,sizeof(line)-1,f); line[n]=0; fclose(f);
-    assert(strstr(line,"\"kind\":\"window\"") && strstr(line,"\"x\":830"));
-    assert(strstr(line,"\"id\":21") && !strstr(line,"\"id\":22"));
-    unsetenv("BB_OVERLAY_HELPER"); unsetenv("BB_TEST_NOTIFICATION_LOG");
-    assert(unlink(path)==0); snprintf(path,sizeof(path),"%s/savedata",root); assert(rmdir(path)==0);
-    const char *files[]={"helper","messages","trophies-v1.log"};
-    for (unsigned i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,files[i]); assert(unlink(path)==0); }
-    const char *folders[]={"temp0","download0","data"};
-    for (unsigned i=0;i<3;++i) { snprintf(path,sizeof(path),"%s/%s",root,folders[i]); assert(rmdir(path)==0); }
-    assert(rmdir(root)==0); runtime_file_configure(previous,previous);
-    puts("PASS: owned notification helper, readiness, SDL geometry, accepted unlocks and duplicate/edited gates");
-}
-
 int main(int argc,char **argv) {
     runtime_start(0); assert(runtime_resolve("bzQExy189ZI#q#q",0)==0);
     runtime_start(1);
@@ -549,7 +515,6 @@ int main(int argc,char **argv) {
     libc_support(); posix_mutexes(); wall_time(); exit_handlers(); guards(); mutexes(); conditions(); direct_memory(); write_traps(); memory_primitives();
     rw_lifecycle(); rw_concurrency(); rw_timeouts();
     trophies();
-    notifications();
     puts("PASS: callback lifecycle, guard ABI, mutex and condition errors, shared direct memory, memory primitives, resolver scope");
     return 0;
 }

@@ -171,5 +171,13 @@
   "launcher.options.upscaler.metalfx": "MetalFX (Apple)",
   "launcher.options.upscaler.metalfxHint": "Apple のテンポラルアップスケーラー",
   "launcher.options.upscaler.off": "オフ",
-  "launcher.options.upscaler.offHint": "ネイティブ解像度"
+  "launcher.options.upscaler.offHint": "ネイティブ解像度",
+  "trophies.earned": "トロフィーを獲得しました",
+  "trophies.preview": "通知プレビュー",
+  "trophies.platinum": "プラチナ",
+  "trophies.gold": "ゴールド",
+  "trophies.silver": "シルバー",
+  "trophies.bronze": "ブロンズ",
+  "trophies.base": "Bloodborne",
+  "trophies.old_hunters": "The Old Hunters"
 }
