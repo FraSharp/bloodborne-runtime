@@ -419,13 +419,13 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
     }
     const auto device = instance.GetDevice();
     const auto depth_view = Check(device.createImageView({
-        .image = vk::Image(depth.backing->image),
+        .image = depth.GetImage(),
         .viewType = vk::ImageViewType::e2D,
         .format = depth_format,
         .subresourceRange = {vk::ImageAspectFlagBits::eDepth, 0, 1, 0, 1},
     }));
     const auto color_view = Check(device.createImageView({
-        .image = vk::Image(color.backing->image),
+        .image = color.GetImage(),
         .viewType = vk::ImageViewType::e2D,
         .format = vk::Format::eR8G8B8A8Unorm,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},

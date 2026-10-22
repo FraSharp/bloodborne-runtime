@@ -55,6 +55,14 @@ public:
     virtual void FlushBuffer(BufferHandle buffer, u64 offset, u64 size) = 0;
     virtual void InvalidateBuffer(BufferHandle buffer, u64 offset, u64 size) = 0;
 
+    /// `format`, or the closest format the device supports for `usage`.
+    [[nodiscard]] virtual Format SupportedFormat(Format format, ImageUse usage) = 0;
+    /// The sample counts `desc` can have, as a mask of counts (bit n: 2^n samples).
+    [[nodiscard]] virtual u32 SupportedSampleCounts(const ImageDesc& desc) = 0;
+    [[nodiscard]] virtual ImageAllocation CreateImage(const ImageDesc& desc,
+                                                      std::string_view name) = 0;
+    virtual void DestroyImage(ImageHandle image) = 0;
+
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
 
@@ -63,6 +71,7 @@ public:
     /// stale handle. Valid until the object is destroyed.
     [[nodiscard]] virtual u64 NativeHandle(SamplerHandle sampler) = 0;
     [[nodiscard]] virtual u64 NativeHandle(BufferHandle buffer) = 0;
+    [[nodiscard]] virtual u64 NativeHandle(ImageHandle image) = 0;
 };
 
 } // namespace VideoCore::Backend

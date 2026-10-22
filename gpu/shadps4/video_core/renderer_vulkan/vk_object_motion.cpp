@@ -198,7 +198,7 @@ ObjectMotion::Target& ObjectMotion::GetTarget(u32 width, u32 height) {
                     slot->width ? " (replacing one)" : "");
     }
     const auto device = instance.GetDevice();
-    slot->image = VideoCore::UniqueImage(device, instance.GetAllocator());
+    slot->image = Vulkan::UniqueImage(device, instance.GetAllocator());
     slot->image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR32G32B32A32Sfloat,

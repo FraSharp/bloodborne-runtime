@@ -1,6 +1,8 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <bit>
+#include <mutex>
+#include <set>
 #include <cstdio>
 #include <string>
 
@@ -186,6 +188,100 @@ u64 BackendDevice::NativeHandle(Backend::BufferHandle buffer) {
     std::scoped_lock lock{objects_mutex};
     const UniqueBuffer* entry = buffers.Get(buffer);
     return entry ? reinterpret_cast<u64>(static_cast<VkBuffer>(entry->buffer)) : 0;
+}
+
+vk::ImageCreateInfo BackendDevice::ImageCreateInfo(const Backend::ImageDesc& desc) const {
+    vk::ImageCreateFlags flags{vk::ImageCreateFlagBits::eMutableFormat |
+                               vk::ImageCreateFlagBits::eExtendedUsage};
+    if (desc.views_of_3d_slices) {
+        flags |= vk::ImageCreateFlagBits::e2DArrayCompatible;
+        if (instance.Is2dViewOf3dSupported()) {
+            flags |= vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
+        }
+    }
+    if (desc.uncompressed_block_views && instance.IsBlockTexelViewSupported()) {
+        flags |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
+    }
+    return vk::ImageCreateInfo{
+        .flags = flags,
+        .imageType = ToVk(desc.type),
+        .format = ToVk(desc.format),
+        .extent{.width = desc.width, .height = desc.height, .depth = desc.depth},
+        .mipLevels = desc.levels,
+        .arrayLayers = desc.layers,
+        .samples = static_cast<vk::SampleCountFlagBits>(desc.samples),
+        .tiling = vk::ImageTiling::eOptimal,
+        .usage = ToVk(desc.usage),
+        .initialLayout = vk::ImageLayout::eUndefined,
+    };
+}
+
+Backend::Format BackendDevice::SupportedFormat(Backend::Format format, Backend::ImageUse usage) {
+    return FromVk(instance.GetSupportedFormat(ToVk(format), FormatFeatureFlags(ToVk(usage))));
+}
+
+u32 BackendDevice::SupportedSampleCounts(const Backend::ImageDesc& desc) {
+    const vk::ImageCreateInfo ci = ImageCreateInfo(desc);
+    const vk::PhysicalDeviceImageFormatInfo2 format_info{
+        .format = ci.format,
+        .type = ci.imageType,
+        .tiling = ci.tiling,
+        .usage = ci.usage,
+        .flags = ci.flags,
+    };
+    const auto properties = instance.GetPhysicalDevice().getImageFormatProperties2(format_info);
+    if (properties.result == vk::Result::eErrorFormatNotSupported) {
+        // bbport: once per format and type. MoltenVK reports block-compressed formats with storage
+        // usage as unsupported yet creates the images; one line per texture flooded the log.
+        static std::mutex reported_mutex;
+        static std::set<std::pair<vk::Format, vk::ImageType>> reported;
+        std::scoped_lock lk{reported_mutex};
+        if (reported.emplace(format_info.format, format_info.type).second) {
+            LOG_ERROR(Render_Vulkan, "image format {} type {} is not supported (flags {}, usage {})",
+                      vk::to_string(format_info.format), vk::to_string(format_info.type),
+                      vk::to_string(format_info.flags), vk::to_string(format_info.usage));
+        }
+    }
+    return properties.result == vk::Result::eSuccess
+               ? static_cast<u32>(properties.value.imageFormatProperties.sampleCounts)
+               : 1u;
+}
+
+Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& desc,
+                                                    std::string_view name) {
+    UniqueImage image{instance.GetDevice(), instance.GetAllocator()};
+    image.Create(ImageCreateInfo(desc));
+    SetObjectName(instance.GetDevice(), image.image, name);
+    Backend::ImageAllocation result{
+        .native = reinterpret_cast<u64>(static_cast<VkImage>(image.image)),
+        .size_bytes = image.size_bytes,
+    };
+    std::scoped_lock lock{objects_mutex};
+    result.handle = images.Insert(std::move(image));
+    return result;
+}
+
+void BackendDevice::DestroyImage(Backend::ImageHandle image) {
+    if (!image) {
+        return;
+    }
+    UniqueImage object{};
+    {
+        std::scoped_lock lock{objects_mutex};
+        UniqueImage* entry = images.Get(image);
+        if (!entry) {
+            return;
+        }
+        object = std::move(*entry);
+        images.Erase(image);
+    }
+    DeferRelease([object = std::move(object)] {});
+}
+
+u64 BackendDevice::NativeHandle(Backend::ImageHandle image) {
+    std::scoped_lock lock{objects_mutex};
+    const UniqueImage* entry = images.Get(image);
+    return entry ? reinterpret_cast<u64>(static_cast<VkImage>(entry->image)) : 0;
 }
 
 Backend::SamplerHandle BackendDevice::CreateSampler(const Backend::SamplerDesc& desc) {

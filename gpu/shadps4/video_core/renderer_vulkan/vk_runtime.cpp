@@ -10,6 +10,7 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
@@ -830,20 +831,23 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
     auto it = std::ranges::find(backing_images, num_samples,
                                 &VideoCore::Image::BackingImage::num_samples);
     if (it == backing_images.end()) {
-        auto new_image_ci = backing->image.image_ci;
-        new_image_ci.samples = LiverpoolToVK::NumSamples(num_samples, image->supported_samples);
+        auto new_desc = backing->desc;
+        new_desc.samples =
+            static_cast<u32>(LiverpoolToVK::NumSamples(num_samples, image->supported_samples));
 
         new_backing = &backing_images.emplace_back();
         new_backing->num_samples = num_samples;
-        new_backing->image = VideoCore::UniqueImage{instance.GetDevice(), instance.GetAllocator()};
-        new_backing->image.Create(new_image_ci);
-
-        Vulkan::SetObjectName(instance.GetDevice(), new_backing->image.image,
-                              "Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{} (backing)",
-                              info.size.width, info.size.height, info.size.depth,
-                              AmdGpu::NameOf(info.tile_mode), Backend::FormatName(info.pixel_format),
-                              info.guest_address, info.guest_size, info.resources.layers,
-                              info.resources.levels, num_samples);
+        new_backing->desc = new_desc;
+        const auto allocation = image->device->CreateImage(
+            new_desc, fmt::format("Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{} (backing)",
+                                  info.size.width, info.size.height, info.size.depth,
+                                  AmdGpu::NameOf(info.tile_mode),
+                                  Backend::FormatName(info.pixel_format), info.guest_address,
+                                  info.guest_size, info.resources.layers, info.resources.levels,
+                                  num_samples));
+        new_backing->handle = allocation.handle;
+        new_backing->native = allocation.native;
+        new_backing->size_bytes = allocation.size_bytes;
     } else {
         new_backing = std::addressof(*it);
     }
@@ -870,7 +874,7 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
             .newLayout = dst_layout,
             .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
             .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
-            .image = new_backing->image,
+            .image = NativeImage(new_backing->native),
             .subresourceRange{
                 .aspectMask = image->aspect_mask,
                 .baseMipLevel = 0,
@@ -884,7 +888,7 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
         // Copy between ms and non ms backing images
         blit_helper->CopyBetweenMsImages(
             info.size.width, info.size.height, new_backing->num_samples, info.pixel_format,
-            backing->num_samples > 1, backing->image, new_backing->image);
+            backing->num_samples > 1, NativeImage(backing->native), NativeImage(new_backing->native));
 
         // Update current layout in tracker to new backings layout
         new_backing->state.layout = dst_layout;

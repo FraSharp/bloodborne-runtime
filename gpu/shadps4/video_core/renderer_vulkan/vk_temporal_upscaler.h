@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
@@ -239,8 +240,8 @@ private:
     std::string ui_trace;
     bool display_redirect = false; ///< the display pass of an upscaled frame
     bool ui_read_barrier = false;
-    VideoCore::UniqueImage ui_image;
-    VideoCore::UniqueImage ui_depth_image;
+    Vulkan::UniqueImage ui_image;
+    Vulkan::UniqueImage ui_depth_image;
     vk::UniqueImageView ui_view;
     vk::UniqueImageView ui_depth_view;
     bool depth_blit = false;
@@ -259,7 +260,7 @@ private:
                          vk::ComponentMapping mapping);
     std::vector<MirrorView> ui_views;
     struct DisplayImage {
-        VideoCore::UniqueImage image;
+        Vulkan::UniqueImage image;
         std::vector<MirrorView> views;
         vk::Format format{};
         u32 width = 0, height = 0;
@@ -277,12 +278,12 @@ private:
     std::unique_ptr<MetalFxUpscaler> metalfx;
     bool fsr4_failed = false;
     bool dlss_failed = false;
-    VideoCore::UniqueImage motion_image;
-    VideoCore::UniqueImage output_image;
+    Vulkan::UniqueImage motion_image;
+    Vulkan::UniqueImage output_image;
     vk::UniqueImageView motion_view;
     vk::UniqueImageView output_view;
-    VideoCore::UniqueImage opaque_image;   ///< scene color before the blended draws
-    VideoCore::UniqueImage reactive_image; ///< R8 reactive mask
+    Vulkan::UniqueImage opaque_image;   ///< scene color before the blended draws
+    Vulkan::UniqueImage reactive_image; ///< R8 reactive mask
     vk::UniqueImageView opaque_view;
     vk::UniqueImageView reactive_view;
     vk::UniqueDescriptorSetLayout reactive_desc_layout;
@@ -291,7 +292,7 @@ private:
     vk::UniqueDescriptorSetLayout merge_desc_layout;
     vk::UniquePipelineLayout merge_pipeline_layout;
     vk::UniquePipeline merge_pipeline;
-    std::array<VideoCore::UniqueImage, 2> taa_history;
+    std::array<Vulkan::UniqueImage, 2> taa_history;
     std::array<vk::UniqueImageView, 2> taa_history_views;
     u32 taa_next = 0;
     vk::UniqueSampler taa_sampler;
@@ -304,7 +305,7 @@ private:
     vk::UniquePipeline taa_sharpen_ldr_pipeline;
     // bbport: FSR 4 in linear light on the scaled presets (fsr4_color.comp): the decoded input
     // and the passes that decode it and encode the output again.
-    VideoCore::UniqueImage fsr4_linear_image;
+    Vulkan::UniqueImage fsr4_linear_image;
     bool fsr4_linear_frame = false; ///< this frame's FSR 4 input was decoded (and the output encoded)
     vk::UniqueImageView fsr4_linear_view;
     vk::UniqueDescriptorSetLayout fsr4_decode_desc_layout;
@@ -323,7 +324,7 @@ private:
     void RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w, u32 h, u32 ow,
                             u32 oh);
     // ExtraSharpen: a copy of the upscaled frame (RCAS reads neighbours) and the target views.
-    VideoCore::UniqueImage extra_sharpen_image;
+    Vulkan::UniqueImage extra_sharpen_image;
     vk::UniqueImageView extra_sharpen_view;
     u32 extra_sharpen_width = 0, extra_sharpen_height = 0;
     vk::UniqueImageView ui_storage_view;

@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include "video_core/texture_cache/image.h"
@@ -27,10 +28,10 @@ private:
         u8 id{};
         bool dirty{true};
 
-        VideoCore::UniqueImage intermediary_image;
+        Vulkan::UniqueImage intermediary_image;
         vk::UniqueImageView intermediary_image_view;
 
-        VideoCore::UniqueImage output_image;
+        Vulkan::UniqueImage output_image;
         vk::UniqueImageView output_image_view;
     };
 

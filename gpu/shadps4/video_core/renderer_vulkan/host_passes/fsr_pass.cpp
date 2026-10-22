@@ -124,8 +124,8 @@ void FsrPass::Create(vk::Device device, VmaAllocator allocator, u32 num_images) 
     for (int i = 0; i < num_images; ++i) {
         auto& img = available_imgs[i];
         img.id = i;
-        img.intermediary_image = VideoCore::UniqueImage(device, allocator);
-        img.output_image = VideoCore::UniqueImage(device, allocator);
+        img.intermediary_image = Vulkan::UniqueImage(device, allocator);
+        img.output_image = Vulkan::UniqueImage(device, allocator);
     }
 }
 

@@ -417,7 +417,7 @@ ImageId TextureCache::ResolveDepthOverlap(const ImageInfo& requested_info, Bindi
         auto new_info = requested_info;
         new_info.resources = std::max(requested_info.resources, cache_image.info.resources);
         new_info.UpdateSize();
-        const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, new_info);
+        const auto new_image_id = slot_images.insert(device, instance, runtime, slot_image_views, new_info);
         RegisterImage(new_image_id);
 
         // Inherit image usage
@@ -670,7 +670,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 }
 
 ImageId TextureCache::ExpandImage(const ImageInfo& info, ImageId image_id) {
-    const auto new_image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+    const auto new_image_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
     RegisterImage(new_image_id);
 
     auto& src_image = slot_images[image_id];
@@ -793,7 +793,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
     }
     // Create and register a new image
     if (!image_id) {
-        image_id = slot_images.insert(instance, runtime, slot_image_views, info);
+        image_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
         RegisterImage(image_id);
     }
 
@@ -949,7 +949,7 @@ ImageView& TextureCache::FindDepthTarget(ImageId image_id, const ImageDesc& desc
             info.guest_address = desc.info.stencil_addr;
             info.guest_size = desc.info.stencil_size;
             info.size = desc.info.size;
-            stencil_id = slot_images.insert(instance, runtime, slot_image_views, info);
+            stencil_id = slot_images.insert(device, instance, runtime, slot_image_views, info);
             RegisterImage(stencil_id);
         }
         Image& stencil_image = slot_images[stencil_id];

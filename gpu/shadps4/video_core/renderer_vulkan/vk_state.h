@@ -6,6 +6,7 @@
 #include <array>
 #include <bit>
 
+#include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 
@@ -62,6 +63,18 @@ static_assert(static_cast<u32>(vk::ColorComponentFlagBits::eR) == u32(Backend::C
               static_cast<u32>(vk::ColorComponentFlagBits::eG) == u32(Backend::ColorWriteMask::G) &&
               static_cast<u32>(vk::ColorComponentFlagBits::eB) == u32(Backend::ColorWriteMask::B) &&
               static_cast<u32>(vk::ColorComponentFlagBits::eA) == u32(Backend::ColorWriteMask::A));
+static_assert(static_cast<s32>(vk::ImageType::e1D) == s32(Backend::ImageType::Image1D) &&
+              static_cast<s32>(vk::ImageType::e2D) == s32(Backend::ImageType::Image2D) &&
+              static_cast<s32>(vk::ImageType::e3D) == s32(Backend::ImageType::Image3D));
+static_assert(u32(vk::ImageUsageFlagBits::eTransferSrc) == u32(Backend::ImageUse::TransferSource) &&
+              u32(vk::ImageUsageFlagBits::eTransferDst) == u32(Backend::ImageUse::TransferDestination) &&
+              u32(vk::ImageUsageFlagBits::eSampled) == u32(Backend::ImageUse::Sampled) &&
+              u32(vk::ImageUsageFlagBits::eStorage) == u32(Backend::ImageUse::Storage) &&
+              u32(vk::ImageUsageFlagBits::eColorAttachment) == u32(Backend::ImageUse::ColorAttachment) &&
+              u32(vk::ImageUsageFlagBits::eDepthStencilAttachment) ==
+                  u32(Backend::ImageUse::DepthStencilAttachment) &&
+              u32(vk::ImageUsageFlagBits::eAttachmentFeedbackLoopEXT) ==
+                  u32(Backend::ImageUse::AttachmentFeedbackLoop));
 // Pipeline keys hold write masks; the serialized shader cache depends on their size.
 static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags));
 
@@ -104,6 +117,15 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
 }
 [[nodiscard]] constexpr vk::BorderColor ToVk(Backend::BorderColor v) noexcept {
     return static_cast<vk::BorderColor>(v);
+}
+[[nodiscard]] constexpr vk::ImageType ToVk(Backend::ImageType v) noexcept {
+    return static_cast<vk::ImageType>(v);
+}
+[[nodiscard]] constexpr vk::ImageUsageFlags ToVk(Backend::ImageUse v) noexcept {
+    return vk::ImageUsageFlags(static_cast<VkImageUsageFlags>(v));
+}
+[[nodiscard]] constexpr Backend::ImageUse FromVk(vk::ImageUsageFlags v) noexcept {
+    return static_cast<Backend::ImageUse>(static_cast<VkImageUsageFlags>(v));
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));

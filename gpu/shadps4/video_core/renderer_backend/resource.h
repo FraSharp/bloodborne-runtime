@@ -7,6 +7,7 @@
 #include <span>
 
 #include "common/types.h"
+#include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_backend/state.h"
 
 namespace VideoCore::Backend {
@@ -76,6 +77,51 @@ struct BufferAllocation {
     bool coherent{};        ///< host writes need no Device::FlushBuffer
 };
 
+// Image vocabulary, with Vulkan's values (checked in renderer_vulkan/vk_state.h).
+enum class ImageType : s32 {
+    Image1D = 0,
+    Image2D = 1,
+    Image3D = 2,
+};
+
+enum class ImageUse : u32 {
+    None = 0,
+    TransferSource = 1u << 0,
+    TransferDestination = 1u << 1,
+    Sampled = 1u << 2,
+    Storage = 1u << 3,
+    ColorAttachment = 1u << 4,
+    DepthStencilAttachment = 1u << 5,
+    AttachmentFeedbackLoop = 1u << 19, ///< read while bound as an attachment
+};
+constexpr ImageUse operator|(ImageUse a, ImageUse b) noexcept {
+    return static_cast<ImageUse>(static_cast<u32>(a) | static_cast<u32>(b));
+}
+constexpr bool Has(ImageUse uses, ImageUse use) noexcept {
+    return (static_cast<u32>(uses) & static_cast<u32>(use)) != 0;
+}
+
+struct ImageDesc {
+    ImageType type{ImageType::Image2D};
+    Format format{Format::Undefined};
+    u32 width{1}, height{1}, depth{1};
+    u32 levels{1};
+    u32 layers{1};
+    u32 samples{1};
+    ImageUse usage{ImageUse::None};
+    bool views_of_3d_slices{};       ///< a 3D image viewed as 2D slices
+    bool uncompressed_block_views{}; ///< a block-compressed image viewed as uncompressed
+
+    auto operator<=>(const ImageDesc&) const = default;
+};
+
+/// An image the device created.
+struct ImageAllocation {
+    ImageHandle handle;
+    u64 native{};     ///< Device::NativeHandle(handle)
+    u64 size_bytes{}; ///< memory it occupies
+};
+
 struct SamplerDesc {
     Filter mag_filter{Filter::Nearest};
     Filter min_filter{Filter::Nearest};
@@ -102,6 +148,7 @@ struct Capabilities {
     float max_sampler_anisotropy{1.0f}; ///< 1: anisotropic filtering unsupported
     float max_sampler_lod_bias{};
     u64 non_coherent_atom_size{1}; ///< granularity of FlushBuffer and InvalidateBuffer
+    bool attachment_feedback_loop{}; ///< ImageUse::AttachmentFeedbackLoop is available
 };
 
 } // namespace VideoCore::Backend

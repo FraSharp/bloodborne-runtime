@@ -57,6 +57,17 @@ public:
     void InvalidateBuffer(VideoCore::Backend::BufferHandle buffer, u64 offset, u64 size) override;
     [[nodiscard]] u64 NativeHandle(VideoCore::Backend::BufferHandle buffer) override;
 
+    [[nodiscard]] VideoCore::Backend::Format SupportedFormat(
+        VideoCore::Backend::Format format, VideoCore::Backend::ImageUse usage) override;
+    [[nodiscard]] u32 SupportedSampleCounts(const VideoCore::Backend::ImageDesc& desc) override;
+    [[nodiscard]] VideoCore::Backend::ImageAllocation CreateImage(
+        const VideoCore::Backend::ImageDesc& desc, std::string_view name) override;
+    void DestroyImage(VideoCore::Backend::ImageHandle image) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::ImageHandle image) override;
+
+    /// The create info the backend builds for `desc` (for Vulkan code that makes images like it).
+    [[nodiscard]] vk::ImageCreateInfo ImageCreateInfo(const VideoCore::Backend::ImageDesc& desc) const;
+
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
     void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
@@ -84,8 +95,14 @@ private:
 
     std::mutex objects_mutex;
     VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::ImageTag, UniqueImage> images;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
 };
+
+/// An image's NativeHandle as the Vulkan object.
+[[nodiscard]] inline vk::Image NativeImage(u64 native) noexcept {
+    return vk::Image{reinterpret_cast<VkImage>(native)};
+}
 
 /// A sampler's NativeHandle as the Vulkan object.
 [[nodiscard]] inline vk::Sampler NativeSampler(u64 native) noexcept {

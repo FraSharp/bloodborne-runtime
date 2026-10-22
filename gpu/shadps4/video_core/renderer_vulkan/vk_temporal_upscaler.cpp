@@ -538,7 +538,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     const auto allocator = instance.GetAllocator();
     motion_view.reset();
     output_view.reset();
-    motion_image = VideoCore::UniqueImage(device, allocator);
+    motion_image = Vulkan::UniqueImage(device, allocator);
     motion_image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR16G16Sfloat,
@@ -550,7 +550,7 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         .usage = vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled,
         .initialLayout = vk::ImageLayout::eUndefined,
     });
-    output_image = VideoCore::UniqueImage(device, allocator);
+    output_image = Vulkan::UniqueImage(device, allocator);
     output_image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR16G16B16A16Sfloat,
@@ -575,13 +575,13 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
         .format = vk::Format::eR16G16Sfloat,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
     }));
-    const auto make_image = [&](VideoCore::UniqueImage& image, vk::UniqueImageView& view,
+    const auto make_image = [&](Vulkan::UniqueImage& image, vk::UniqueImageView& view,
                                 vk::Format format, vk::ImageUsageFlags usage, u32 iw = 0,
                                 u32 ih = 0, vk::ImageAspectFlags aspect =
                                                 vk::ImageAspectFlagBits::eColor,
                                 vk::ImageCreateFlags flags = {}) {
         view.reset();
-        image = VideoCore::UniqueImage(device, allocator);
+        image = Vulkan::UniqueImage(device, allocator);
         image.Create(vk::ImageCreateInfo{
             .flags = flags,
             .imageType = vk::ImageType::e2D,
@@ -607,14 +607,14 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
     make_image(reactive_image, reactive_view, vk::Format::eR8Unorm,
                vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
     fsr4_linear_view.reset();
-    fsr4_linear_image = VideoCore::UniqueImage{};
+    fsr4_linear_image = Vulkan::UniqueImage{};
     if (use_fsr4) {
         make_image(fsr4_linear_image, fsr4_linear_view, vk::Format::eR16G16B16A16Sfloat,
                    vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled);
     }
     for (u32 i = 0; i < taa_history.size(); ++i) {
         taa_history_views[i].reset();
-        taa_history[i] = VideoCore::UniqueImage{};
+        taa_history[i] = Vulkan::UniqueImage{};
         if (use_taa) {
             make_image(taa_history[i], taa_history_views[i], vk::Format::eR32G32B32A32Sfloat,
                        vk::ImageUsageFlagBits::eStorage | vk::ImageUsageFlagBits::eSampled |
@@ -901,7 +901,7 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, fl
             view.reset();
             image.Destroy();
         });
-        extra_sharpen_image = VideoCore::UniqueImage(device, instance.GetAllocator());
+        extra_sharpen_image = Vulkan::UniqueImage(device, instance.GetAllocator());
         extra_sharpen_image.Create(vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
             .format = vk::Format::eR32G32B32A32Sfloat,
@@ -1083,7 +1083,7 @@ void TemporalUpscaler::OnSceneComposite() {
     }
     const auto device = instance.GetDevice();
     const auto color_view = Check(device.createImageView({
-        .image = vk::Image(color.backing->image),
+        .image = color.GetImage(),
         .viewType = vk::ImageViewType::e2D,
         .format = vk::Format::eR16G16B16A16Sfloat,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
@@ -1596,7 +1596,7 @@ void TemporalUpscaler::EnsureUiResources(u32 w, u32 h, vk::Format color, vk::For
         ui_views.clear();
         ui_view.reset();
         ui_storage_view.reset();
-        ui_image = VideoCore::UniqueImage(device, allocator);
+        ui_image = Vulkan::UniqueImage(device, allocator);
         ui_image.Create(vk::ImageCreateInfo{
             .flags = vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage,
             .imageType = vk::ImageType::e2D,
@@ -1613,7 +1613,7 @@ void TemporalUpscaler::EnsureUiResources(u32 w, u32 h, vk::Format color, vk::For
     }
     if (new_depth) {
         ui_depth_view.reset();
-        ui_depth_image = VideoCore::UniqueImage(device, allocator);
+        ui_depth_image = Vulkan::UniqueImage(device, allocator);
         ui_depth_image.Create(vk::ImageCreateInfo{
             .imageType = vk::ImageType::e2D,
             .format = depth,
@@ -1657,7 +1657,7 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
     vk::ImageBlit region{};
     if (copy) {
         const auto& image = texture_cache.GetImage(depth_id);
-        source = vk::Image(image.backing->image);
+        source = image.GetImage();
         region = {
             .srcSubresource = {vk::ImageAspectFlagBits::eDepth, 0, 0, 1},
             .srcOffsets = std::array{vk::Offset3D{0, 0, 0},
@@ -2189,7 +2189,7 @@ bool TemporalUpscaler::RedirectColor(VideoCore::ImageId color,
         display.format = ToVk(image.info.pixel_format);
         display.width = ui_width;
         display.height = ui_height;
-        display.image = VideoCore::UniqueImage(device, instance.GetAllocator());
+        display.image = Vulkan::UniqueImage(device, instance.GetAllocator());
         display.image.Create(vk::ImageCreateInfo{
             .flags = vk::ImageCreateFlagBits::eMutableFormat,
             .imageType = vk::ImageType::e2D,

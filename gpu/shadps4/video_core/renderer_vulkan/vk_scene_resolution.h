@@ -6,6 +6,7 @@
 #include <functional>
 #include <unordered_map>
 #include <unordered_set>
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/scene_resolution.h"
 #include "video_core/texture_cache/image.h"
 
@@ -70,7 +71,7 @@ private:
         VideoCore::ImageId source{};
         u64 uid = 0;
         u32 level = 0; ///< mip level of the native image this proxy stands for
-        VideoCore::UniqueImage image;
+        Vulkan::UniqueImage image;
         std::vector<std::pair<VideoCore::ImageViewInfo, vk::UniqueImageView>> views;
         vk::ImageLayout layout = vk::ImageLayout::eUndefined;
         SceneResolution::Coherence state;

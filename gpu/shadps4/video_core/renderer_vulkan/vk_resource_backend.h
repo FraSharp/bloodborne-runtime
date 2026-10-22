@@ -16,6 +16,58 @@ struct VmaAllocationInfo;
 
 namespace Vulkan {
 
+/// A VkImage and its VMA allocation: the texture cache's images (owned by the render adapter's
+/// Vulkan backend) and the backend's own (upscalers, scene proxies).
+struct UniqueImage {
+    explicit UniqueImage() = default;
+    explicit UniqueImage(vk::Device device, VmaAllocator allocator)
+        : device{device}, allocator{allocator} {}
+    ~UniqueImage();
+
+    UniqueImage(const UniqueImage&) = delete;
+    UniqueImage& operator=(const UniqueImage&) = delete;
+
+    UniqueImage(UniqueImage&& other)
+        : allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
+          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
+          image{std::exchange(other.image, VK_NULL_HANDLE)}, image_ci{std::move(other.image_ci)},
+          size_bytes{std::exchange(other.size_bytes, 0)} {}
+    UniqueImage& operator=(UniqueImage&& other) {
+        if (this == &other) return *this;
+        Destroy();
+        device = other.device;
+        image = std::exchange(other.image, VK_NULL_HANDLE);
+        allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
+        allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
+        image_ci = std::move(other.image_ci);
+        size_bytes = std::exchange(other.size_bytes, 0);
+        return *this;
+    }
+
+    void Create(const vk::ImageCreateInfo& image_ci);
+
+    void Destroy();
+
+    operator vk::Image() const {
+        return image;
+    }
+
+    operator bool() const {
+        return image;
+    }
+
+public:
+    vk::Device device{};
+    VmaAllocator allocator{};
+    VmaAllocation allocation{};
+    vk::Image image{};
+    vk::ImageCreateInfo image_ci{};
+    vk::DeviceSize size_bytes{};
+};
+
+/// The format features an image with these usages needs (format substitution).
+vk::FormatFeatureFlags2 FormatFeatureFlags(vk::ImageUsageFlags usage_flags);
+
 /// A VkBuffer and its VMA allocation, owned by the render adapter's Vulkan backend.
 struct UniqueBuffer {
     explicit UniqueBuffer(vk::Device device, VmaAllocator allocator);

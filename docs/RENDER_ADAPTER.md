@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers and
-buffers done; images and views next). The decisions are at the end.
+**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers,
+buffers and images done; views next). The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -186,6 +186,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   backend; `VideoCore::Buffer` keeps its interface and its native handle for Vulkan code that
   still records directly (until A3/A4). Every buffer is created from a `BufferDesc`. Metal API
   validation was clean on both renderers; 29.8 FPS (MoltenVK) and 36.4 (Metal) in plain runs.
+- **A2, images:** `ImageDesc` (type, format, extent, levels, layers, samples, usage, and whether
+  3D images are viewed as 2D slices or compressed images as uncompressed),
+  `Device::CreateImage`, deferred `DestroyImage`, `SupportedFormat` and `SupportedSampleCounts`.
+  Each of the texture cache's backing images keeps its handle and the description it was
+  created from (the backing for another sample count is the same description); Vulkan code
+  reads that description instead of a `vk::ImageCreateInfo`. `UniqueImage` lives in the Vulkan
+  backend, where the upscalers and scene proxies keep using it for their own images. The
+  aspect, usage and format-feature fields the barriers use stay until A3. Validation was clean;
+  image memory and frame time were unchanged (Metal, alternating with the previous commit:
+  34.6 and 36.0 FPS against 33.8 and 37.0).
 
 ## Decisions
 
