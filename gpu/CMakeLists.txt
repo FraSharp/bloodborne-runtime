@@ -190,26 +190,27 @@ if (APPLE)
     target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
     target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
 
-    # Precompile Metal kernels for FSR 4.1.1 at build time (.metallib)
-    find_program(XCRUN xcrun)
-    if (XCRUN)
-        set(METALLIB_DIR ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal)
-        add_custom_command(
-            OUTPUT ${METALLIB_DIR}/fsr411_helpers.metallib
-            COMMAND ${XCRUN} -sdk macosx metal -std=macos-metal2.3 -c ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_helpers.metal -o ${CMAKE_CURRENT_BINARY_DIR}/fsr411_helpers.air
-            COMMAND ${XCRUN} -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/fsr411_helpers.air -o ${METALLIB_DIR}/fsr411_helpers.metallib
-            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_helpers.metal
-            VERBATIM
-        )
-        add_custom_command(
-            OUTPUT ${METALLIB_DIR}/fsr411_simd.metallib
-            COMMAND ${XCRUN} -sdk macosx metal -std=metal3.0 -I${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal -DFSR411_SPECIALIZE=1 -c ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_simd.metal -o ${CMAKE_CURRENT_BINARY_DIR}/fsr411_simd.air
-            COMMAND ${XCRUN} -sdk macosx metallib ${CMAKE_CURRENT_BINARY_DIR}/fsr411_simd.air -o ${METALLIB_DIR}/fsr411_simd.metallib
-            DEPENDS ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_simd.metal ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/fsr411_model.h
-            VERBATIM
-        )
-        add_custom_target(fsr4_metal_metallibs DEPENDS ${METALLIB_DIR}/fsr411_helpers.metallib ${METALLIB_DIR}/fsr411_simd.metallib)
-        add_dependencies(bbgpu fsr4_metal_metallibs)
+    # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
+    # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
+    # in deps/ (scripts/macos/build-deps.sh). Without them FSR 4.1.1 reports itself unavailable.
+    set(BB_FSR4_NATIVE_SRC "$ENV{BB_FSR4_NATIVE_SRC}" CACHE PATH "fsr4-native-macos tree")
+    if (NOT BB_FSR4_NATIVE_SRC)
+        set(BB_FSR4_NATIVE_SRC ${CMAKE_PREFIX_PATH}/share/fsr4-native-macos)
+    endif()
+    set(BB_FSR4_METAL_OUT ${CMAKE_BINARY_DIR}/../fsr4_metal)
+    if (EXISTS ${BB_FSR4_NATIVE_SRC}/tools/compile_fsr411.py AND EXISTS ${BB_FSR4_NATIVE_SRC}/tools/bin/dxc)
+        file(GLOB BB_FSR4_METAL_SOURCES ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.metal
+             ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.h ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/*.py)
+        add_custom_command(OUTPUT ${BB_FSR4_METAL_OUT}/.built
+            COMMAND Python3::Interpreter ${CMAKE_CURRENT_SOURCE_DIR}/fsr4_metal/build_assets.py
+                    --src ${BB_FSR4_NATIVE_SRC} --out ${BB_FSR4_METAL_OUT}
+            COMMAND ${CMAKE_COMMAND} -E touch ${BB_FSR4_METAL_OUT}/.built
+            DEPENDS ${BB_FSR4_METAL_SOURCES} VERBATIM)
+        add_custom_target(fsr4_metal_assets DEPENDS ${BB_FSR4_METAL_OUT}/.built)
+        add_dependencies(bbgpu fsr4_metal_assets)
+    else()
+        message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
+                        "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
     endif()
     # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
     # at run time, so nothing links against it; ARC is required by the ObjC objects.

@@ -1263,6 +1263,8 @@ void TemporalUpscaler::Run() {
     } else if (UseFsr4()) {
         dispatched = RecordFsr4(cmdbuf, {input_color, input_color_view, w, h},
                                 {input_depth, input_depth_view, w, h}, w, h, ow, oh, frame_ms);
+        // FSR 4.1.1 on Metal (vk_fsr4_metal) submits the frame so far.
+        cmdbuf = scheduler.CommandBuffer();
         if (dispatched && has_reactive) {
             RecordFsr4Reactive(cmdbuf, input_color_view, w, h, ow, oh);
         }
@@ -1962,6 +1964,8 @@ void TemporalUpscaler::RunScaled() {
             ok4 = RecordFsr4(cmdbuf, input,
                             {depth_image, depth_view, source_width, source_height}, w, h, ow,
                             oh, frame_ms);
+            // FSR 4.1.1 on Metal (vk_fsr4_metal) submits the frame so far.
+            cmdbuf = scheduler.CommandBuffer();
             if (ok4 && fsr4_linear_frame) {
                 const vk::MemoryBarrier2 upscaled{
                     .srcStageMask = all, .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite,

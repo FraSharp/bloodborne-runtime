@@ -1,9 +1,24 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+// bbport: FSR 4.1.1 on Metal (macOS), from fsr4-native-macos (gpu/fsr4_metal/VENDOR.txt). The
+// scene's color, depth and motion images are MoltenVK's own MTLTextures (VK_EXT_metal_objects),
+// read and written in place on its MTLDevice, in a command queue of this upscaler's own.
+//
+// Ordering (Events, the default): the frame so far is submitted and FSR waits for it on the GPU
+// through the scheduler's timeline exported as an MTLSharedEvent; FSR then signals a timeline of
+// its own, and the next submission waits for it before a full barrier, which orders everything
+// after it in submission order. No CPU waits. Without shared events (or BB_FSR4_METAL_SYNC=1) the
+// GPU thread finishes the frame so far and waits for FSR. Callers fetch CommandBuffer() again.
+//
+// The kernels and the models' layouts are built with the runtime (gpu/fsr4_metal/build_assets.py:
+// metallibs, bindings, native manifests); AMD's initializers stay with the player
+// (BB_FSR411_DIR, the player's data folder), as for the Vulkan FSR 4.1.1 path.
 #include "video_core/renderer_vulkan/vk_fsr4_metal.h"
 
 #ifdef __APPLE__
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <cstdio>
+#include <cstdlib>
 #include <vulkan/vulkan_metal.h>
 
 #include "bbport_toggles.h"
@@ -14,6 +29,15 @@
 namespace Vulkan {
 
 namespace {
+
+bool EnvOn(const char* name) {
+    const char* value = std::getenv(name);
+    return value && value[0] == '1';
+}
+
+bool Exists(const std::string& path) {
+    return [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:path.c_str()]];
+}
 
 id<MTLTexture> ExportTexture(VkDevice device, PFN_vkExportMetalObjectsEXT export_fn, VkImage image) {
     if (!device || !export_fn || !image) return nil;
@@ -30,86 +54,32 @@ id<MTLTexture> ExportTexture(VkDevice device, PFN_vkExportMetalObjectsEXT export
     return tex_info.mtlTexture;
 }
 
-std::string ResolveFsr4AssetDir() {
-    if (const char* env = std::getenv("BB_FSR4_NATIVE_DIR")) {
-        if (env[0] && [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:env]]) {
-            return env;
+/// The built kernels and model layouts: BB_FSR4_METAL_DIR, the app's game/fsr4_metal, or the
+/// runtime's out/fsr4_metal (run.sh from a source tree).
+std::string AssetDir() {
+    if (const char* env = std::getenv("BB_FSR4_METAL_DIR"); env && env[0] && Exists(env)) {
+        return env;
+    }
+    for (NSString* path in @[[[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil
+                                                         inDirectory:@"game"] ?: @"",
+                              @"fsr4_metal", @"out/fsr4_metal"]) {
+        if (path.length && [[NSFileManager defaultManager] fileExistsAtPath:path]) {
+            return path.UTF8String;
         }
     }
-    if (const char* env = std::getenv("BB_FSR411_DIR")) {
-        if (env[0] && [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:env]]) {
-            return env;
-        }
-    }
-    NSMutableArray<NSString*>* candidates = [NSMutableArray array];
-    NSString* p1 = [[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil inDirectory:@"game"];
-    if (p1) [candidates addObject:p1];
-    NSString* p2 = [[NSBundle mainBundle] pathForResource:@"fsr4_metal" ofType:nil];
-    if (p2) [candidates addObject:p2];
-    [candidates addObject:@"fsr4_metal"];
-    [candidates addObject:@"gpu/fsr4_metal"];
-    [candidates addObject:@"../gpu/fsr4_metal"];
-    [candidates addObject:@"runtime/gpu/fsr4_metal"];
-    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
-        if (env[0]) [candidates addObject:[NSString stringWithFormat:@"%s/fsr4_metal", env]];
-    }
-    for (NSString* path in candidates) {
-        if ([[NSFileManager defaultManager] fileExistsAtPath:path]) {
-            return [path UTF8String];
-        }
-    }
-    return "gpu/fsr4_metal";
+    return "fsr4_metal";
 }
 
-std::string ResolveFsr4CacheDir() {
-    std::string cache_dir;
-    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
-        if (env[0]) cache_dir = std::string(env) + "/fsr4_cache";
+/// AMD's 4.1.1 initializers (initializers.bin, initializers-ultraperformance.bin): the player's,
+/// never shipped. BB_FSR411_DIR, else BB_GPU_USER_DIR/fsr4_411, else fsr4_411 (run.sh's folder).
+std::vector<std::string> InitializerDirs() {
+    std::vector<std::string> dirs;
+    if (const char* env = std::getenv("BB_FSR411_DIR"); env && env[0]) dirs.emplace_back(env);
+    if (const char* env = std::getenv("BB_GPU_USER_DIR"); env && env[0]) {
+        dirs.push_back(std::string(env) + "/fsr4_411");
     }
-    if (cache_dir.empty()) {
-        if (const char* env = std::getenv("BB_DATA_DIR")) {
-            if (env[0]) cache_dir = std::string(env) + "/user/fsr4_cache";
-        }
-    }
-    if (cache_dir.empty()) {
-        NSArray<NSString*>* paths = NSSearchPathForDirectoriesInDomains(NSCachesDirectory, NSUserDomainMask, YES);
-        NSString* base = paths.count ? paths.firstObject : [NSString stringWithUTF8String:"/tmp"];
-        cache_dir = [[base stringByAppendingPathComponent:@"bloodborne_mac/fsr4_cache"] UTF8String];
-    }
-    [[NSFileManager defaultManager] createDirectoryAtPath:[NSString stringWithUTF8String:cache_dir.c_str()]
-                              withIntermediateDirectories:YES attributes:nil error:nil];
-    return cache_dir;
-}
-
-bool HasFsr4Initializer(const std::string& asset_dir) {
-    std::vector<std::string> candidates;
-    if (const char* env = std::getenv("BB_FSR411_DIR")) {
-        if (env[0]) {
-            candidates.push_back(std::string(env) + "/initializers.bin");
-            candidates.push_back(std::string(env) + "/t1080_m0/initializer.bin");
-            candidates.push_back(std::string(env) + "/initializer.bin");
-        }
-    }
-    if (const char* env = std::getenv("BB_GPU_USER_DIR")) {
-        if (env[0]) {
-            candidates.push_back(std::string(env) + "/fsr4_411/initializers.bin");
-            candidates.push_back(std::string(env) + "/fsr4_411/t1080_m0/initializer.bin");
-            candidates.push_back(std::string(env) + "/fsr4_411/initializer.bin");
-        }
-    }
-    candidates.push_back(asset_dir + "/initializers.bin");
-    candidates.push_back(asset_dir + "/fsr411/initializers.bin");
-    candidates.push_back(asset_dir + "/t1080_m0/initializer.bin");
-    candidates.push_back("fsr4_411/initializers.bin");
-    candidates.push_back("fsr4_411/t1080_m0/initializer.bin");
-    candidates.push_back("fsr4_411/initializer.bin");
-    for (const auto& path : candidates) {
-        NSDictionary* attrs = [[NSFileManager defaultManager] attributesOfItemAtPath:[NSString stringWithUTF8String:path.c_str()] error:nil];
-        if (attrs && [attrs fileSize] == 131072) {
-            return true;
-        }
-    }
-    return false;
+    dirs.emplace_back("fsr4_411");
+    return dirs;
 }
 
 class Fsr4MetalBackendImpl final : public Fsr4MetalBackend {
@@ -119,77 +89,125 @@ public:
         InitMetal();
     }
 
-    ~Fsr4MetalBackendImpl() override = default;
+    ~Fsr4MetalBackendImpl() override {
+        if (last_ && !last_completed()) {
+            [last_ waitUntilCompleted];
+        }
+        if (done_semaphore_) {
+            // Submissions that wait for it may still be in flight.
+            scheduler_.Finish();
+            instance_.GetDevice().destroySemaphore(done_semaphore_);
+        }
+    }
 
     bool Record(const Fsr4Upscaler::Frame& frame) override {
-        if (!valid_ || !runtime_ || !view_) {
-            problem_ = "FSR 4.1.1 Metal backend not initialized";
+        if (!valid_) {
+            return false;
+        }
+        if (last_ && last_.status == MTLCommandBufferStatusError) {
+            problem_ = "Metal FSR 4.1.1 failed on the GPU: " +
+                       std::string(last_.error.localizedDescription.UTF8String ?: "unknown error");
+            return false;
+        }
+        id<MTLTexture> color = ExportTexture(vk_device_, export_objects_, frame.color.image);
+        id<MTLTexture> depth = ExportTexture(vk_device_, export_objects_, frame.depth.image);
+        id<MTLTexture> motion = ExportTexture(vk_device_, export_objects_, frame.motion.image);
+        id<MTLTexture> output = ExportTexture(vk_device_, export_objects_, frame.output.image);
+        if (!color || !depth || !motion || !output) {
+            problem_ = "MoltenVK did not export the images' MTLTextures (VK_EXT_metal_objects)";
             return false;
         }
 
-        // bbport: Flush Vulkan commands recorded up to this point so Metal reads the current frame
-        scheduler_.Flush();
-
-        // Export underlying Metal textures from MoltenVK Vulkan images
-        id<MTLTexture> color_tex = ExportTexture(vk_device_, export_objects_, frame.color.image);
-        id<MTLTexture> depth_tex = ExportTexture(vk_device_, export_objects_, frame.depth.image);
-        id<MTLTexture> motion_tex = ExportTexture(vk_device_, export_objects_, frame.motion.image);
-        id<MTLTexture> output_tex = ExportTexture(vk_device_, export_objects_, frame.output.image);
-
-        if (!color_tex || !depth_tex || !motion_tex || !output_tex) {
-            problem_ = "Failed to export Metal textures via VK_EXT_metal_objects";
-            return false;
-        }
-
-        id<MTLCommandBuffer> cmd_buf = [queue_ commandBuffer];
-        if (!cmd_buf) {
-            problem_ = "Failed to create Metal command buffer";
-            return false;
-        }
-
-        fsr411::Frame mtl_frame{};
-        mtl_frame.color = color_tex;
-        mtl_frame.depth = depth_tex;
-        mtl_frame.motion = motion_tex;
-        mtl_frame.output = output_tex;
-
-        Fsr4InputDesc& desc = mtl_frame.input;
-        desc.rw = frame.render_width;
-        desc.rh = frame.render_height;
-        desc.uw = frame.output.width;
-        desc.uh = frame.output.height;
-        desc.jitterX = frame.jitter[0];
-        desc.jitterY = frame.jitter[1];
-        desc.mvScaleX = 1.0f;
-        desc.mvScaleY = BbToggle::Disabled(BbToggle::Fsr4MotionYFlip) ? -1.0f : 1.0f;
-        desc.preExposure = 1.0f;
-        desc.reset = frame.reset ? 1 : 0;
-        desc.depthReversed = 1; // Bloodborne/shadps4 uses reversed depth (1 -> near, 0 -> far)
-        desc.autoExposure = frame.auto_exposure ? 1 : 0;
-        desc.outputResMV = 0;
-        desc.jitteredMV = 0;
-
-        desc.geometry.color = { (uint32_t)color_tex.width, (uint32_t)color_tex.height, 0, 0 };
-        desc.geometry.depth = { (uint32_t)depth_tex.width, (uint32_t)depth_tex.height, 0, 0 };
-        desc.geometry.motion = { (uint32_t)motion_tex.width, (uint32_t)motion_tex.height, 0, 0 };
-        desc.geometry.output = { (uint32_t)output_tex.width, (uint32_t)output_tex.height, 0, 0 };
+        fsr411::Frame mtl{};
+        mtl.color = color;
+        mtl.depth = depth;
+        mtl.motion = motion;
+        mtl.output = output;
+        // The conventions of the Vulkan FSR 4.1.1 path (vk_fsr4.cpp Record411) and of FSR 3.1 and
+        // DLSS here: motion vectors in render pixels, previous minus current position, not
+        // jittered, at the render size (motion scale 1, Y flipped by toggle Fsr4MotionYFlip);
+        // jitter in render pixels as given; colour not pre-exposed; depth 0 at the near plane
+        // (vk_camera_motion.cpp: depth = zs + zo / z), so not reversed.
+        Fsr4InputDesc& in = mtl.input;
+        in.rw = frame.render_width;
+        in.rh = frame.render_height;
+        in.uw = frame.output.width;
+        in.uh = frame.output.height;
+        in.jitterX = frame.jitter[0];
+        in.jitterY = frame.jitter[1];
+        in.mvScaleX = 1.0f;
+        in.mvScaleY = BbToggle::Disabled(BbToggle::Fsr4MotionYFlip) ? -1.0f : 1.0f;
+        in.preExposure = 1.0f;
+        in.reset = frame.reset ? 1 : 0;
+        in.depthReversed = 0;
+        in.jitteredMV = 0;
+        in.outputResMV = 0;
+        in.autoExposure = frame.auto_exposure ? 1 : 0;
+        in.inputContentProperties = -1;
+        in.geometry.color = {uint32_t(color.width), uint32_t(color.height), 0, 0};
+        in.geometry.depth = {uint32_t(depth.width), uint32_t(depth.height), 0, 0};
+        in.geometry.motion = {uint32_t(motion.width), uint32_t(motion.height), 0, 0};
+        in.geometry.output = {uint32_t(output.width), uint32_t(output.height), 0, 0};
 
         fsr411::Options options{};
         options.backend = fsr411::Backend::Auto;
-        options.profile = fsr411::Profile::Lossy; // Default high-performance Lossy profile
-        options.sharpness = frame.sharpen ? frame.sharpness : 0.0f;
-        options.rcas = frame.sharpen && frame.sharpness > 0.0f;
+        options.profile = fsr411::Profile::Lossy;
         options.ultraPerformance = frame.preset >= 4;
+        options.rcas = frame.sharpen && frame.sharpness > 0.0f;
+        options.sharpness = options.rcas ? frame.sharpness : 0.0f;
 
-        std::string err;
-        if (!runtime_->encode(cmd_buf, *view_, mtl_frame, options, err)) {
-            problem_ = "Metal encode failed: " + err;
+        // The writes of the passes before FSR, and the output's earlier readers, before the
+        // submission that FSR waits for.
+        constexpr auto rw = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
+        const vk::MemoryBarrier2 full{
+            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .srcAccessMask = rw,
+            .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+            .dstAccessMask = rw,
+        };
+        scheduler_.CommandBuffer().pipelineBarrier2(
+            {.memoryBarrierCount = 1, .pMemoryBarriers = &full});
+
+        const u64 inputs_tick = scheduler_.CurrentTick();
+        if (events_) {
+            scheduler_.Flush();
+        } else {
+            scheduler_.Finish();
+        }
+        id<MTLCommandBuffer> cmd = [queue_ commandBuffer];
+        if (!cmd) {
+            problem_ = "cannot create a Metal command buffer";
             return false;
         }
-
-        [cmd_buf commit];
-        // bbport: wait for Metal upscaler pass to complete before subsequent Vulkan passes execute
-        [cmd_buf waitUntilCompleted];
+        if (events_) {
+            [cmd encodeWaitForEvent:work_event_ value:inputs_tick];
+        }
+        std::string error;
+        if (!runtime_->encode(cmd, *view_, mtl, options, error)) {
+            // Nothing was committed: the next submission does not wait.
+            problem_ = "Metal FSR 4.1.1: " + error;
+            return false;
+        }
+        if (events_) {
+            [cmd encodeSignalEvent:done_event_ value:++done_value_];
+        }
+        [cmd commit];
+        last_ = cmd;
+        if (events_) {
+            // FSR's output and everything after it in submission order wait for FSR.
+            SubmitInfo info{};
+            info.AddWait(done_semaphore_, done_value_);
+            scheduler_.CommandBuffer().pipelineBarrier2(
+                {.memoryBarrierCount = 1, .pMemoryBarriers = &full});
+            scheduler_.Flush(info);
+        } else {
+            [cmd waitUntilCompleted];
+        }
+        if (const std::string label = view_->backendLabel; label != described_) {
+            described_ = label;
+            std::printf("Upscaler: FSR 4.1.1 on Metal, %s, %ux%u -> %ux%u%s\n", label.c_str(),
+                        in.rw, in.rh, in.uw, in.uh, events_ ? "" : " (synchronous)");
+        }
         problem_.clear();
         return true;
     }
@@ -199,48 +217,85 @@ public:
     }
 
 private:
+    bool last_completed() const {
+        return last_.status == MTLCommandBufferStatusCompleted ||
+               last_.status == MTLCommandBufferStatusError;
+    }
+
     void InitMetal() {
         if (!instance_.IsMetalObjectsSupported()) {
-            problem_ = "MoltenVK lacks VK_EXT_metal_objects extension";
+            problem_ = "the Vulkan driver lacks VK_EXT_metal_objects (MoltenVK has it)";
             return;
         }
-
         vk_device_ = instance_.GetDevice();
         export_objects_ = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
             instance_.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
         if (!export_objects_) {
-            problem_ = "vkExportMetalObjectsEXT function pointer is null";
+            problem_ = "vkExportMetalObjectsEXT is missing";
             return;
         }
-
         VkExportMetalDeviceInfoEXT device_info{
             .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
         };
-        VkExportMetalCommandQueueInfoEXT queue_info{
-            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_COMMAND_QUEUE_INFO_EXT,
-            .pNext = &device_info,
-            .queue = instance_.GetGraphicsQueue(),
-        };
         VkExportMetalObjectsInfoEXT objects{
             .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
-            .pNext = &queue_info,
+            .pNext = &device_info,
         };
         export_objects_(vk_device_, &objects);
-
         device_ = device_info.mtlDevice;
-        queue_ = queue_info.mtlCommandQueue;
-
-        if (!device_ || !queue_) {
-            problem_ = "Failed to export MTLDevice or MTLCommandQueue";
+        if (!device_) {
+            problem_ = "MoltenVK did not export its MTLDevice";
             return;
         }
-
-        std::string root = ResolveFsr4AssetDir();
-        std::string build_dir = ResolveFsr4CacheDir();
-
-        runtime_ = std::make_unique<fsr411::Runtime>(device_, root, build_dir);
+        // FSR's own queue: its wait for the Vulkan work never blocks MoltenVK's queue.
+        queue_ = [device_ newCommandQueue];
+        if (!queue_) {
+            problem_ = "cannot create a Metal command queue";
+            return;
+        }
+        SetUpEvents();
+        runtime_ = std::make_unique<fsr411::Runtime>(device_, AssetDir(), InitializerDirs());
         view_ = std::make_unique<fsr411::View>();
         valid_ = true;
+    }
+
+    void SetUpEvents() {
+        if (EnvOn("BB_FSR4_METAL_SYNC")) {
+            std::printf("Upscaler: FSR 4.1.1 on Metal synchronous (BB_FSR4_METAL_SYNC=1)\n");
+            return;
+        }
+        const auto device = instance_.GetDevice();
+        const vk::SemaphoreTypeCreateInfo timeline{
+            .semaphoreType = vk::SemaphoreType::eTimeline,
+            .initialValue = 0,
+        };
+        const auto created = device.createSemaphore({.pNext = &timeline});
+        if (created.result != vk::Result::eSuccess) {
+            return;
+        }
+        done_semaphore_ = created.value;
+        const auto event_of = [&](vk::Semaphore semaphore) -> id<MTLSharedEvent> {
+            VkExportMetalSharedEventInfoEXT event_info{
+                .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_SHARED_EVENT_INFO_EXT,
+                .semaphore = static_cast<VkSemaphore>(semaphore),
+            };
+            VkExportMetalObjectsInfoEXT info{
+                .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
+                .pNext = &event_info,
+            };
+            export_objects_(vk_device_, &info);
+            return event_info.mtlSharedEvent;
+        };
+        done_event_ = event_of(done_semaphore_);
+        work_event_ = event_of(scheduler_.GetWorkSemaphore()->Handle());
+        if (!done_event_ || !work_event_) {
+            std::printf("Upscaler: FSR 4.1.1 on Metal synchronous (no shared events)\n");
+            device.destroySemaphore(done_semaphore_);
+            done_semaphore_ = vk::Semaphore{};
+            done_event_ = work_event_ = nil;
+            return;
+        }
+        events_ = true;
     }
 
     const Instance& instance_;
@@ -249,37 +304,51 @@ private:
     PFN_vkExportMetalObjectsEXT export_objects_{nullptr};
     id<MTLDevice> device_{nil};
     id<MTLCommandQueue> queue_{nil};
+    id<MTLCommandBuffer> last_{nil};
+    bool events_{false};
+    vk::Semaphore done_semaphore_{}; ///< timeline signalled by Metal (done_event_)
+    id<MTLSharedEvent> done_event_{nil};
+    id<MTLSharedEvent> work_event_{nil}; ///< the scheduler's timeline
+    u64 done_value_{0};
     std::unique_ptr<fsr411::Runtime> runtime_;
     std::unique_ptr<fsr411::View> view_;
     bool valid_{false};
     std::string problem_;
+    std::string described_;
 };
 
 } // namespace
 
 bool Fsr4MetalBackend::IsSupported(const Instance& instance) {
-    if (!instance.IsMetalObjectsSupported()) {
-        return false;
-    }
-    id<MTLDevice> device = MTLCreateSystemDefaultDevice();
-    if (!device || ![device supportsFamily:MTLGPUFamilyApple7]) {
-        return false;
-    }
-    std::string root = ResolveFsr4AssetDir();
-    bool has_helpers = [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_helpers.metallib").c_str()]] ||
-                       [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_helpers.metal").c_str()]];
-    bool has_simd = [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_simd.metallib").c_str()]] ||
-                    [[NSFileManager defaultManager] fileExistsAtPath:[NSString stringWithUTF8String:(root + "/fsr411_simd.metal").c_str()]];
-    if (!has_helpers || !has_simd) {
-        return false;
-    }
-    if (!HasFsr4Initializer(root)) {
-        return false;
-    }
-    return true;
+    // Once per run: the files do not change while the game runs, and this is asked every frame.
+    static const std::string reason = [&]() -> std::string {
+        if (!instance.IsMetalObjectsSupported()) {
+            return "the Vulkan driver lacks VK_EXT_metal_objects (MoltenVK has it)";
+        }
+        id<MTLDevice> device = MTLCreateSystemDefaultDevice();
+        if (!device || ![device supportsFamily:MTLGPUFamilyApple7]) {
+            return "needs an Apple M1 or newer GPU";
+        }
+        std::string why;
+        if (!fsr411::Runtime::assets_ready(AssetDir(), InitializerDirs(), why)) {
+            return why;
+        }
+        return {};
+    }();
+    static const bool logged = [] {
+        if (reason.empty()) {
+            std::printf("Upscaler: FSR 4.1.1 on Metal available\n");
+        } else {
+            std::printf("Upscaler: FSR 4.1.1 on Metal unavailable: %s\n", reason.c_str());
+        }
+        return true;
+    }();
+    (void)logged;
+    return reason.empty();
 }
 
-std::unique_ptr<Fsr4MetalBackend> Fsr4MetalBackend::Create(const Instance& instance, Scheduler& scheduler) {
+std::unique_ptr<Fsr4MetalBackend> Fsr4MetalBackend::Create(const Instance& instance,
+                                                           Scheduler& scheduler) {
     return std::make_unique<Fsr4MetalBackendImpl>(instance, scheduler);
 }
 
