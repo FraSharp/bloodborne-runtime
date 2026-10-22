@@ -34,11 +34,8 @@ these were investigated. Run-by-run logs of the investigations are in this file'
   [app issue #3](https://github.com/bloodborne-native/bloodborne-mac/issues/3). Its signature
   differs from the fixed GX worker fault. It has not been reproduced or confirmed fixed; a
   nearby save and repeat steps are needed.
-- **White flashes in the opening video**, seen in about half of the observed openings; playback
-  completes. Clear deferral, the draw pipeline, preparation workers, GPU-completion locking and
-  the clock repair did not remove them. Cause unknown.
-- **Pale blood decals** and **an enemy's body drawn as colour noise** (reported 2026-10-19,
-  older): probably one wet/blood effect.
+- **Pale blood after a save reload.** Blood on enemies already killed when the save is reloaded
+  can appear pale with bright edges instead of dark red. The cause has not been isolated.
 - **Missing objects or character parts after death reloads** on the translator, not under
   Rosetta 2 (2026-10-15): a candidate bbcpu translation bug; not seen since the pool fix, not
   retested separately.
@@ -47,6 +44,11 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 
 Seen during development and not reproduced since; count each new occurrence with its build and
 run:
+
+- A short white flash in the opening video was seen in older runs but has not recurred recently.
+  No fix has been confirmed.
+- One enemy's body was drawn as colour noise after it attacked the player (reported 2026-10-19).
+  It has not recurred recently; no fix has been confirmed.
 
 | Message | Times | Last |
 |---|---|---|
