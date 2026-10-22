@@ -35,7 +35,8 @@ Changes taken from other ports of bbport, with thanks:
   (GPL-2.0-or-later, `ee3120a`, through the former): the Metal backend's shader compiler, shader
   rewrites, pipeline-state cache and Vulkan-to-Metal tables (`video_core/renderer_metal/`), the
   pipeline-key split, the shared blend rules, the shadow check, the Vulkan-to-Metal command layer
-  and frame encoder ([Native renderer](NATIVE_RENDERER.md)).
+  and frame encoder ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated
+  draws drawn one instance at a time.
 
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
   (GPL-2.0-or-later, `79d44f0`, authored by Ambrose): the per-user trophy event persistence
