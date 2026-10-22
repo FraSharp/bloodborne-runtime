@@ -3,12 +3,14 @@
 
 #pragma once
 
+#include <memory>
 #include <mutex>
 
 #include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/handle_table.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
+#include "video_core/texture_cache/image.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace Frontend {
@@ -100,10 +102,16 @@ private:
 
     std::mutex objects_mutex;
     VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
-    VideoCore::Backend::HandleTable<VideoCore::Backend::ImageTag, UniqueImage> images;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::ImageTag, std::unique_ptr<ImageRecord>>
+        images;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
 };
+
+/// The barrier state of an image backing created by this backend.
+[[nodiscard]] inline ImageState& ImageStateOf(const VideoCore::Image::BackingImage& backing) {
+    return *static_cast<ImageState*>(backing.backend_state);
+}
 
 /// An image's NativeHandle as the Vulkan object.
 [[nodiscard]] inline vk::Image NativeImage(u64 native) noexcept {

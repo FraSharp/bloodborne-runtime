@@ -85,10 +85,6 @@ struct Image {
 
     ImageView& FindView(const ImageViewInfo& view_info, bool ensure_guest_samples = true);
 
-    using Barriers = boost::container::small_vector<vk::ImageMemoryBarrier2, 32>;
-    void GetBarriers(Barriers& out_barriers, vk::ImageLayout dst_layout, vk::AccessFlags2 dst_mask,
-                     vk::PipelineStageFlags2 dst_stage,
-                     std::optional<SubresourceRange> subres_range = {});
 
 public:
     struct BackingImage;
@@ -139,11 +135,6 @@ public:
 
     vk::ImageUsageFlags usage_flags;
     vk::FormatFeatureFlags2 format_features;
-    struct State {
-        vk::PipelineStageFlags2 pl_stage = vk::PipelineStageFlagBits2::eAllCommands;
-        vk::AccessFlags2 access_mask = vk::AccessFlagBits2::eNone;
-        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
-    };
     /// One allocation of the image (another sample count gets another backing), created through
     /// the render adapter (docs/RENDER_ADAPTER.md, A2).
     struct BackingImage {
@@ -151,8 +142,9 @@ public:
         u64 native{};
         Backend::ImageDesc desc; ///< as created: the supported format and sample count
         u64 size_bytes{};
-        State state;
-        std::vector<State> subresource_states;
+        /// The backend's state of this allocation (Backend::ImageAllocation::backend_state):
+        /// the Vulkan backend's layouts and last accesses (vk_resource_backend.h).
+        void* backend_state{};
         boost::container::small_vector<ImageViewInfo, 4> image_view_infos;
         boost::container::small_vector<ImageViewId, 4> image_view_ids;
         u32 last_view = 0; ///< bbport: index of the view FindView returned last

@@ -4118,7 +4118,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             }
 
             vk::ImageView view = image_view.Handle();
-            vk::ImageLayout layout = image.backing->state.layout;
+            vk::ImageLayout layout = ImageStateOf(*image.backing).state.layout;
             if (upscaler->Enabled()) {
                 // bbport: the display pass reads the upscaled frame (scaled presets).
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
@@ -4336,7 +4336,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
                                     : vk::ImageLayout::eShaderReadOnlyOptimal;
         barrier |= runtime.Transit(&image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
                                    vk::AccessFlagBits2::eShaderRead, entry.range);
-        image_infos.emplace_back(VK_NULL_HANDLE, entry.view, image.backing->state.layout);
+        image_infos.emplace_back(VK_NULL_HANDLE, entry.view, ImageStateOf(*image.backing).state.layout);
     }
     (void)first_image_idx;
     return true;
@@ -4559,7 +4559,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             is_clear ? LiverpoolToVK::ColorBufferClearValue(col_buf) : vk::ClearValue{};
         auto& attachment = state.color_attachments[cb];
         attachment.image_view = image_view.Handle();
-        attachment.image_layout = image->backing->state.layout;
+        attachment.image_layout = ImageStateOf(*image->backing).state.layout;
         attachment.clear_value = clear_value.color.uint32;
         attachment.is_clear = is_clear;
         if (takes_clear) {
@@ -4624,7 +4624,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         auto& attachment = state.depth_stencil_attachment;
         attachment.image_view = image_view.Handle();
-        attachment.image_layout = image.backing->state.layout;
+        attachment.image_layout = ImageStateOf(*image.backing).state.layout;
         attachment.clear_value = {};
         attachment.is_clear = 0;
 
@@ -4696,7 +4696,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                 auto& depth_image = texture_cache.GetImage(db_desc.first);
                 state.depth_stencil_attachment.image_view =
                     texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Handle();
-                state.depth_stencil_attachment.image_layout = depth_image.backing->state.layout;
+                state.depth_stencil_attachment.image_layout = ImageStateOf(*depth_image.backing).state.layout;
             }
         } else {
             state.width = redirect.width;
@@ -4761,7 +4761,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             auto& attachment = state.color_attachments[cb];
             attachment.is_clear = false;
             attachment.clear_value = {};
-            attachment.image_layout = image.backing->state.layout;
+            attachment.image_layout = ImageStateOf(*image.backing).state.layout;
         }
         taken_clears.erase(taken_clears.begin() + k);
     }

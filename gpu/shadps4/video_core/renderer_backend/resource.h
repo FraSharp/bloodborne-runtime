@@ -195,6 +195,9 @@ struct ImageAllocation {
     ImageHandle handle;
     u64 native{};     ///< Device::NativeHandle(handle)
     u64 size_bytes{}; ///< memory it occupies
+    /// The backend's own record of the image (its barrier state), at a fixed address until the
+    /// image is destroyed; only the backend reads it.
+    void* backend_state{};
 };
 
 struct SamplerDesc {

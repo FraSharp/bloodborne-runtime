@@ -249,15 +249,17 @@ u32 BackendDevice::SupportedSampleCounts(const Backend::ImageDesc& desc) {
 
 Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& desc,
                                                     std::string_view name) {
-    UniqueImage image{instance.GetDevice(), instance.GetAllocator()};
-    image.Create(ImageCreateInfo(desc));
-    SetObjectName(instance.GetDevice(), image.image, name);
+    auto record = std::make_unique<ImageRecord>();
+    record->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
+    record->image.Create(ImageCreateInfo(desc));
+    SetObjectName(instance.GetDevice(), record->image.image, name);
     Backend::ImageAllocation result{
-        .native = reinterpret_cast<u64>(static_cast<VkImage>(image.image)),
-        .size_bytes = image.size_bytes,
+        .native = reinterpret_cast<u64>(static_cast<VkImage>(record->image.image)),
+        .size_bytes = record->image.size_bytes,
+        .backend_state = &record->state,
     };
     std::scoped_lock lock{objects_mutex};
-    result.handle = images.Insert(std::move(image));
+    result.handle = images.Insert(std::move(record));
     return result;
 }
 
@@ -265,10 +267,10 @@ void BackendDevice::DestroyImage(Backend::ImageHandle image) {
     if (!image) {
         return;
     }
-    UniqueImage object{};
+    std::unique_ptr<ImageRecord> object;
     {
         std::scoped_lock lock{objects_mutex};
-        UniqueImage* entry = images.Get(image);
+        std::unique_ptr<ImageRecord>* entry = images.Get(image);
         if (!entry) {
             return;
         }
@@ -280,8 +282,8 @@ void BackendDevice::DestroyImage(Backend::ImageHandle image) {
 
 u64 BackendDevice::NativeHandle(Backend::ImageHandle image) {
     std::scoped_lock lock{objects_mutex};
-    const UniqueImage* entry = images.Get(image);
-    return entry ? reinterpret_cast<u64>(static_cast<VkImage>(entry->image)) : 0;
+    const std::unique_ptr<ImageRecord>* entry = images.Get(image);
+    return entry ? reinterpret_cast<u64>(static_cast<VkImage>((*entry)->image.image)) : 0;
 }
 
 Backend::ImageViewAllocation BackendDevice::CreateImageView(Backend::ImageHandle image,
@@ -290,9 +292,9 @@ Backend::ImageViewAllocation BackendDevice::CreateImageView(Backend::ImageHandle
     vk::Image native_image{};
     {
         std::scoped_lock lock{objects_mutex};
-        const UniqueImage* entry = images.Get(image);
+        const std::unique_ptr<ImageRecord>* entry = images.Get(image);
         ASSERT_MSG(entry, "Creating a view of a destroyed image");
-        native_image = entry->image;
+        native_image = (*entry)->image.image;
     }
     vk::ImageViewUsageCreateInfo usage_ci{.usage = ToVk(desc.usage)};
     vk::ImageViewMinLodCreateInfoEXT min_lod_ci{.minLod = desc.min_lod};

@@ -5,6 +5,7 @@
 #include <array>
 #include <cstdio>
 #include <cstdlib>
+#include <ranges>
 #include <boost/container/small_vector.hpp>
 #include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
@@ -277,6 +278,117 @@ void Runtime::InlineData(VideoCore::Buffer* dst, u64 offset, u32 value) {
                  vk::AccessFlagBits2::eTransferWrite);
 }
 
+void Runtime::ImageBarriers(VideoCore::Image& image, vk::ImageLayout dst_layout,
+                            vk::AccessFlags2 dst_mask, vk::PipelineStageFlags2 dst_stage,
+                            std::optional<VideoCore::SubresourceRange> subres_range) {
+    using VideoCore::SubresourceBase;
+    auto& barriers = image_barriers;
+    const auto& info = image.info;
+    const auto aspect_mask = image.aspect_mask;
+    ImageState& image_state = ImageStateOf(*image.backing);
+    auto& last_state = image_state.state;
+    auto& subresource_states = image_state.subresource_states;
+
+    const bool needs_partial_transition =
+        subres_range &&
+        (subres_range->base != SubresourceBase{} || subres_range->extent != info.resources);
+    const bool partially_transited = !subresource_states.empty();
+
+    if (needs_partial_transition || partially_transited) {
+        if (!partially_transited) {
+            subresource_states.resize(info.resources.levels * info.resources.layers);
+            std::fill(subresource_states.begin(), subresource_states.end(), last_state);
+        }
+
+        // In case of partial transition, we need to change the specified subresources only.
+        // Otherwise all subresources need to be set to the same state so we can use a full
+        // resource transition for the next time.
+        const auto mips =
+            needs_partial_transition
+                ? std::ranges::views::iota(subres_range->base.level,
+                                           subres_range->base.level + subres_range->extent.levels)
+                : std::views::iota(0u, info.resources.levels);
+        const auto layers =
+            needs_partial_transition
+                ? std::ranges::views::iota(subres_range->base.layer,
+                                           subres_range->base.layer + subres_range->extent.layers)
+                : std::views::iota(0u, info.resources.layers);
+
+        for (u32 mip : mips) {
+            for (u32 layer : layers) {
+                // NOTE: these loops may produce a lot of small barriers.
+                // If this becomes a problem, we can optimize it by merging adjacent barriers.
+                const auto subres_idx = mip * info.resources.layers + layer;
+                ASSERT(subres_idx < subresource_states.size());
+                auto& state = subresource_states[subres_idx];
+
+                constexpr auto write_flags = vk::AccessFlagBits2::eTransferWrite |
+                                             vk::AccessFlagBits2::eShaderWrite |
+                                             vk::AccessFlagBits2::eMemoryWrite;
+                const bool is_write = static_cast<bool>(state.access_mask & write_flags);
+                if (state.layout != dst_layout || state.access_mask != dst_mask || is_write) {
+                    barriers.emplace_back(vk::ImageMemoryBarrier2{
+                        .srcStageMask = state.pl_stage,
+                        .srcAccessMask = state.access_mask,
+                        .dstStageMask = dst_stage,
+                        .dstAccessMask = dst_mask,
+                        .oldLayout = state.layout,
+                        .newLayout = dst_layout,
+                        .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+                        .image = image.GetImage(),
+                        .subresourceRange{
+                            .aspectMask = aspect_mask,
+                            .baseMipLevel = mip,
+                            .levelCount = 1,
+                            .baseArrayLayer = layer,
+                            .layerCount = 1,
+                        },
+                    });
+                    state.layout = dst_layout;
+                    state.access_mask = dst_mask;
+                    state.pl_stage = dst_stage;
+                }
+            }
+        }
+
+        if (!needs_partial_transition) {
+            subresource_states.clear();
+        }
+    } else { // Full resource transition
+        constexpr auto write_flags = vk::AccessFlagBits2::eTransferWrite |
+                                     vk::AccessFlagBits2::eShaderWrite |
+                                     vk::AccessFlagBits2::eMemoryWrite;
+        const bool is_write = static_cast<bool>(last_state.access_mask & write_flags);
+        if (last_state.layout == dst_layout && last_state.access_mask == dst_mask && !is_write) {
+            return;
+        }
+
+        barriers.emplace_back(vk::ImageMemoryBarrier2{
+            .srcStageMask = last_state.pl_stage,
+            .srcAccessMask = last_state.access_mask,
+            .dstStageMask = dst_stage,
+            .dstAccessMask = dst_mask,
+            .oldLayout = last_state.layout,
+            .newLayout = dst_layout,
+            .srcQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .dstQueueFamilyIndex = VK_QUEUE_FAMILY_IGNORED,
+            .image = image.GetImage(),
+            .subresourceRange{
+                .aspectMask = aspect_mask,
+                .baseMipLevel = 0,
+                .levelCount = VK_REMAINING_MIP_LEVELS,
+                .baseArrayLayer = 0,
+                .layerCount = VK_REMAINING_ARRAY_LAYERS,
+            },
+        });
+    }
+
+    last_state.layout = dst_layout;
+    last_state.access_mask = dst_mask;
+    last_state.pl_stage = dst_stage;
+}
+
 bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                       vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {
@@ -294,7 +406,7 @@ bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
     }
     if (scene_targets) scene_targets->NativeAccess(*image, dst_access);
     const size_t prev_num_barriers = static_cast<size_t>(image_barriers.size());
-    image->GetBarriers(image_barriers, dst_layout, dst_access, dst_stage, subres_range);
+    ImageBarriers(*image, dst_layout, dst_access, dst_stage, subres_range);
     return image_barriers.size() != prev_num_barriers;
 }
 
@@ -885,6 +997,7 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
         new_backing->handle = allocation.handle;
         new_backing->native = allocation.native;
         new_backing->size_bytes = allocation.size_bytes;
+        new_backing->backend_state = allocation.backend_state;
     } else {
         new_backing = std::addressof(*it);
     }
@@ -928,9 +1041,10 @@ void Runtime::SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool c
             backing->num_samples > 1, NativeImage(backing->native), NativeImage(new_backing->native));
 
         // Update current layout in tracker to new backings layout
-        new_backing->state.layout = dst_layout;
-        new_backing->state.access_mask = dst_access;
-        new_backing->state.pl_stage = dst_stage;
+        ImageState& new_state = ImageStateOf(*new_backing);
+        new_state.state.layout = dst_layout;
+        new_state.state.access_mask = dst_access;
+        new_state.state.pl_stage = dst_stage;
     }
 
     backing = new_backing;

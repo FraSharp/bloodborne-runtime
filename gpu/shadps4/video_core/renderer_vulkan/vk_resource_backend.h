@@ -4,6 +4,7 @@
 #pragma once
 
 #include <utility>
+#include <vector>
 
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_backend/resource.h"
@@ -63,6 +64,25 @@ public:
     vk::Image image{};
     vk::ImageCreateInfo image_ci{};
     vk::DeviceSize size_bytes{};
+};
+
+/// The Vulkan backend's barrier state of one texture-cache image allocation: its layout and last
+/// access, for the whole image or per subresource after a partial transition.
+struct ImageState {
+    struct State {
+        vk::PipelineStageFlags2 pl_stage = vk::PipelineStageFlagBits2::eAllCommands;
+        vk::AccessFlags2 access_mask = vk::AccessFlagBits2::eNone;
+        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+    };
+    State state;
+    std::vector<State> subresource_states;
+};
+
+/// A texture-cache image allocation as the backend keeps it: at a fixed address, so the image's
+/// backing reaches its state without a lookup.
+struct ImageRecord {
+    UniqueImage image;
+    ImageState state;
 };
 
 /// The format features an image with these usages needs (format substitution).

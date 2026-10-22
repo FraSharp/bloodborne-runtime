@@ -145,6 +145,11 @@ public:
     }
 
 private:
+    /// Appends the barriers that bring `image`'s current backing to the given use (its state is
+    /// the backend's ImageState).
+    void ImageBarriers(VideoCore::Image& image, vk::ImageLayout dst_layout,
+                       vk::AccessFlags2 dst_mask, vk::PipelineStageFlags2 dst_stage,
+                       std::optional<VideoCore::SubresourceRange> subres_range);
     void RecordClear(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
                      const vk::ClearColorValue& color);
     void (*image_access_hook)(void*) = nullptr;
@@ -154,7 +159,7 @@ private:
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;
     StagingBufferPool staging_pool;
     BarrierTracker barrier_tracker;
-    VideoCore::Image::Barriers image_barriers;
+    boost::container::small_vector<vk::ImageMemoryBarrier2, 32> image_barriers;
     vk::MemoryBarrier2 memory_barrier{};
     bool global_write = false; ///< bbport: AccessGlobal wrote since the last FlushBarriers
     // bbport: ranges inserted into barrier_tracker since its last Clear(); re-inserting a

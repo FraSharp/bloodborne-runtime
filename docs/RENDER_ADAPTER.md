@@ -2,9 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0, A1 and A2 are done; A3 is in progress
-(the caches follow the GPU through the device and describe copies in the adapter's
-structures; access declarations next). The decisions are at the end.
+**State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is next.
+The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -139,7 +138,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A0 ✓ | Adapter headers; a Vulkan backend that wraps today's objects; `Device` owns instance, queue and VMA | No behavior change; FPS and p90 unchanged in alternating runs |
 | A1 ✓ | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
 | A2 ✓ | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
-| A3 | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
+| A3 ✓ | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
 | A4 | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
 | A5 | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
 | A6 | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
@@ -213,6 +212,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   texture caches build them, and `Runtime` converts them where it records. The readback
   queue and the tile manager (Vulkan code) convert at their calls. A frame grabbed from each
   build in the same scene matched; 37.1 FPS against 36.5 on Metal, 29.5 on MoltenVK.
+- **A3, barrier state:** each image allocation's layouts and last accesses (`ImageState`) live
+  in the Vulkan backend's record of it (`ImageRecord`, at a fixed address); the backing keeps
+  an opaque pointer, so a transition costs no lookup. Computing barriers moved from
+  `VideoCore::Image` into `Runtime`. The texture and buffer caches no longer name a layout,
+  stage or access mask. The rasterizer still transitions images with Vulkan's vocabulary; its
+  access declarations come with A4. Validation was clean; frames grabbed on Metal and MoltenVK
+  were correct; alternating Metal pairs 36.7 and 35.6 FPS against 35.9 and 36.3, recording
+  4.3–4.6 µs per draw against 4.5–4.9.
 
 ## Decisions
 
