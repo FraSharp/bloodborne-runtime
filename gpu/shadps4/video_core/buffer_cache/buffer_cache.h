@@ -367,7 +367,7 @@ private:
     static void RunGuestCopy(const BbCopy::Item& item);
     void SmallGuestCopy(const BbCopy::Item& item);
 
-    const Buffer* UploadCopies(const Buffer* arena, std::span<vk::BufferCopy> copies,
+    const Buffer* UploadCopies(const Buffer* arena, std::span<Backend::BufferCopy> copies,
                                size_t total_size_bytes);
 
     /// `offset`: where device_addr is in `buffer` (an arena, or the unified memory pool).

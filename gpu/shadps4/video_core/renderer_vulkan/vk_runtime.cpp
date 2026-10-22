@@ -12,6 +12,7 @@
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -114,6 +115,42 @@ Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
 
 void Runtime::TickFrame() {
     staging_pool.TickFrame();
+}
+
+namespace {
+template <typename Out, typename In>
+boost::container::small_vector<Out, 8> ConvertRegions(std::span<const In> in) {
+    boost::container::small_vector<Out, 8> out;
+    out.reserve(in.size());
+    for (const In& region : in) {
+        out.push_back(ToVk(region));
+    }
+    return out;
+}
+} // namespace
+
+void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                         std::span<const VideoCore::Backend::BufferCopy> copies) {
+    const auto regions = ConvertRegions<vk::BufferCopy>(copies);
+    CopyBuffer(src, dst, std::span<const vk::BufferCopy>{regions});
+}
+
+void Runtime::CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
+                                 std::span<const VideoCore::Backend::BufferCopy> copies) {
+    const auto regions = ConvertRegions<vk::BufferCopy>(copies);
+    CopyFromGuestChunk(src, dst, std::span<const vk::BufferCopy>{regions});
+}
+
+void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
+                          std::span<const VideoCore::Backend::BufferImageCopy> upload_copies) {
+    const auto regions = ConvertRegions<vk::BufferImageCopy>(upload_copies);
+    UploadImage(dst, src, std::span<const vk::BufferImageCopy>{regions});
+}
+
+void Runtime::DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
+                            std::span<const VideoCore::Backend::BufferImageCopy> download_copies) {
+    const auto regions = ConvertRegions<vk::BufferImageCopy>(download_copies);
+    DownloadImage(src, dst, std::span<const vk::BufferImageCopy>{regions});
 }
 
 void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,

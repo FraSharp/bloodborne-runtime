@@ -569,7 +569,7 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
         for (const auto& old : touching) {
             auto* old_buffer = static_cast<Buffer*>(old.owner);
             moved.emplace_back(old.base >> block_shift, (old.base + old.size) >> block_shift);
-            boost::container::small_vector<vk::BufferCopy, 8> copies;
+            boost::container::small_vector<Backend::BufferCopy, 8> copies;
             Layer().ForEachValid(old.base >> block_shift, (old.base + old.size) >> block_shift,
                                  [&](u64 v_first, u64 v_end) {
                                      const VAddr from = v_first << block_shift;
@@ -658,7 +658,7 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
                 auto* buffer = static_cast<Buffer*>(mirror->owner);
                 gpu_modified_ranges.ForEachInRange(from, bytes, [&](VAddr w_from, VAddr w_to) {
                     if (const auto target = LayerInPlace(w_from, w_to - w_from)) {
-                        const vk::BufferCopy copy{buffer->Offset(w_from), target->second,
+                        const Backend::BufferCopy copy{buffer->Offset(w_from), target->second,
                                                   w_to - w_from};
                         runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                     }
@@ -861,7 +861,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
             const u64 size = (b - a) << block_shift;
             auto mirror = std::make_unique<Buffer>(device, base, size, MemoryType::DeviceLocal,
                                                    fmt::format("bbport mirror {:#x}+{:#x}", base, size));
-            boost::container::small_vector<vk::BufferCopy, 8> copies;
+            boost::container::small_vector<Backend::BufferCopy, 8> copies;
             Layer().ForEachValid(a, b, [&](u64 v_first, u64 v_end) {
                 const VAddr from = v_first << block_shift;
                 copies.push_back({old_buffer->Offset(from), mirror->Offset(from),
@@ -1049,7 +1049,7 @@ void BufferCache::LayerWriteEntries(u64 first, u64 end) {
     // Keep the original current-view table layout for DMA/ReadConst users too; append the
     // guest-view table in the second half rather than interleaving its entries.
     const u64 bytes = (end - first) * sizeof(vk::DeviceAddress);
-    const std::array<vk::BufferCopy, 2> copies{{
+    const std::array<Backend::BufferCopy, 2> copies{{
         {staging.offset, first * sizeof(vk::DeviceAddress), bytes},
         {staging.offset + bytes, bda_pagetable_buffer->SizeBytes() / 2 +
                                     first * sizeof(vk::DeviceAddress), bytes},
@@ -1276,7 +1276,7 @@ void BufferCache::LayerCopyBack(u64 first, u64 end) {
         auto* buffer = static_cast<Buffer*>(mirror->owner);
         gpu_modified_ranges.ForEachInRange(from, bytes, [&](VAddr w_from, VAddr w_to) {
             if (const auto target = LayerInPlace(w_from, w_to - w_from)) {
-                const vk::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
+                const Backend::BufferCopy copy{buffer->Offset(w_from), target->second, w_to - w_from};
                 runtime.CopyBuffer(buffer, target->first, std::span{&copy, 1});
                 layer_copied_back_bytes += w_to - w_from;
                 layer_copy_back_tick = device.CurrentTick();

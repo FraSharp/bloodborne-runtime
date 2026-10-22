@@ -170,6 +170,26 @@ struct ImageViewAllocation {
     u64 native{}; ///< Device::NativeHandle(handle)
 };
 
+/// A region copied between buffers (bytes).
+struct BufferCopy {
+    u64 src_offset{};
+    u64 dst_offset{};
+    u64 size{};
+};
+
+/// A region copied between a buffer and an image.
+struct BufferImageCopy {
+    u64 buffer_offset{};
+    u32 buffer_row_length{};   ///< texels per row in the buffer; 0: tightly packed
+    u32 buffer_image_height{}; ///< rows per slice in the buffer; 0: tightly packed
+    ImageAspect aspect{ImageAspect::Color};
+    u32 level{};
+    u32 base_layer{};
+    u32 layers{1};
+    s32 x{}, y{}, z{};
+    u32 width{1}, height{1}, depth{1};
+};
+
 /// An image the device created.
 struct ImageAllocation {
     ImageHandle handle;

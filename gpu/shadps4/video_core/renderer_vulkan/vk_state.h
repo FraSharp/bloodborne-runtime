@@ -159,6 +159,24 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
 [[nodiscard]] constexpr vk::ComponentMapping ToVk(const Backend::ComponentMapping& m) noexcept {
     return {ToVk(m.r), ToVk(m.g), ToVk(m.b), ToVk(m.a)};
 }
+[[nodiscard]] constexpr vk::BufferCopy ToVk(const Backend::BufferCopy& c) noexcept {
+    return {c.src_offset, c.dst_offset, c.size};
+}
+[[nodiscard]] constexpr vk::BufferImageCopy ToVk(const Backend::BufferImageCopy& c) noexcept {
+    return vk::BufferImageCopy{
+        .bufferOffset = c.buffer_offset,
+        .bufferRowLength = c.buffer_row_length,
+        .bufferImageHeight = c.buffer_image_height,
+        .imageSubresource{
+            .aspectMask = ToVk(c.aspect),
+            .mipLevel = c.level,
+            .baseArrayLayer = c.base_layer,
+            .layerCount = c.layers,
+        },
+        .imageOffset = {c.x, c.y, c.z},
+        .imageExtent = {c.width, c.height, c.depth},
+    };
+}
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));
 }

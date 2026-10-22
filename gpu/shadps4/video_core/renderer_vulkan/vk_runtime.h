@@ -42,6 +42,16 @@ public:
     void TickFrame();
     SceneTargets* scene_targets = nullptr;
 
+    // The render adapter's regions (docs/RENDER_ADAPTER.md, A3), converted where recorded.
+    void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                    std::span<const VideoCore::Backend::BufferCopy> copies);
+    void CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
+                            std::span<const VideoCore::Backend::BufferCopy> copies);
+    void UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
+                     std::span<const VideoCore::Backend::BufferImageCopy> upload_copies);
+    void DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
+                       std::span<const VideoCore::Backend::BufferImageCopy> download_copies);
+
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
                     std::span<const vk::BufferCopy> copies);
 

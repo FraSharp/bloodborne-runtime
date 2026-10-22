@@ -3,7 +3,8 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0, A1 and A2 are done; A3 is in progress
-(the caches follow the GPU through the device; commands next). The decisions are at the end.
+(the caches follow the GPU through the device and describe copies in the adapter's
+structures; access declarations next). The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -208,6 +209,10 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   The blit helper, tile manager and fault manager are Vulkan code inside the caches' folders
   and keep the scheduler until their work moves into the backend. Same frame time
   (alternating Metal pairs: 35.9 and 36.2 FPS against 36.3 and 36.1).
+- **A3, copy regions:** `BufferCopy` and `BufferImageCopy` are the adapter's; the buffer and
+  texture caches build them, and `Runtime` converts them where it records. The readback
+  queue and the tile manager (Vulkan code) convert at their calls. A frame grabbed from each
+  build in the same scene matched; 37.1 FPS against 36.5 on Metal, 29.5 on MoltenVK.
 
 ## Decisions
 

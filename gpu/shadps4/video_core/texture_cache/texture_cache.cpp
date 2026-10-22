@@ -19,6 +19,7 @@
 #include "core/memory.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -195,20 +196,18 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     const u32 download_size = image.info.pitch * image.info.size.height * image.info.size.depth *
                               image.info.resources.layers * (image.info.num_bits / 8);
     ASSERT(download_size <= image.info.guest_size);
-    vk::BufferImageCopy image_copy = {
-        .bufferOffset = 0,
-        .bufferRowLength = image.info.pitch,
-        .bufferImageHeight = image.info.size.height,
-        .imageSubresource =
-            {
-                .aspectMask = image.info.props.is_depth ? vk::ImageAspectFlagBits::eDepth
-                                                        : vk::ImageAspectFlagBits::eColor,
-                .mipLevel = 0,
-                .baseArrayLayer = 0,
-                .layerCount = image.info.resources.layers,
-            },
-        .imageOffset = {0, 0, 0},
-        .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
+    Backend::BufferImageCopy image_copy = {
+        .buffer_offset = 0,
+        .buffer_row_length = image.info.pitch,
+        .buffer_image_height = image.info.size.height,
+        .aspect = image.info.props.is_depth ? Backend::ImageAspect::Depth
+                                            : Backend::ImageAspect::Color,
+        .level = 0,
+        .base_layer = 0,
+        .layers = image.info.resources.layers,
+        .width = image.info.size.width,
+        .height = image.info.size.height,
+        .depth = image.info.size.depth,
     };
     // bbport BB_GUEST_IN_PLACE: the GPU copies the image into the game's memory itself, in stream
     // order: before the fences that follow, no wait here and no CPU copy afterwards.
@@ -219,7 +218,7 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     if (GuestInPlace() && image.info.guest_address != 0) {
         const auto [arena, offset] =
             buffer_cache.ObtainBuffer(image.info.guest_address, download_size, true);
-        image_copy.bufferOffset = offset;
+        image_copy.buffer_offset = offset;
         runtime.DownloadImage(&image, arena, std::span{&image_copy, 1});
         if (buffer_cache.IsInPlace(image.info.guest_address, download_size)) {
             return;
@@ -227,20 +226,18 @@ void TextureCache::DownloadImageMemory(ImageId image_id, bool sync) {
     }
     const auto download =
         runtime.GetStagingPool().Request(download_size, MemoryType::HostCached, 16, !sync);
-    const vk::BufferImageCopy image_download = {
-        .bufferOffset = download.offset,
-        .bufferRowLength = image.info.pitch,
-        .bufferImageHeight = image.info.size.height,
-        .imageSubresource =
-            {
-                .aspectMask = image.info.props.is_depth ? vk::ImageAspectFlagBits::eDepth
-                                                        : vk::ImageAspectFlagBits::eColor,
-                .mipLevel = 0,
-                .baseArrayLayer = 0,
-                .layerCount = image.info.resources.layers,
-            },
-        .imageOffset = {0, 0, 0},
-        .imageExtent = {image.info.size.width, image.info.size.height, image.info.size.depth},
+    const Backend::BufferImageCopy image_download = {
+        .buffer_offset = download.offset,
+        .buffer_row_length = image.info.pitch,
+        .buffer_image_height = image.info.size.height,
+        .aspect = image.info.props.is_depth ? Backend::ImageAspect::Depth
+                                            : Backend::ImageAspect::Color,
+        .level = 0,
+        .base_layer = 0,
+        .layers = image.info.resources.layers,
+        .width = image.info.size.width,
+        .height = image.info.size.height,
+        .depth = image.info.size.depth,
     };
     runtime.DownloadImage(&image, download.buffer, std::span{&image_download, 1});
     if (sync) {
@@ -1036,7 +1033,7 @@ void TextureCache::RefreshImage(Image& image) {
         }
     }
     BbStats::image_upload_bytes.fetch_add(image.info.guest_size, std::memory_order_relaxed);
-    boost::container::small_vector<vk::BufferImageCopy, 14> image_copies;
+    boost::container::small_vector<Backend::BufferImageCopy, 14> image_copies;
     const bool baseline = UploadBaselinesEnabled();
     const bool protect = is_gpu_modified && !is_gpu_dirty;
     const bool writable = image.usage.storage || image.usage.render_target ||
@@ -1084,17 +1081,16 @@ void TextureCache::RefreshImage(Image& image) {
         const u32 extent_width = mip_pitch ? std::min(mip_pitch, width) : width;
         const u32 extent_height = mip_height ? std::min(mip_height, height) : height;
         image_copies.push_back({
-            .bufferOffset = mip_offset,
-            .bufferRowLength = mip_pitch,
-            .bufferImageHeight = mip_height,
-            .imageSubresource{
-                .aspectMask = image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil,
-                .mipLevel = m,
-                .baseArrayLayer = 0,
-                .layerCount = num_layers,
-            },
-            .imageOffset = {0, 0, 0},
-            .imageExtent = {extent_width, extent_height, depth},
+            .buffer_offset = mip_offset,
+        .buffer_row_length = mip_pitch,
+        .buffer_image_height = mip_height,
+        .aspect = Vulkan::FromVk(image.aspect_mask & ~vk::ImageAspectFlagBits::eStencil),
+        .level = m,
+        .base_layer = 0,
+        .layers = num_layers,
+        .width = extent_width,
+        .height = extent_height,
+        .depth = depth,
         });
     }
 
@@ -1110,7 +1106,7 @@ void TextureCache::RefreshImage(Image& image) {
         buffer_cache.ObtainBufferForImage(image.info.guest_address, image.info.guest_size);
     const auto [buffer, offset] = tile_manager.DetileImage(in_buffer, in_offset, image.info);
     for (auto& copy : image_copies) {
-        copy.bufferOffset += offset;
+        copy.buffer_offset += offset;
     }
 
     runtime.UploadImage(&image, buffer, image_copies);
