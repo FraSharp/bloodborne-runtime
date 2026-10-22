@@ -17,8 +17,11 @@
 #ifdef __APPLE__
 #import <Foundation/Foundation.h>
 #import <Metal/Metal.h>
+#include <algorithm>
 #include <cstdio>
 #include <cstdlib>
+#include <memory>
+#include <mutex>
 #include <vulkan/vulkan_metal.h>
 
 #include "bbport_toggles.h"
@@ -71,14 +74,16 @@ std::string AssetDir() {
 }
 
 /// AMD's 4.1.1 initializers (initializers.bin, initializers-ultraperformance.bin): the player's,
-/// never shipped. BB_FSR411_DIR, else BB_GPU_USER_DIR/fsr4_411, else fsr4_411 (run.sh's folder).
+/// never shipped (tools/fsr4_metal_initializers.sh takes them from their own AMD DLL). The
+/// folders run.sh uses for the Vulkan FSR 4.1.1 path: BB_FSR411_DIR, fsr4_411 next to run.sh,
+/// BB_DATA_DIR/fsr4_411.
 std::vector<std::string> InitializerDirs() {
     std::vector<std::string> dirs;
     if (const char* env = std::getenv("BB_FSR411_DIR"); env && env[0]) dirs.emplace_back(env);
-    if (const char* env = std::getenv("BB_GPU_USER_DIR"); env && env[0]) {
+    dirs.emplace_back("fsr4_411");
+    if (const char* env = std::getenv("BB_DATA_DIR"); env && env[0]) {
         dirs.push_back(std::string(env) + "/fsr4_411");
     }
-    dirs.emplace_back("fsr4_411");
     return dirs;
 }
 
@@ -191,6 +196,13 @@ public:
         if (events_) {
             [cmd encodeSignalEvent:done_event_ value:++done_value_];
         }
+        // GPU time of each FSR command buffer, averaged in the log every 600 frames.
+        std::shared_ptr<Timing> timing = timing_; // outlives this backend if it must
+        [cmd addCompletedHandler:^(id<MTLCommandBuffer> done) {
+            if (done.status == MTLCommandBufferStatusCompleted && done.GPUEndTime > done.GPUStartTime) {
+                timing->Add((done.GPUEndTime - done.GPUStartTime) * 1000.0);
+            }
+        }];
         [cmd commit];
         last_ = cmd;
         if (events_) {
@@ -217,6 +229,24 @@ public:
     }
 
 private:
+    /// Upscaler GPU time (Metal's GPUStartTime/GPUEndTime), from Metal's completion thread.
+    struct Timing {
+        std::mutex mutex;
+        double sum = 0, worst = 0;
+        u32 frames = 0;
+        void Add(double ms) {
+            std::scoped_lock lock{mutex};
+            sum += ms;
+            worst = std::max(worst, ms);
+            if (++frames == 600) {
+                std::printf("Upscaler: FSR 4.1.1 on Metal GPU time %.2f ms a frame (worst %.2f ms, "
+                            "600 frames)\n", sum / frames, worst);
+                sum = worst = 0;
+                frames = 0;
+            }
+        }
+    };
+
     bool last_completed() const {
         return last_.status == MTLCommandBufferStatusCompleted ||
                last_.status == MTLCommandBufferStatusError;
@@ -315,6 +345,7 @@ private:
     bool valid_{false};
     std::string problem_;
     std::string described_;
+    std::shared_ptr<Timing> timing_ = std::make_shared<Timing>();
 };
 
 } // namespace

@@ -6,7 +6,7 @@
  * launcher's controls (below). --device: "vendorID<tab>name" of the GPU the game takes (run.sh:
  * memory model and driver workarounds by vendor and chip). --fsr411 DIR: "1" when FSR 4.1.1 on
  * Metal can run (an Apple Silicon GPU, the files the runtime's build put in DIR, AMD's initializer
- * with the right SHA-256 in BB_FSR411_DIR or BB_GPU_USER_DIR/fsr4_411), else "0<tab>reason"
+ * with the right SHA-256 in BB_FSR411_DIR or BB_DATA_DIR/fsr4_411), else "0<tab>reason"
  * (the launcher's upscaler list; the runtime checks the same in vk_fsr4_metal.mm). */
 #include <stdio.h>
 #include <stdlib.h>
@@ -275,7 +275,7 @@ static int fsr411_support(const char *assets) {
         printf("1\n");
         return 0;
     }
-    const char *user = getenv("BB_GPU_USER_DIR");
+    const char *user = getenv("BB_DATA_DIR");
     if (user && user[0]) {
         snprintf(path, sizeof path, "%s/fsr4_411", user);
         if (initializer_ok(path, expected)) {

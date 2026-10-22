@@ -123,7 +123,9 @@ On macOS, MetalFX or FSR 4.1.1 on Metal (`gpu/fsr4_metal/`, from fsr4-native-mac
 instead. FSR 4.1.1 runs on MoltenVK's own textures in a Metal queue of its own, ordered against
 the Vulkan work by shared events; its kernels and model layouts are built with the runtime
 (`gpu/fsr4_metal/build_assets.py`), and AMD's initializers stay in the player's folder
-(`BB_FSR411_DIR`): the menu offers it only when both are there.
+(`BB_FSR411_DIR`; `tools/fsr4_metal_initializers.sh` takes them from the player's own AMD DLL):
+the menu offers it only when both are there. On an M3 Pro it costs 4.8 ms of GPU time a frame at
+1080p output (Balanced), about 13% of the frame rate against FSR 3.1.
 The other route, live resolution, keeps the game at 1920×1080 and scales the renderer's targets
 while it runs (`live_resolution` in the settings).
 

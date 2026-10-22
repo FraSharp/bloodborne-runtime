@@ -309,7 +309,7 @@ public:
             }
         }
         error = wrong ? "AMD's " + name + " is not the FSR 4.1.1.2740 one"
-                      : "AMD's " + name + " is missing (tools/fetch_fsr4_assets.sh, or BB_FSR411_DIR)";
+                      : "AMD's " + name + " is missing (tools/fsr4_metal_initializers.sh from your AMD DLL)";
         return nil;
     }
     // bbport: everything a session needs is there (the menu offers FSR 4.1.1 only then).
