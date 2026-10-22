@@ -1,4 +1,5 @@
-/* Local trophy events; no trophy catalog or game assets are embedded.
+/* Local trophy events; persistence uses only IDs. The GPU overlay carries the public catalog,
+ * never game trophy files or artwork.
  * Inspired by Supermedo/bloodborne_pc 79d44f0 (Ambrose): persist unlock events per user.
  * Our version includes title identity, edited-save gating and checked append operations. */
 #define _GNU_SOURCE
