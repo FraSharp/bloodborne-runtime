@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_set>
 #include <xxhash.h>
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "bbport_timeline.h"
 #include "bbport_sections.h"
@@ -777,7 +778,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
         const auto& color = texture_cache.GetImage(cb_descs[0].first);
         const auto& depth = texture_cache.GetImage(db_desc.first);
-        if (color.info.pixel_format == vk::Format::eR16G16B16A16Sfloat &&
+        if (ToVk(color.info.pixel_format) == vk::Format::eR16G16B16A16Sfloat &&
             color.info.size.width == depth.info.size.width &&
             color.info.size.height == depth.info.size.height) {
             upscaler->OnSceneColor(cb_descs[0].first);
@@ -3519,10 +3520,10 @@ bool Rasterizer::IsComputeImageCopy(const Pipeline* pipeline, bool dry_run) {
             std::printf("Image copy: %#llx (%ux%u fmt %u flags %#x) -> %#llx (%ux%u fmt %u flags "
                         "%#x), %u bytes\n",
                         (unsigned long long)src_image.info.guest_address, src_image.info.size.width,
-                        src_image.info.size.height, u32(src_image.info.pixel_format),
+                        src_image.info.size.height, u32(ToVk(src_image.info.pixel_format)),
                         u32(src_image.flags), (unsigned long long)dst_image.info.guest_address,
                         dst_image.info.size.width, dst_image.info.size.height,
-                        u32(dst_image.info.pixel_format), u32(dst_image.flags),
+                        u32(ToVk(dst_image.info.pixel_format)), u32(dst_image.flags),
                         u32(buf0.GetSize()));
         }
     }
@@ -3967,7 +3968,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                         "bindings %u mip_fallback %d\n",
                         stage.sw_stage == Shader::SwStage::Compute ? "cs" : "gfx",
                         (unsigned long long)stage.pgm_hash,
-                        vk::to_string(image.info.pixel_format).c_str(), image.info.size.width,
+                        vk::to_string(ToVk(image.info.pixel_format)).c_str(), image.info.size.width,
                         image.info.size.height, int(image_desc.needs_native),
                         int(image_desc.is_written), num_bindings, int(mip_fallback_mode));
         };
@@ -4451,7 +4452,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                 !same_size(image, desc.view_info.range.base.level)) reduced = false;
             if (debug_pass) {
                 why += fmt::format(" [{} {}x{} eligible {} bound {} rebind {} level {} layer {}]",
-                                   vk::to_string(image.info.pixel_format), image.info.size.width,
+                                   vk::to_string(ToVk(image.info.pixel_format)), image.info.size.width,
                                    image.info.size.height, scene_targets->Eligible(image),
                                    u32(image.binding.is_bound), u32(image.binding.needs_rebind),
                                    desc.view_info.range.base.level,
@@ -4467,7 +4468,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         if (db_desc.first) {
             const auto& depth = texture_cache.GetImage(db_desc.first);
             why += fmt::format(" depth [{} {}x{} eligible {}]",
-                               vk::to_string(depth.info.pixel_format), depth.info.size.width,
+                               vk::to_string(ToVk(depth.info.pixel_format)), depth.info.size.width,
                                depth.info.size.height, scene_targets->Eligible(depth));
         }
         std::printf("Scene pass: reduced %d %s\n", reduced, why.c_str());
@@ -4678,7 +4679,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                     }
                     const auto& info = texture_cache.GetImage(id).info;
                     return fmt::format("{:#x} {}x{} {}", info.guest_address, info.size.width,
-                                       info.size.height, vk::to_string(info.pixel_format));
+                                       info.size.height, vk::to_string(ToVk(info.pixel_format)));
                 };
                 std::printf("Upscaler: pass not redirected (color %s: %s, depth %s: %s, %u "
                             "targets)\n",
@@ -5459,10 +5460,10 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
     parts[0] = state.width | u64(state.height) << 32;
     parts[1] = vs.pgm_hash;
     parts[2] = ps ? ps->pgm_hash : 0;
-    parts[3] = db_desc.first ? u64(texture_cache.GetImage(db_desc.first).info.pixel_format) : 0;
+    parts[3] = db_desc.first ? u64(ToVk(texture_cache.GetImage(db_desc.first).info.pixel_format)) : 0;
     for (u32 cb = 0; cb < state.num_color_attachments && cb < AmdGpu::NUM_COLOR_BUFFERS; ++cb) {
         parts[4 + cb] = cb_descs[cb].first
-                            ? u64(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format) + 1
+                            ? u64(ToVk(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format)) + 1
                             : 0;
     }
     const u64 key = XXH3_64bits(parts.data(), sizeof(parts));
@@ -5470,14 +5471,14 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
         std::string targets;
         for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
             targets += cb_descs[cb].first
-                           ? vk::to_string(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format)
+                           ? vk::to_string(ToVk(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format))
                            : std::string{"-"};
             targets += ' ';
         }
         return fmt::format("pass {}x{} [{}] depth {} vs {:016x} ps {:016x}", state.width,
                            state.height, targets,
                            db_desc.first ? vk::to_string(
-                                               texture_cache.GetImage(db_desc.first).info.pixel_format)
+                                               ToVk(texture_cache.GetImage(db_desc.first).info.pixel_format))
                                          : std::string{"-"},
                            vs.pgm_hash, ps ? ps->pgm_hash : 0);
     };

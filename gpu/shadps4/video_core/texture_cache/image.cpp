@@ -150,7 +150,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     : guest_begin{info_.guest_address}, guest_end{info_.guest_address + info_.guest_size},
       info{info_}, runtime{&runtime_}, slot_image_views{&slot_image_views_} {
     BbStats::Timer timer{BbStats::t_image_create};
-    if (info.pixel_format == vk::Format::eUndefined) {
+    if (info.pixel_format == Backend::Format::Undefined) {
         return;
     }
 
@@ -178,7 +178,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     }
 
     constexpr auto tiling = vk::ImageTiling::eOptimal;
-    const auto supported_format = instance.GetSupportedFormat(info.pixel_format, format_features);
+    const auto supported_format = instance.GetSupportedFormat(Vulkan::ToVk(info.pixel_format), format_features);
     const vk::PhysicalDeviceImageFormatInfo2 format_info{
         .format = supported_format,
         .type = ConvertImageType(info.type),
@@ -229,7 +229,7 @@ Image::Image(const Vulkan::Instance& instance, Vulkan::Runtime& runtime_,
     Vulkan::SetObjectName(instance.GetDevice(), GetImage(),
                           "Image {}x{}x{} {} {} {:#x}:{:#x} L:{} M:{} S:{}", info.size.width,
                           info.size.height, info.size.depth, AmdGpu::NameOf(info.tile_mode),
-                          vk::to_string(info.pixel_format), info.guest_address, info.guest_size,
+                          Backend::FormatName(info.pixel_format), info.guest_address, info.guest_size,
                           info.resources.layers, info.resources.levels, info.num_samples);
 }
 

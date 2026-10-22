@@ -810,7 +810,7 @@ static bool RectPassthrough(const PipelineSelection& sel) {
         }
         const auto buffer = attrib.GetSharp(*vs);
         const u32 components = RectAttributeComponents(
-            LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()));
+            ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())));
         if (components == 0) {
             return false;
         }

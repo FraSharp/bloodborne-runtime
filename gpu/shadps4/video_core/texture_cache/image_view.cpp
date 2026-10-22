@@ -104,7 +104,7 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
         usage_ci.pNext = &min_lod_ci;
     }
     // When sampling D32/D16 texture from shader, the T# specifies R32/R16 format so adjust it.
-    vk::Format format = info.format;
+    Backend::Format format = info.format;
     vk::ImageAspectFlags aspect = image.aspect_mask;
     if (image.aspect_mask & vk::ImageAspectFlagBits::eDepth &&
         Vulkan::LiverpoolToVK::IsFormatDepthCompatible(format)) {
@@ -121,7 +121,7 @@ ImageView::ImageView(const Vulkan::Instance& instance, const ImageViewInfo& info
         .pNext = &usage_ci,
         .image = image.GetImage(),
         .viewType = ConvertImageViewType(info.type),
-        .format = instance.GetSupportedFormat(format, image.format_features),
+        .format = instance.GetSupportedFormat(Vulkan::ToVk(format), image.format_features),
         .components = info.mapping,
         .subresourceRange{
             .aspectMask = aspect,

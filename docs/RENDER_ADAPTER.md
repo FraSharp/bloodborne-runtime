@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 is done; A1 (own vocabulary) is next. The decisions are
-at the end.
+**State:** approved on 2026-10-22. A0 is done; A1 is in progress (formats done; the state enums
+next). The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -160,6 +160,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   waits past the next submission, as the draw pipeline needs. `BB_GFX_BACKEND` is read; only
   `vulkan` exists. Same frame time as main in a copied-save run on MoltenVK (29.6 against 29.5
   FPS, p90 35.0 against 35.1 ms, with other GPU work running on the Mac).
+- **A1, formats:** `renderer_backend/format.h` lists every format the renderer names (153),
+  with Vulkan's values; `renderer_vulkan/vk_format.h` checks each value and the size at compile
+  time and converts with `ToVk`/`FromVk`. The texture cache (`ImageInfo::pixel_format`,
+  `ImageViewInfo::format`), the PS4 format tables (`LiverpoolToVK::SurfaceFormat`,
+  `DepthFormat`) and the pipeline key's vertex formats use it; Vulkan-side code converts where
+  it calls Vulkan. Both caches stayed warm: the Vulkan pipeline cache loaded with no compiles,
+  and Metal's binary archive served every pipeline in a second run (35.5 FPS, p90 30.3 ms,
+  against 36.1 FPS and 29.3 ms before).
 
 ## Decisions
 

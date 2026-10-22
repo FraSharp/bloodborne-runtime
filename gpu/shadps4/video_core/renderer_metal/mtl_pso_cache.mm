@@ -557,7 +557,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                         continue; // a hole: not written by the fragment shader
                     }
                     const auto& cb = key.color_buffers[i];
-                    const vk::Format format = L::TrySurfaceFormat(cb.data_format, cb.num_format);
+                    const vk::Format format = Vulkan::ToVk(L::TrySurfaceFormat(cb.data_format, cb.num_format));
                     if (format == vk::Format::eUndefined) {
                         continue; // written by the shader but not bound: Vulkan leaves it unused
                     }
@@ -593,7 +593,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                 if (!error.empty()) {
                     break;
                 }
-                const vk::Format depth_format = L::DepthFormat(key.z_format, key.stencil_format);
+                const vk::Format depth_format = Vulkan::ToVk(L::DepthFormat(key.z_format, key.stencil_format));
                 const u32 depth_pixel = VkToMtl::PixelFormat(depth_format);
                 if (depth_format != vk::Format::eUndefined && !depth_pixel) {
                     error = fmt::format("depth format {} has no Metal pixel format",
@@ -621,7 +621,7 @@ const RenderPipeline* PsoCache::GetRenderPipeline(const Vulkan::GraphicsPipeline
                 MTLVertexDescriptor* vd = [MTLVertexDescriptor vertexDescriptor];
                 for (u32 i = 0; i < attributes.size(); ++i) {
                     const VertexAttribute& attribute = attributes[i];
-                    const vk::Format format = key.vertex_buffer_formats[i];
+                    const vk::Format format = Vulkan::ToVk(key.vertex_buffer_formats[i]);
                     const u32 vertex_format = VkToMtl::VertexFormat(format);
                     if (!vertex_format || attribute.location >= 31) {
                         error = fmt::format("vertex attribute {} (location {}) format {} has no "
@@ -855,7 +855,7 @@ bool BuildStageInputs(const Vulkan::GraphicsPipelineKey& key,
             [MTLStageInputOutputDescriptor stageInputOutputDescriptor];
         for (u32 i = 0; i < attributes.size(); ++i) {
             const VertexAttribute& attribute = attributes[i];
-            const vk::Format format = key.vertex_buffer_formats[i];
+            const vk::Format format = Vulkan::ToVk(key.vertex_buffer_formats[i]);
             const u32 vertex_format = VkToMtl::VertexFormat(format);
             if (!vertex_format || attribute.location >= 31) {
                 error = fmt::format("vertex attribute {} (location {}) format {} has no "

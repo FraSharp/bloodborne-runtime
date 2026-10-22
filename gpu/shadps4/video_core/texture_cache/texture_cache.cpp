@@ -577,7 +577,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
                   // Old image details
                   cache_image.info.guest_address, cache_image.info.guest_size,
-                  vk::to_string(cache_image.info.pixel_format),
+                  Backend::FormatName(cache_image.info.pixel_format),
                   static_cast<int>(cache_image.info.type), cache_image.info.size.width,
                   cache_image.info.size.height, cache_image.info.size.depth, cache_image.info.pitch,
                   cache_image.info.resources.levels, cache_image.info.resources.layers,
@@ -588,7 +588,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
 
                   // New image details
                   image_info.guest_address, image_info.guest_size,
-                  vk::to_string(image_info.pixel_format), static_cast<int>(image_info.type),
+                  Backend::FormatName(image_info.pixel_format), static_cast<int>(image_info.type),
                   image_info.size.width, image_info.size.height, image_info.size.depth,
                   image_info.pitch, image_info.resources.levels, image_info.resources.layers,
                   image_info.num_samples, static_cast<u32>(image_info.tile_mode),

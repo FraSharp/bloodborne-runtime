@@ -5,7 +5,7 @@
 
 // The pipeline keys, free of Vulkan objects: every backend's pipelines key on them (the Vulkan
 // pipelines, the Metal pipeline states of renderer_metal/mtl_pso_cache.h). Vulkan enums and plain
-// structs (vk::Format, vk::BlendFactor, ...) stay as the shared vocabulary, so the layout, the hash
+// structs (Backend::Format, vk::BlendFactor, ...) stay as the shared vocabulary, so the layout, the hash
 // and the serialized cache are unchanged; no handles, no instance or scheduler. The split follows
 // Wooloomooloo2/bloodborne_mac_port (0b50589, GPL-2.0-or-later).
 
@@ -19,6 +19,7 @@
 #include "video_core/amdgpu/regs_depth.h"
 #include "video_core/amdgpu/regs_primitive.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_format.h"
 
 namespace Serialization {
 struct Archive;
@@ -31,7 +32,7 @@ static constexpr u32 MaxVertexBufferCount = 32;
 
 struct GraphicsPipelineKey {
     std::array<size_t, MaxShaderStages> stage_hashes;
-    std::array<vk::Format, MaxVertexBufferCount> vertex_buffer_formats;
+    std::array<Backend::Format, MaxVertexBufferCount> vertex_buffer_formats;
     u32 patch_control_points;
     u8 fixed_quad_outer;
     u32 num_color_attachments;

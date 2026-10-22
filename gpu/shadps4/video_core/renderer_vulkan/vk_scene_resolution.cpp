@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_scene_resolution.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
@@ -155,7 +156,7 @@ void SceneTargets::Copy(Entry& e, VideoCore::Image& original, bool to_native) {
                                      original};
     if (debug) {
         std::printf("Scene %s: %s %ux%u level %u\n", to_native ? "resolve" : "fill",
-                    vk::to_string(original.info.pixel_format).c_str(), original.info.size.width,
+                    Backend::FormatName(original.info.pixel_format), original.info.size.width,
                     original.info.size.height, e.level);
     }
     runtime.ResolvePendingClear(&original, Runtime::ClearResolveReason::Copy);
@@ -421,7 +422,7 @@ vk::ImageView SceneTargets::View(Entry& e, const VideoCore::Image& original,
     const auto aspect = original.info.props.is_depth
         ? (info.is_storage ? original.aspect_mask : vk::ImageAspectFlags(vk::ImageAspectFlagBits::eDepth))
         : vk::ImageAspectFlags(vk::ImageAspectFlagBits::eColor);
-    const auto format = original.info.props.is_depth ? original.backing->image.image_ci.format : info.format;
+    const auto format = original.info.props.is_depth ? original.backing->image.image_ci.format : ToVk(info.format);
     auto view = Check(instance.GetDevice().createImageViewUnique({
         .image = e.image, .viewType = vk::ImageViewType::e2D, .format = format,
         .components = info.mapping, .subresourceRange = {aspect,0,1,0,1},

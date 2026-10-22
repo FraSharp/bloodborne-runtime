@@ -343,7 +343,7 @@ GraphicsPipeline::GraphicsPipeline(
     }
 
     const auto depth_format =
-        instance.GetSupportedFormat(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format),
+        instance.GetSupportedFormat(ToVk(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format)),
                                     vk::FormatFeatureFlagBits2::eDepthStencilAttachment);
     std::array<vk::Format, Shader::IR::NumRenderTargets> color_formats;
     for (s32 i = 0; i < key.num_color_attachments; ++i) {
@@ -356,7 +356,7 @@ GraphicsPipeline::GraphicsPipeline(
         const auto& col_buf = key.color_buffers[i];
         const auto format = LiverpoolToVK::SurfaceFormat(col_buf.data_format, col_buf.num_format);
         const auto color_format =
-            instance.GetSupportedFormat(format, vk::FormatFeatureFlagBits2::eColorAttachment);
+            instance.GetSupportedFormat(ToVk(format), vk::FormatFeatureFlagBits2::eColorAttachment);
         if (!instance.IsFormatSupported(color_format,
                                         vk::FormatFeatureFlagBits2::eColorAttachment)) {
             LOG_WARNING(Render_Vulkan,
@@ -514,7 +514,7 @@ void GraphicsPipeline::GetVertexInputs(
         attributes.push_back(Attribute{
             .location = attrib.semantic,
             .binding = attrib.semantic,
-            .format = LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()),
+            .format = ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())),
             .offset = 0,
         });
         bindings.push_back(Binding{

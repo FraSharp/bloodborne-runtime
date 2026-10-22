@@ -139,7 +139,7 @@ void PrepareVertexInputs(const Shader::Info& vs, const Shader::Gcn::FetchShaderD
         // the inputs to the GPU thread, which reads them once the draw is submitted (the
         // assertion in SurfaceFormat stopped the process here).
         const vk::Format format =
-            LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt());
+            ToVk(LiverpoolToVK::TrySurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()));
         if (format == vk::Format::eUndefined &&
             buffer.GetDataFmt() != AmdGpu::DataFormat::FormatInvalid) {
             out.valid = false;

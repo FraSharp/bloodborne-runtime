@@ -78,13 +78,13 @@ std::unordered_map<vk::Format, vk::FormatProperties3> GetFormatProperties(
     vk::PhysicalDevice physical) {
     std::unordered_map<vk::Format, vk::FormatProperties3> format_properties;
     for (const auto& format_info : LiverpoolToVK::SurfaceFormats()) {
-        const auto format = format_info.vk_format;
+        const auto format = ToVk(format_info.format);
         if (!format_properties.contains(format)) {
             format_properties.emplace(format, GetFormatProperties(physical, format));
         }
     }
     for (const auto& format_info : LiverpoolToVK::DepthFormats()) {
-        const auto format = format_info.vk_format;
+        const auto format = ToVk(format_info.format);
         if (!format_properties.contains(format)) {
             format_properties.emplace(format, GetFormatProperties(physical, format));
         }
@@ -956,23 +956,23 @@ void Instance::CollectImageFormatInfo() {
 
     // Check and log format support details.
     for (const auto& format : LiverpoolToVK::SurfaceFormats()) {
-        if (!IsFormatSupported(format.vk_format, format.flags)) {
+        if (!IsFormatSupported(ToVk(format.format), format.flags)) {
             LOG_WARNING(Render_Vulkan,
                         "Surface format data_format={}, number_format={} is not fully supported "
                         "(vk_format={}, missing features={})",
                         static_cast<u32>(format.data_format),
-                        static_cast<u32>(format.number_format), vk::to_string(format.vk_format),
-                        vk::to_string(format.flags & ~GetFormatFeatureFlags(format.vk_format)));
+                        static_cast<u32>(format.number_format), Backend::FormatName(format.format),
+                        vk::to_string(format.flags & ~GetFormatFeatureFlags(ToVk(format.format))));
         }
     }
     for (const auto& format : LiverpoolToVK::DepthFormats()) {
-        if (!IsFormatSupported(format.vk_format, format.flags)) {
+        if (!IsFormatSupported(ToVk(format.format), format.flags)) {
             LOG_WARNING(Render_Vulkan,
                         "Depth format z_format={}, stencil_format={} is not fully supported "
                         "(vk_format={}, missing features={})",
                         static_cast<u32>(format.z_format), static_cast<u32>(format.stencil_format),
-                        vk::to_string(format.vk_format),
-                        vk::to_string(format.flags & ~GetFormatFeatureFlags(format.vk_format)));
+                        Backend::FormatName(format.format),
+                        vk::to_string(format.flags & ~GetFormatFeatureFlags(ToVk(format.format))));
         }
     }
 }
