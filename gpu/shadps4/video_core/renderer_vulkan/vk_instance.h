@@ -20,6 +20,8 @@ VK_DEFINE_HANDLE(VmaAllocator)
 
 namespace Vulkan {
 
+class BackendDevice;
+
 class Instance {
 public:
     explicit Instance(bool validation = false, bool crash_diagnostic = false);
@@ -554,6 +556,15 @@ public:
     /// Determines if a format is supported for a set of feature flags.
     [[nodiscard]] bool IsFormatSupported(vk::Format format, vk::FormatFeatureFlags2 flags) const;
 
+    /// The render adapter's device that owns this instance (docs/RENDER_ADAPTER.md), for Vulkan
+    /// code that creates resources through it; null for a headless test instance.
+    [[nodiscard]] BackendDevice* GetBackendDevice() const noexcept {
+        return backend_device;
+    }
+    void SetBackendDevice(BackendDevice* owner) noexcept {
+        backend_device = owner;
+    }
+
 private:
     Instance(const Frontend::WindowSystemInfo&, s32, bool, bool);
     /// Creates the logical device opportunistically enabling extensions
@@ -572,6 +583,7 @@ private:
     [[nodiscard]] vk::FormatFeatureFlags2 GetFormatFeatureFlags(vk::Format format) const;
 
 private:
+    BackendDevice* backend_device{};
     vk::UniqueInstance instance;
     vk::PhysicalDevice physical_device;
     vk::UniqueDevice device;

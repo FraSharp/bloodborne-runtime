@@ -76,7 +76,8 @@ public:
     /// the draw pipeline's constant ring).
     static constexpr u64 STREAM_THRESHOLD = 16_KB;
 
-    explicit BufferCache(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
+    explicit BufferCache(Backend::Device& device, const Vulkan::Instance& instance,
+                         Vulkan::Scheduler& scheduler,
                          Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool,
                          TextureCache& texture_cache, PageManager& tracker);
     ~BufferCache();
@@ -465,6 +466,7 @@ private:
     static u64 LayerMirrorFloor(u64 budget);
     static constexpr u64 ShrinkCriticalMargin = 128_MB;
 
+    Backend::Device& device;
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     // bbport: texel buffer ranges known not to alias an image, per image registry generation.

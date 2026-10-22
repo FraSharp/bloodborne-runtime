@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <span>
 
 #include "common/types.h"
 #include "video_core/renderer_backend/state.h"
@@ -66,6 +67,15 @@ struct BufferDesc {
     bool concurrent_readback{};
 };
 
+/// A buffer the device created or imported.
+struct BufferAllocation {
+    BufferHandle handle;
+    u64 native{};           ///< Device::NativeHandle(handle)
+    std::span<u8> mapped{}; ///< host mapping, empty when the memory is not host-visible
+    u64 device_address{};   ///< 0 without BufferUse::DeviceAddress
+    bool coherent{};        ///< host writes need no Device::FlushBuffer
+};
+
 struct SamplerDesc {
     Filter mag_filter{Filter::Nearest};
     Filter min_filter{Filter::Nearest};
@@ -91,6 +101,7 @@ struct Capabilities {
     bool custom_border_color{};
     float max_sampler_anisotropy{1.0f}; ///< 1: anisotropic filtering unsupported
     float max_sampler_lod_bias{};
+    u64 non_coherent_atom_size{1}; ///< granularity of FlushBuffer and InvalidateBuffer
 };
 
 } // namespace VideoCore::Backend

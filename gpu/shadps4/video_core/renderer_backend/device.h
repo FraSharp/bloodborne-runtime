@@ -3,6 +3,8 @@
 
 #pragma once
 
+#include <string_view>
+
 #include "common/types.h"
 #include "common/unique_function.h"
 #include "video_core/renderer_backend/resource.h"
@@ -37,6 +39,22 @@ public:
     virtual void DeferRelease(Common::UniqueFunction<void>&& release) = 0;
 
     // Thread-safe. Destroy* is deferred like DeferRelease; the handle is stale at once.
+    [[nodiscard]] virtual BufferAllocation CreateBuffer(const BufferDesc& desc,
+                                                        std::string_view name) = 0;
+    /// Host memory used where it is (macOS unified memory): every use, a device address, mapped.
+    /// The memory stays the caller's; it must outlive the buffer.
+    [[nodiscard]] virtual BufferAllocation ImportHostMemory(void* host, u64 size,
+                                                            std::string_view name) = 0;
+    /// A buffer over a guest memory chunk the backend exported (BB_GUEST_IN_PLACE, Linux):
+    /// `native_memory` is the backend's memory object (a VkDeviceMemory).
+    [[nodiscard]] virtual BufferAllocation ImportGuestMemoryChunk(u64 native_memory, u64 size,
+                                                                  std::string_view name) = 0;
+    virtual void DestroyBuffer(BufferHandle buffer) = 0;
+    /// Makes host writes visible to the GPU / GPU writes visible to the host, for memory that is
+    /// not coherent.
+    virtual void FlushBuffer(BufferHandle buffer, u64 offset, u64 size) = 0;
+    virtual void InvalidateBuffer(BufferHandle buffer, u64 offset, u64 size) = 0;
+
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
 
@@ -44,6 +62,7 @@ public:
     /// that still calls the API directly (docs/RENDER_ADAPTER.md, "native interop"). Zero for a
     /// stale handle. Valid until the object is destroyed.
     [[nodiscard]] virtual u64 NativeHandle(SamplerHandle sampler) = 0;
+    [[nodiscard]] virtual u64 NativeHandle(BufferHandle buffer) = 0;
 };
 
 } // namespace VideoCore::Backend

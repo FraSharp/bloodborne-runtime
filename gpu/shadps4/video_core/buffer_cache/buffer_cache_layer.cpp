@@ -563,7 +563,7 @@ u64 BufferCache::LayerPromoteRun(u64 first, u64 end) {
         }
         const VAddr start = lo << block_shift;
         const u64 bytes = (hi - lo) << block_shift;
-        auto mirror = std::make_unique<Buffer>(instance, start, bytes, MemoryType::DeviceLocal,
+        auto mirror = std::make_unique<Buffer>(device, start, bytes, MemoryType::DeviceLocal,
                                                fmt::format("bbport mirror {:#x}+{:#x}", start, bytes));
         target = mirror.get();
         for (const auto& old : touching) {
@@ -859,7 +859,7 @@ u64 BufferCache::LayerCompactMirrors(u64 wanted) {
         for (const auto& [a, b] : segments) {
             const VAddr base = a << block_shift;
             const u64 size = (b - a) << block_shift;
-            auto mirror = std::make_unique<Buffer>(instance, base, size, MemoryType::DeviceLocal,
+            auto mirror = std::make_unique<Buffer>(device, base, size, MemoryType::DeviceLocal,
                                                    fmt::format("bbport mirror {:#x}+{:#x}", base, size));
             boost::container::small_vector<vk::BufferCopy, 8> copies;
             Layer().ForEachValid(a, b, [&](u64 v_first, u64 v_end) {
@@ -1177,7 +1177,7 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
         }
     }
     if (!layer_trash) {
-        layer_trash = std::make_unique<Buffer>(instance, 0, 64_KB, MemoryType::DeviceLocal,
+        layer_trash = std::make_unique<Buffer>(device, 0, 64_KB, MemoryType::DeviceLocal,
                                                "bbport paged trash");
     }
     const vk::DeviceAddress trash = layer_trash->BufferDeviceAddress();

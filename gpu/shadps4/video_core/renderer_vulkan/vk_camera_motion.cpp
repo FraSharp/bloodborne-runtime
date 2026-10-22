@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_camera_motion.h"
 
@@ -168,7 +169,7 @@ CameraMotion::CameraMotion(const Instance& instance_, Scheduler& scheduler_,
             }));
     device.destroyShaderModule(module);
     for (auto& frame : frames) {
-        frame = std::make_unique<VideoCore::Buffer>(instance, 0, 3840ull * 2160 * 4,
+        frame = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, 3840ull * 2160 * 4,
                                                     VideoCore::MemoryType::DeviceLocal);
     }
     std::printf("GPU: camera motion debug overlay on\n");

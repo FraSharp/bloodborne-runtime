@@ -12,7 +12,9 @@
 #include <cstdio>
 #include <vk_mem_alloc.h>
 
-namespace VideoCore {
+namespace Vulkan {
+
+using VideoCore::MemoryType;
 
 [[nodiscard]] static VkMemoryPropertyFlags
 MemoryUsagePreferredVmaFlags(MemoryType type) {
@@ -99,7 +101,7 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
     const vk::ExternalMemoryBufferCreateInfo external{
         .handleTypes = BbGuestMemory::HandleType(),
     };
-    if (GuestInPlace()) {
+    if (VideoCore::GuestInPlace()) {
       buffer_ci.pNext = &external;
       if (const auto [result, created] = device.createBuffer(buffer_ci);
           result == vk::Result::eSuccess) {
@@ -121,14 +123,14 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
                       "uses copies in VRAM as before\n");
           device.destroyBuffer(created);
           buffer = vk::Buffer{};
-          DisableGuestInPlace();
+          VideoCore::DisableGuestInPlace();
         }
       } else {
         std::printf(
             "Guest memory: the arena cannot take exported memory (%s); the GPU "
             "uses copies in VRAM as before\n",
             vk::to_string(result).c_str());
-        DisableGuestInPlace();
+        VideoCore::DisableGuestInPlace();
       }
       buffer_ci.pNext = nullptr;
     }
@@ -147,9 +149,6 @@ void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
   }
 }
 
-} // namespace VideoCore
-
-namespace Vulkan {
 namespace Backend = VideoCore::Backend;
 
 Backend::Capabilities QueryResourceCapabilities(const Instance &instance) {
@@ -188,7 +187,7 @@ static vk::BufferUsageFlags ToVulkanBufferUsage(Backend::BufferUse uses) {
 }
 
 void CreateBufferFromDesc(const Instance &instance,
-                          VideoCore::UniqueBuffer &buffer,
+                          UniqueBuffer &buffer,
                           const Backend::BufferDesc &desc,
                           VmaAllocationInfo *out_alloc_info) {
   const auto capabilities = QueryResourceCapabilities(instance);

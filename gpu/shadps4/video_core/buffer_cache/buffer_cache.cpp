@@ -673,15 +673,16 @@ std::optional<u32> FindMemoryType(const vk::PhysicalDeviceMemoryProperties& prop
     return std::nullopt;
 }
 
-BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
+BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& instance_,
+                         Vulkan::Scheduler& scheduler_,
                          Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
                          TextureCache& texture_cache_, PageManager& tracker)
-    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
+    : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
       staging_pool{runtime_.GetStagingPool()}, liverpool{liverpool_},
       memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
       memory_tracker{std::make_unique<MemoryTracker>(tracker)},
-      stream_buffer{instance, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
-      gds_buffer{instance, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
+      stream_buffer{device, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
+      gds_buffer{device, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = instance.IsIntegrated();
     // bbport (macOS, MoltenVK): no sparse buffers. The game's memory pool is imported once; its
@@ -708,7 +709,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
             const std::string name = split && pool_size > POOL_WINDOW_STEP
                                          ? "Guest memory pool " + std::to_string(pool_windows.size() + 1)
                                          : std::string("Guest memory pool");
-            pool_windows.push_back(std::make_unique<Buffer>(instance, static_cast<u8*>(pool) + start,
+            pool_windows.push_back(std::make_unique<Buffer>(device, static_cast<u8*>(pool) + start,
                                                             size, name));
             if (!split || start + size >= pool_size) {
                 break;
@@ -811,7 +812,7 @@ BufferCache::BufferCache(const Vulkan::Instance& instance_, Vulkan::Scheduler& s
     // attachments on Apple's tile-based GPUs, ~140 a second). Cleared by the CPU too, so no GPU
     // fill can land after entries written meanwhile.
     bda_pagetable_buffer = std::make_unique<Buffer>(
-        instance, 0, bda_pagetable_size,
+        this->device, 0, bda_pagetable_size,
         UnifiedGuestMemory() ? MemoryType::Stream : MemoryType::DeviceLocal,
         "BDA Page Table Buffer");
     if (UnifiedGuestMemory()) {
@@ -1662,7 +1663,7 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
             const u64 base_block = Common::AlignDownPow2<u64>(first_block, blocks_per_arena_page);
             const u64 num_pages = last_page - first_page + 1;
             const auto* new_arena =
-                &arenas.emplace_back(instance, base_block << block_shift,
+                &arenas.emplace_back(device, base_block << block_shift,
                                      num_pages << ARENA_PAGE_BITS, MemoryType::Sparse);
             address_space[first_page] = new_arena;
             address_space[last_page] = new_arena;
@@ -1679,7 +1680,7 @@ const Buffer* BufferCache::GetArena(u64 first_block, u64 last_block) {
     const u64 base_block = first_addr >> block_shift;
     const u64 total_size = first_size + last_size;
     const u64 end_block = (first_addr + total_size) >> block_shift;
-    auto* new_arena = &arenas.emplace_back(instance, first_addr, total_size, MemoryType::Sparse);
+    auto* new_arena = &arenas.emplace_back(device, first_addr, total_size, MemoryType::Sparse);
     auto* bind = BindsForArena(new_arena);
     resident_ranges.ForEachInRange(base_block, end_block, [&](const Backing& backing) {
         const u64 start = std::max(base_block, backing.start);
@@ -2407,7 +2408,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::GuestChunkSource(VAddr
     }
     auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
     if (!buffer) {
-        buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+        buffer = std::make_unique<Buffer>(device, chunk->size, NativeMemory{reinterpret_cast<u64>(static_cast<VkDeviceMemory>(chunk->memory))},
                                           fmt::format("bbport guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), phys - chunk->phys};
@@ -2436,7 +2437,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerInPlace(VAddr add
     const auto* chunk = static_cast<const BbGuestMemory::Chunk*>(span->source->owner);
     auto& buffer = chunk_buffers[chunk->index % chunk_buffers.size()];
     if (!buffer) {
-        buffer = std::make_unique<Buffer>(instance, chunk->size, chunk->memory,
+        buffer = std::make_unique<Buffer>(device, chunk->size, NativeMemory{reinterpret_cast<u64>(static_cast<VkDeviceMemory>(chunk->memory))},
                                           fmt::format("bbport guest memory {:#x}", chunk->phys));
     }
     return std::pair<const Buffer*, u64>{buffer.get(), span->offset};
@@ -2753,7 +2754,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         return std::nullopt;
     }
     if (!shadow_buffer) {
-        shadow_buffer = std::make_unique<StreamBuffer>(instance, scheduler, MemoryType::DeviceLocal,
+        shadow_buffer = std::make_unique<StreamBuffer>(device, scheduler, MemoryType::DeviceLocal,
                                                        ShadowRing);
     }
     const auto offset = shadow_buffer->Reserve(size, instance.StorageMinAlignment());

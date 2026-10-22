@@ -8,6 +8,7 @@
 #include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/handle_table.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace Frontend {
@@ -45,10 +46,27 @@ public:
         scheduler.DeferOperationPastNext(std::move(release));
     }
 
+    [[nodiscard]] VideoCore::Backend::BufferAllocation CreateBuffer(
+        const VideoCore::Backend::BufferDesc& desc, std::string_view name) override;
+    [[nodiscard]] VideoCore::Backend::BufferAllocation ImportHostMemory(
+        void* host, u64 size, std::string_view name) override;
+    [[nodiscard]] VideoCore::Backend::BufferAllocation ImportGuestMemoryChunk(
+        u64 native_memory, u64 size, std::string_view name) override;
+    void DestroyBuffer(VideoCore::Backend::BufferHandle buffer) override;
+    void FlushBuffer(VideoCore::Backend::BufferHandle buffer, u64 offset, u64 size) override;
+    void InvalidateBuffer(VideoCore::Backend::BufferHandle buffer, u64 offset, u64 size) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::BufferHandle buffer) override;
+
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
     void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
     [[nodiscard]] u64 NativeHandle(VideoCore::Backend::SamplerHandle sampler) override;
+
+    /// The device that owns `instance`, for Vulkan code that creates resources through the
+    /// adapter but is not handed the device yet.
+    [[nodiscard]] static BackendDevice& From(const Instance& instance) {
+        return *instance.GetBackendDevice();
+    }
 
     [[nodiscard]] Instance& GetInstance() noexcept {
         return instance;
@@ -62,7 +80,10 @@ private:
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;
 
+    VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
+
     std::mutex objects_mutex;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
 };
 

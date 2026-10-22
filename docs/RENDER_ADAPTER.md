@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers done;
-buffers, images and views next). The decisions are at the end.
+**State:** approved on 2026-10-22. A0 and A1 are done; A2 is in progress (samplers and
+buffers done; images and views next). The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
@@ -180,6 +180,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   capabilities and keeps the native handle, so binding needs no lookup; the Vulkan backend
   keeps the samplers in a handle table. Metal API validation was clean on MoltenVK and Metal;
   28.9 and 34.3 FPS in plain runs.
+- **A2, buffers:** `Device::CreateBuffer`, `ImportHostMemory` (the macOS guest pool),
+  `ImportGuestMemoryChunk` (Linux, BB_GUEST_IN_PLACE), deferred `DestroyBuffer`, and
+  `FlushBuffer`/`InvalidateBuffer`. The VMA allocation (`UniqueBuffer`) lives in the Vulkan
+  backend; `VideoCore::Buffer` keeps its interface and its native handle for Vulkan code that
+  still records directly (until A3/A4). Every buffer is created from a `BufferDesc`. Metal API
+  validation was clean on both renderers; 29.8 FPS (MoltenVK) and 36.4 (Metal) in plain runs.
 
 ## Decisions
 
