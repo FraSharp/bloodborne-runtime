@@ -170,6 +170,27 @@ struct ImageViewAllocation {
     u64 native{}; ///< Device::NativeHandle(handle)
 };
 
+/// How a draw or dispatch uses an image; each backend derives its layouts and barriers.
+enum class ImageAccess : u8 {
+    Sampled,                   ///< read by shaders (depth images: depth read-only)
+    Storage,                   ///< read and written by shaders
+    SampledWhileTarget,        ///< read by shaders while bound as a color target
+    ColorAttachment,           ///< drawn into
+    ColorAttachmentFeedback,   ///< drawn into while shaders read it
+    DepthAttachment,           ///< depth (and stencil) tested and written
+    DepthReadOnlyStencilWrite, ///< depth tested only, stencil written
+    DepthReadOnly,             ///< depth (and stencil) tested only
+};
+
+/// How a draw or dispatch uses a range of a buffer.
+enum class BufferAccess : u8 {
+    GraphicsRead,
+    GraphicsReadWrite,
+    ComputeRead,
+    ComputeReadWrite,
+    TransferWrite,
+};
+
 /// A region copied between buffers (bytes).
 struct BufferCopy {
     u64 src_offset{};

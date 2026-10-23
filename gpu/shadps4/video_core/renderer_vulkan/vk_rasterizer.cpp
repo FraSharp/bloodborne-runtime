@@ -48,6 +48,9 @@
 
 namespace Vulkan {
 
+using VideoCore::Backend::BufferAccess;
+using VideoCore::Backend::ImageAccess;
+
 namespace {
 bool SamplerProbeEnabled() {
     static const bool probe = [] {
@@ -416,9 +419,7 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
                                     static_cast<u32>(value));
     });
     if (!marker) {
-        runtime.AccessBuffer(target->first, target->second, num_bytes,
-                             vk::PipelineStageFlagBits2::eTransfer,
-                             vk::AccessFlagBits2::eTransferWrite);
+        runtime.AccessBuffer(target->first, target->second, num_bytes, BufferAccess::TransferWrite);
     }
     // A VRAM copy of these bytes gets them too, at its next binding (as for CPU-written labels).
     buffer_cache.NoteLateCommandWrite(address, &value, num_bytes);
@@ -3397,17 +3398,16 @@ void Rasterizer::ResetBindings(bool is_compute) {
         texture_cache.GetImage(image_id).binding = {};
     }
     for (const auto [buffer, offset, size, is_written] : bound_buffers) {
-        const auto dst_stage = is_compute ? vk::PipelineStageFlagBits2::eComputeShader
-                                          : vk::PipelineStageFlagBits2::eAllGraphics;
-        const auto write_flag =
-            is_written ? vk::AccessFlagBits2::eShaderWrite : vk::AccessFlagBits2::eNone;
+        const auto access = is_compute ? is_written ? BufferAccess::ComputeReadWrite
+                                                    : BufferAccess::ComputeRead
+                            : is_written ? BufferAccess::GraphicsReadWrite
+                                         : BufferAccess::GraphicsRead;
         if (!buffer) {
             // bbport BB_LAYER_MEMORY: a paged binding (any buffer of the game's memory).
-            runtime.AccessGlobal(dst_stage, vk::AccessFlagBits2::eShaderRead | write_flag);
+            runtime.AccessGlobal(access);
             continue;
         }
-        runtime.AccessBuffer(buffer, offset, size, dst_stage,
-                             vk::AccessFlagBits2::eShaderRead | write_flag);
+        runtime.AccessBuffer(buffer, offset, size, access);
     }
     bound_images.clear();
     bound_buffers.clear();
@@ -4087,29 +4087,13 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             // target in feedback loop. Depth images are excluded because they can't be bound as
             // storage and feedback loop doesn't make sense for them
             if ((binding.force_general || binding.is_target) && !image.info.props.is_depth) {
-                if (instance.IsAttachmentFeedbackLoopLayoutSupported() && image.binding.is_target) {
-                    barrier |= runtime.Transit(
-                        &image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
-                        vk::PipelineStageFlagBits2::eAllGraphics, vk::AccessFlagBits2::eShaderRead);
-                } else {
-                    barrier |= runtime.Transit(
-                        &image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands,
-                        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
-                }
+                barrier |= runtime.Transit(&image, image.binding.is_target
+                                                       ? ImageAccess::SampledWhileTarget
+                                                       : ImageAccess::Storage);
             } else {
-                if (is_storage) {
-                    barrier |= runtime.Transit(
-                        &image, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eAllCommands,
-                        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-                        desc.view_info.range);
-                } else {
-                    const auto new_layout = image.info.props.is_depth
-                                                ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                                : vk::ImageLayout::eShaderReadOnlyOptimal;
-                    barrier |= runtime.Transit(
-                        &image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
-                        vk::AccessFlagBits2::eShaderRead, desc.view_info.range);
-                }
+                barrier |= runtime.Transit(
+                    &image, is_storage ? ImageAccess::Storage : ImageAccess::Sampled,
+                    desc.view_info.range);
             }
             image.usage.storage |= is_storage;
             image.usage.texture |= !is_storage;
@@ -4331,11 +4315,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             ++proxy_samples;
             continue;
         }
-        const auto new_layout = image.info.props.is_depth
-                                    ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                    : vk::ImageLayout::eShaderReadOnlyOptimal;
-        barrier |= runtime.Transit(&image, new_layout, vk::PipelineStageFlagBits2::eAllCommands,
-                                   vk::AccessFlagBits2::eShaderRead, entry.range);
+        barrier |= runtime.Transit(&image, ImageAccess::Sampled, entry.range);
         image_infos.emplace_back(VK_NULL_HANDLE, entry.view, ImageStateOf(*image.backing).state.layout);
     }
     (void)first_image_idx;
@@ -4534,21 +4514,11 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             ASSERT_MSG(!image->binding.force_general,
                        "Having image both as storage and render target is unsupported");
             runtime.FlushBarriers();
-            needs_barrier |=
-                runtime.Transit(image,
-                                instance.IsAttachmentFeedbackLoopLayoutSupported()
-                                    ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
-                                    : vk::ImageLayout::eGeneral,
-                                vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                vk::AccessFlagBits2::eColorAttachmentWrite |
-                                    vk::AccessFlagBits2::eColorAttachmentRead);
+            needs_barrier |= runtime.Transit(image, ImageAccess::ColorAttachmentFeedback);
             attachment_feedback_loop = true;
         } else {
-            needs_barrier |= runtime.Transit(image, vk::ImageLayout::eColorAttachmentOptimal,
-                                             vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                                             vk::AccessFlagBits2::eColorAttachmentWrite |
-                                                 vk::AccessFlagBits2::eColorAttachmentRead,
-                                             desc.view_info.range);
+            needs_barrier |=
+                runtime.Transit(image, ImageAccess::ColorAttachment, desc.view_info.range);
         }
 
         state.width = std::min<u32>(state.width, std::max(image->info.size.width >> mip, 1u));
@@ -4604,19 +4574,12 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         // Stencil writes can be enabled while depth writes are off.
         const bool stencil_write =
             has_stencil && regs.depth_control.stencil_enable && !desc.view_info.is_storage;
-        const auto new_layout = desc.view_info.is_storage
-                                    ? has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                                  : vk::ImageLayout::eDepthAttachmentOptimal
-                                : stencil_write
-                                    ? vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal
-                                : has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                              : vk::ImageLayout::eDepthReadOnlyOptimal;
-        if (!reduced) needs_barrier |= runtime.Transit(&image, new_layout,
-                                         vk::PipelineStageFlagBits2::eEarlyFragmentTests |
-                                             vk::PipelineStageFlagBits2::eLateFragmentTests,
-                                         vk::AccessFlagBits2::eDepthStencilAttachmentWrite |
-                                             vk::AccessFlagBits2::eDepthStencilAttachmentRead,
-                                         desc.view_info.range);
+        const auto depth_access = desc.view_info.is_storage ? ImageAccess::DepthAttachment
+                                  : stencil_write ? ImageAccess::DepthReadOnlyStencilWrite
+                                                  : ImageAccess::DepthReadOnly;
+        if (!reduced) {
+            needs_barrier |= runtime.Transit(&image, depth_access, desc.view_info.range);
+        }
 
         state.width = std::min<u32>(state.width, image.info.size.width);
         state.height = std::min<u32>(state.height, image.info.size.height);
@@ -4751,11 +4714,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         }
         image.pending_clear = true;
         runtime.ResolvePendingClear(&image, Runtime::ClearResolveReason::SmallRenderArea);
-        runtime.Transit(&image, vk::ImageLayout::eColorAttachmentOptimal,
-                        vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-                        vk::AccessFlagBits2::eColorAttachmentWrite |
-                            vk::AccessFlagBits2::eColorAttachmentRead,
-                        range);
+        runtime.Transit(&image, ImageAccess::ColorAttachment, range);
         runtime.FlushBarriers();
         if (cb < state.num_color_attachments) {
             auto& attachment = state.color_attachments[cb];

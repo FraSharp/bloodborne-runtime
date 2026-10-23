@@ -389,6 +389,88 @@ void Runtime::ImageBarriers(VideoCore::Image& image, vk::ImageLayout dst_layout,
     last_state.pl_stage = dst_stage;
 }
 
+bool Runtime::Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess access,
+                      std::optional<VideoCore::SubresourceRange> subres_range) {
+    using VideoCore::Backend::ImageAccess;
+    using Stage = vk::PipelineStageFlagBits2;
+    using Access = vk::AccessFlagBits2;
+    const bool feedback_loop = instance.IsAttachmentFeedbackLoopLayoutSupported();
+    const bool has_stencil = image->info.props.has_stencil;
+    constexpr auto color_target = Access::eColorAttachmentWrite | Access::eColorAttachmentRead;
+    constexpr auto depth_tests = Stage::eEarlyFragmentTests | Stage::eLateFragmentTests;
+    constexpr auto depth_target =
+        Access::eDepthStencilAttachmentWrite | Access::eDepthStencilAttachmentRead;
+    switch (access) {
+    case ImageAccess::Sampled:
+        return Transit(image,
+                       image->info.props.is_depth ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+                                                  : vk::ImageLayout::eShaderReadOnlyOptimal,
+                       Stage::eAllCommands, Access::eShaderRead, subres_range);
+    case ImageAccess::Storage:
+        return Transit(image, vk::ImageLayout::eGeneral, Stage::eAllCommands,
+                       Access::eShaderRead | Access::eShaderWrite, subres_range);
+    case ImageAccess::SampledWhileTarget:
+        return feedback_loop
+                   ? Transit(image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
+                             Stage::eAllGraphics, Access::eShaderRead, subres_range)
+                   : Transit(image, vk::ImageLayout::eGeneral, Stage::eAllCommands,
+                             Access::eShaderRead | Access::eShaderWrite, subres_range);
+    case ImageAccess::ColorAttachment:
+        return Transit(image, vk::ImageLayout::eColorAttachmentOptimal,
+                       Stage::eColorAttachmentOutput, color_target, subres_range);
+    case ImageAccess::ColorAttachmentFeedback:
+        return Transit(image,
+                       feedback_loop ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
+                                     : vk::ImageLayout::eGeneral,
+                       Stage::eColorAttachmentOutput, color_target, subres_range);
+    case ImageAccess::DepthAttachment:
+        return Transit(image,
+                       has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
+                                   : vk::ImageLayout::eDepthAttachmentOptimal,
+                       depth_tests, depth_target, subres_range);
+    case ImageAccess::DepthReadOnlyStencilWrite:
+        return Transit(image, vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal,
+                       depth_tests, depth_target, subres_range);
+    case ImageAccess::DepthReadOnly:
+        return Transit(image,
+                       has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
+                                   : vk::ImageLayout::eDepthReadOnlyOptimal,
+                       depth_tests, depth_target, subres_range);
+    }
+    UNREACHABLE();
+}
+
+static std::pair<vk::PipelineStageFlags2, vk::AccessFlags2> BufferAccessMasks(
+    VideoCore::Backend::BufferAccess access) {
+    using VideoCore::Backend::BufferAccess;
+    using Stage = vk::PipelineStageFlagBits2;
+    using Access = vk::AccessFlagBits2;
+    switch (access) {
+    case BufferAccess::GraphicsRead:
+        return {Stage::eAllGraphics, Access::eShaderRead};
+    case BufferAccess::GraphicsReadWrite:
+        return {Stage::eAllGraphics, Access::eShaderRead | Access::eShaderWrite};
+    case BufferAccess::ComputeRead:
+        return {Stage::eComputeShader, Access::eShaderRead};
+    case BufferAccess::ComputeReadWrite:
+        return {Stage::eComputeShader, Access::eShaderRead | Access::eShaderWrite};
+    case BufferAccess::TransferWrite:
+        return {Stage::eTransfer, Access::eTransferWrite};
+    }
+    UNREACHABLE();
+}
+
+void Runtime::AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
+                           VideoCore::Backend::BufferAccess access) {
+    const auto [stage, mask] = BufferAccessMasks(access);
+    AccessBuffer(handle, offset, size, stage, mask);
+}
+
+void Runtime::AccessGlobal(VideoCore::Backend::BufferAccess access) {
+    const auto [stage, mask] = BufferAccessMasks(access);
+    AccessGlobal(stage, mask);
+}
+
 bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                       vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {

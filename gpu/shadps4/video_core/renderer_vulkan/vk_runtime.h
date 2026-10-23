@@ -65,6 +65,14 @@ public:
     /// bbport: `data` written into `dst` by the GPU in stream order (vkCmdUpdateBuffer pieces).
     void UpdateBuffer(const VideoCore::Buffer* dst, u64 offset, std::span<const u8> data);
 
+    /// The render adapter's declaration of a use (docs/RENDER_ADAPTER.md): the layout, stages
+    /// and accesses follow from it and the image (depth, stencil, feedback-loop support).
+    bool Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess access,
+                 std::optional<VideoCore::SubresourceRange> subres_range = {});
+    void AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
+                      VideoCore::Backend::BufferAccess access);
+    void AccessGlobal(VideoCore::Backend::BufferAccess access);
+
     bool Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
                  std::optional<VideoCore::SubresourceRange> subres_range = {});

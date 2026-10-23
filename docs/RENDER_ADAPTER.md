@@ -2,7 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is next.
+**State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is in progress
+(access declarations done; bindings next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -220,6 +221,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   access declarations come with A4. Validation was clean; frames grabbed on Metal and MoltenVK
   were correct; alternating Metal pairs 36.7 and 35.6 FPS against 35.9 and 36.3, recording
   4.3–4.6 µs per draw against 4.5–4.9.
+
+- **A4, access declarations:** the rasterizer declares how a draw or dispatch uses each image
+  (`ImageAccess`: sampled, storage, sampled while a target, color target with or without
+  feedback, depth target written, read-only, or with stencil written) and buffer range
+  (`BufferAccess`: graphics or compute, read or read-write; transfer write); `Runtime` maps them
+  to the same layouts, stages and accesses as before, with the image's depth and stencil and the
+  device's feedback-loop support. The rasterizer no longer names a layout, stage or access mask
+  for its transitions (its descriptor writes still give `eGeneral` until the bindings move).
+  Validation was clean; frames on Metal and MoltenVK correct; three alternating Metal pairs
+  35.1, 35.7, 35.3 FPS against 34.8, 34.1, 35.5, recording 4.2–4.5 µs per draw against 4.2–5.2.
 
 ## Decisions
 
