@@ -103,7 +103,7 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
 
 Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& instance_,
                        Scheduler& scheduler_, Runtime& runtime_, AmdGpu::Liverpool* liverpool_)
-    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, page_manager{this},
+    : instance{instance_}, scheduler{scheduler_}, recorder{scheduler_}, runtime{runtime_}, page_manager{this},
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
       texture_cache{device, instance, scheduler, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
@@ -406,19 +406,8 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
     }
     // The 64-bit label as two 32-bit end-of-pipe writes, the high half first: whoever sees the
     // new low half (the guest polls that) sees the new high half too.
-    scheduler.Record([buffer = target->first->Handle(), offset = target->second, value,
-                      num_bytes, marker](vk::CommandBuffer cmdbuf) {
-        if (!marker) {
-            RecordPortableGpuLabel(cmdbuf, buffer, offset, value, num_bytes);
-            return;
-        }
-        if (num_bytes == 8) {
-            cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer,
-                                        offset + 4, static_cast<u32>(value >> 32));
-        }
-        cmdbuf.writeBufferMarkerAMD(vk::PipelineStageFlagBits::eBottomOfPipe, buffer, offset,
-                                    static_cast<u32>(value));
-    });
+    recorder.SetBufferMarkers(marker);
+    recorder.WriteLabel(ToNative(target->first->Handle()), target->second, value, num_bytes);
     if (!marker) {
         runtime.AccessBuffer(target->first, target->second, num_bytes, BufferAccess::TransferWrite);
     }
@@ -2031,14 +2020,13 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
         .count = {num_indices, num_instances, 0},
     };
-    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
-        if (draw_indexed) {
-            cmdbuf.drawIndexed(num_indices, num_instances, 0, s32(first_vertex), first_instance);
-        } else {
-            cmdbuf.draw(num_indices, num_instances, first_vertex, first_instance);
-        }
-    });
+    recorder.Draw({.pipeline = ToNative(handle),
+                   .indexed = draw_indexed,
+                   .count = num_indices,
+                   .instances = num_instances,
+                   .first = first_vertex,
+                   .first_instance = first_instance},
+                  crumb);
     if (FrameCapture::Active()) {
         const auto* ps = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
         FrameCapture::Draw(vs_info.pgm_hash, ps ? ps->pgm_hash : 0, num_indices, num_instances);
@@ -2178,21 +2166,15 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         .address = indirect.args,
         .count = {max_count, stride, 0},
     };
-    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eGraphics, handle);
-        if (is_indexed) {
-            if (counts) {
-                cmdbuf.drawIndexedIndirectCount(args, args_offset, counts, counts_offset, max_count,
-                                                stride);
-            } else {
-                cmdbuf.drawIndexedIndirect(args, args_offset, max_count, stride);
-            }
-        } else if (counts) {
-            cmdbuf.drawIndirectCount(args, args_offset, counts, counts_offset, max_count, stride);
-        } else {
-            cmdbuf.drawIndirect(args, args_offset, max_count, stride);
-        }
-    });
+    recorder.Draw({.pipeline = ToNative(handle),
+                   .indexed = is_indexed,
+                   .args_buffer = ToNative(args),
+                   .args_offset = args_offset,
+                   .count_buffer = counts ? ToNative(counts) : 0,
+                   .count_offset = counts_offset,
+                   .max_draws = max_count,
+                   .stride = stride},
+                  crumb);
     if (FrameCapture::Active()) {
         FrameCapture::Binding("indirect_args", 0, stride, indirect.args, u64(stride) * max_count,
                               buffer->BufferDeviceAddress(), base, false);
@@ -2295,10 +2277,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         .program = {cs.ProgramBase(), 0},
         .count = {dim_x, dim_y, dim_z},
     };
-    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
-        cmdbuf.dispatch(dim_x, dim_y, dim_z);
-    });
+    recorder.Dispatch({.pipeline = ToNative(handle), .groups = {dim_x, dim_y, dim_z}}, crumb);
     DebugState.IncDispatch();
 
     ResetBindings(true);
@@ -2372,11 +2351,12 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         .count = {buffer_cache.IsInPlace(address, size) ? 1u : 0u, 0, 0},
         .args_slot = args_slot,
     };
-    scheduler.RecordCrumb(crumb, [=](vk::CommandBuffer cmdbuf) {
-        Breadcrumbs::CopyArgs(cmdbuf, raw_args, raw_offset, args_slot); // what the game wrote
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, handle);
-        cmdbuf.dispatchIndirect(args, args_offset);
-    });
+    recorder.Dispatch({.pipeline = ToNative(handle),
+                       .args_buffer = ToNative(args),
+                       .args_offset = args_offset,
+                       .crumb_args_buffer = ToNative(raw_args), // what the game wrote
+                       .crumb_args_offset = raw_offset},
+                      crumb);
     if (FrameCapture::Active()) {
         FrameCapture::Binding("indirect_args", cs_crumb.pgm_hash, 0, address, size,
                               buffer->BufferDeviceAddress(), base, false);
@@ -2830,20 +2810,16 @@ void Rasterizer::EmitVertexBuffers() {
     if (num_buffers == 0) {
         return;
     }
-    const auto buffers = scheduler.RecordData(std::span<const vk::Buffer>{v.host_buffers.data(), num_buffers});
-    const auto offsets = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_offsets.data(), num_buffers});
+    // vk::Buffer and vk::DeviceSize are 64-bit: the adapter's u64 spans over the same arrays.
+    const std::span<const u64> buffers{reinterpret_cast<const u64*>(v.host_buffers.data()),
+                                       num_buffers};
+    const std::span<const u64> offsets{v.host_offsets.data(), num_buffers};
     if (dynamic_input) {
-        scheduler.Record([num_buffers, buffers, offsets](vk::CommandBuffer cmdbuf) {
-            cmdbuf.bindVertexBuffers(0, num_buffers, buffers.data(), offsets.data());
-        });
+        recorder.BindVertexBuffers(buffers, offsets, {}, {});
         return;
     }
-    const auto sizes = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_sizes.data(), num_buffers});
-    const auto strides = scheduler.RecordData(std::span<const vk::DeviceSize>{v.host_strides.data(), num_buffers});
-    scheduler.Record([num_buffers, buffers, offsets, sizes, strides](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindVertexBuffers2(0, num_buffers, buffers.data(), offsets.data(), sizes.data(),
-                                  strides.data());
-    });
+    recorder.BindVertexBuffers(buffers, offsets, {v.host_sizes.data(), num_buffers},
+                               {v.host_strides.data(), num_buffers});
 }
 
 void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
@@ -3023,10 +2999,8 @@ void Rasterizer::BindIndexBuffer(u32 index_offset) {
 }
 
 void Rasterizer::EmitIndexBuffer() {
-    scheduler.Record([handle = index_bind.handle, offset = index_bind.offset,
-                      type = index_bind.type](vk::CommandBuffer cmdbuf) {
-        cmdbuf.bindIndexBuffer(handle, offset, type);
-    });
+    recorder.BindIndexBuffer(ToNative(index_bind.handle), index_bind.offset,
+                             static_cast<VideoCore::Backend::IndexType>(index_bind.type));
 }
 
 // bbport (RectsAsTriangles): the rects of a rect list as two triangles each, through a vertex shader
@@ -5329,10 +5303,7 @@ void Rasterizer::ScopeMarkerBegin(const std::string_view& str, bool from_guest) 
         (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    cmdbuf.beginDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
-        .pLabelName = str.data(),
-    });
+    recorder.BeginLabel(str.data());
 }
 
 void Rasterizer::ScopeMarkerEnd(bool from_guest) {
@@ -5341,8 +5312,7 @@ void Rasterizer::ScopeMarkerEnd(bool from_guest) {
         (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    cmdbuf.endDebugUtilsLabelEXT();
+    recorder.EndLabel();
 }
 
 void Rasterizer::ScopedMarkerInsert(const std::string_view& str, bool from_guest) {
@@ -5351,10 +5321,7 @@ void Rasterizer::ScopedMarkerInsert(const std::string_view& str, bool from_guest
         (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
-        .pLabelName = str.data(),
-    });
+    recorder.InsertLabel(str.data(), 0);
 }
 
 void Rasterizer::ScopedMarkerInsertColor(const std::string_view& str, const u32 color,
@@ -5364,12 +5331,7 @@ void Rasterizer::ScopedMarkerInsertColor(const std::string_view& str, const u32 
         (!from_guest && !EmulatorSettings.IsVkHostMarkersEnabled())) {
         return;
     }
-    const auto cmdbuf = scheduler.CommandBuffer();
-    cmdbuf.insertDebugUtilsLabelEXT(vk::DebugUtilsLabelEXT{
-        .pLabelName = str.data(),
-        .color = std::array<f32, 4>(
-            {(f32)((color >> 16) & 0xff) / 255.0f, (f32)((color >> 8) & 0xff) / 255.0f,
-             (f32)(color & 0xff) / 255.0f, (f32)((color >> 24) & 0xff) / 255.0f})});
+    recorder.InsertLabel(str.data(), color);
 }
 
 std::thread::id Rasterizer::GetGpuCommandProcessorThread() {

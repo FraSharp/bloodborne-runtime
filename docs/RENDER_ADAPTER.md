@@ -2,9 +2,7 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is in progress
-(access declarations, bindings, dynamic state and render-pass targets done; draws and
-dispatches as adapter commands next).
+**State:** approved on 2026-10-22. A0 to A4 are done; A5 (pipelines and shaders) is next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -141,7 +139,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A1 ✓ | Own vocabulary in the caches and pipeline keys | Shader and pipeline caches still load warm |
 | A2 ✓ | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
 | A3 ✓ | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
-| A4 | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
+| A4 ✓ | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
 | A5 | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
 | A6 | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
@@ -254,6 +252,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   38.5 FPS against 38.4, recording 4.1 µs per draw against 4.2. (Measured together with the
   dynamic state earlier, the slice looked about 3% slower in six pairs; the cost did not
   reproduce once the Mac's background load dropped.)
+
+- **A4, commands:** draws (direct, indirect, indirect count), dispatches (direct, indirect),
+  index and vertex buffer binds, end-of-pipe label writes and debug labels go through the
+  adapter's `CommandRecorder` (`renderer_backend/commands.h`, with `DrawCommand`,
+  `DispatchCommand` and the breadcrumb `Crumb`); the Vulkan backend's recorder records each draw
+  or dispatch as one command with its pipeline bind. Recorded commands live in the recording
+  chunks, so each form captures only its own fields: capturing the whole 80-byte `DrawCommand`
+  raised recording from ~4.2 to ~5.8 µs per draw. Measured: 38.6 and 38.7 FPS against 37.9,
+  4.1 µs per draw against 4.2. The rasterizer's only remaining Vulkan call is the vertex input
+  state, which moves with the pipelines (A5).
 
 ## Decisions
 

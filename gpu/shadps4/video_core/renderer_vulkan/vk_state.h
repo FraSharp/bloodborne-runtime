@@ -242,6 +242,12 @@ template <typename Range>
 [[nodiscard]] inline u64 ToNative(vk::ImageView view) noexcept {
     return reinterpret_cast<u64>(static_cast<VkImageView>(view));
 }
+[[nodiscard]] inline u64 ToNative(vk::Buffer buffer) noexcept {
+    return reinterpret_cast<u64>(static_cast<VkBuffer>(buffer));
+}
+[[nodiscard]] inline u64 ToNative(vk::Pipeline pipeline) noexcept {
+    return reinterpret_cast<u64>(static_cast<VkPipeline>(pipeline));
+}
 [[nodiscard]] constexpr u32 ToNative(vk::ImageLayout layout) noexcept {
     return static_cast<u32>(layout);
 }

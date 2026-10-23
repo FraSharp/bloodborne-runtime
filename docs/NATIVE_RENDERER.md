@@ -29,7 +29,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N1 · frame planning | 100% `████████████████████` | Deferred clears accepted; tessellation moved to N5 |
 | N2 · shaders ahead of time | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: inventory the shader variants |
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
-| N4 · render adapter | 55% `███████████░░░░░░░░░` | [Specification](RENDER_ADAPTER.md) approved; A0 (the device), A1 (formats and pipeline state), A2 (resources) and A3 (the caches' commands and barrier state) done; next: A4, the rasterizer |
+| N4 · render adapter | 75% `███████████████░░░░░` | [Specification](RENDER_ADAPTER.md) approved; A0–A4 done (device, vocabulary, resources, the caches' commands, the rasterizer); next: A5, pipelines and shaders |
 | N5 · Metal backend | 35% `███████░░░░░░░░░░░░░` | The frame draws through Metal behind an option; next: resources in Metal |
 | N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
 
