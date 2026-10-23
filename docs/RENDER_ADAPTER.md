@@ -445,6 +445,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   (virtual calls on the draw path, its accesses per bound image): 4.34 µs per draw against
   4.58, 26.5 ms median both, new build second. It still makes the Vulkan backend's upscaler
   parts with the Vulkan runtime.
+- **M2, ticks:** the device reports the last tick known complete (`CompletedTick`), asks the GPU
+  (`RefreshTicks`) and waits with a timeout (`WaitFor`: complete, timed out or device lost). The
+  rasterizer (its GPU signal thread, labels, idle flushes, the residency set's ticks) and the
+  buffer cache's write checks use the device instead of the scheduler's semaphore. Measured in
+  three pairs (base first, reversed, base first): 4.29/4.28/4.17 µs per draw against
+  4.19/4.14/4.10, median 26.7/26.2/26.4 ms against 26.2/26.0/25.9 (about 1.5%). No call on the
+  draw path changed (the tick reads are now virtual calls of a few a frame to a few thousand);
+  step 1 as a whole is to be measured against the build before it.
 
 ## Decisions
 

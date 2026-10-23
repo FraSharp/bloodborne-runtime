@@ -209,19 +209,19 @@ GpuWriteTicks& WriteTicks() {
 
 // Notifications can be before or after a host write; this measures unfinished GPU work,
 // not simultaneous stores. Unified memory still needs ordering even without a readback copy.
-void ProbeUnifiedCpuAccess(Vulkan::Scheduler& scheduler, VAddr address, u64 size, bool is_write) {
+void ProbeUnifiedCpuAccess(Backend::Device& device, VAddr address, u64 size, bool is_write) {
     if (!UnifiedAccessProbeEnabled() || size == 0) {
         return;
     }
     static std::atomic<u64> notifications{0}, coarse_hits{0}, pending_reads{0}, pending_writes{0};
     const u64 tick = WriteTicks().Newest(address, size);
     const auto [exact_tick, replaced] = UnifiedWriteHistory().Newest(address, size);
-    auto* completion = scheduler.GetWorkSemaphore();
-    if (!completion->IsFree(std::max(tick, exact_tick))) {
-        completion->Refresh(); // Do not count a stale cached completion value as pending work.
+    if (device.CompletedTick() < std::max(tick, exact_tick)) {
+        device.RefreshTicks(); // Do not count a stale cached completion value as pending work.
     }
-    const bool coarse_pending = tick && !completion->IsFree(tick);
-    const bool pending = exact_tick && !completion->IsFree(exact_tick);
+    const u64 completed = device.CompletedTick();
+    const bool coarse_pending = tick && completed < tick;
+    const bool pending = exact_tick && completed < exact_tick;
     const u64 coarse_count = coarse_pending
         ? coarse_hits.fetch_add(1, std::memory_order_relaxed) + 1
         : coarse_hits.load(std::memory_order_relaxed);
@@ -834,7 +834,7 @@ BufferCache::~BufferCache() = default;
 
 void BufferCache::InvalidateMemory(VAddr device_addr, u64 size, bool assume_locks) {
     if (UnifiedGuestMemory()) {
-        ProbeUnifiedCpuAccess(scheduler, device_addr, size, true);
+        ProbeUnifiedCpuAccess(device, device_addr, size, true);
         if (UnifiedCpuSyncEnabled()) {
             memory_tracker->InvalidateRegion(device_addr, size, [this, device_addr, size, assume_locks] {
                 ReadMemory(device_addr, size, true, assume_locks);
@@ -901,7 +901,7 @@ void BufferCache::ExtendWriteFault(VAddr device_addr, u64 guest_rip) {
 
 void BufferCache::ReadMemory(VAddr device_addr, u64 size, bool is_write, bool assume_locks) {
     if (UnifiedGuestMemory()) {
-        ProbeUnifiedCpuAccess(scheduler, device_addr, size, is_write);
+        ProbeUnifiedCpuAccess(device, device_addr, size, is_write);
         if (UnifiedCpuSyncEnabled()) {
             const auto synchronize = [this, device_addr, size, is_write] {
                 // Shared bytes need no download, but the CPU must not use them before the
@@ -1625,7 +1625,7 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
     // UnifiedGuestMemory (Apple Silicon): the same, the GPU reads the game's memory itself.
     if (GuestInPlace() || UnifiedGuestMemory()) {
         const u64 tick = WriteTicks().Newest(addr, size);
-        if (tick == 0 || scheduler.GetWorkSemaphore()->IsFree(tick)) {
+        if (tick == 0 || (device.CompletedTick() >= (tick))) {
             return false;
         }
         // Asking the driver is a system call, and the GPU command thread asks for thousands of
@@ -1635,9 +1635,9 @@ bool BufferCache::IsRegionGpuModified(VAddr addr, size_t size) {
         thread_local u64 last_refresh = 0;
         if (const u64 now = __rdtsc(); now - last_refresh > 800000) {
             last_refresh = now;
-            scheduler.GetWorkSemaphore()->Refresh();
+            device.RefreshTicks();
         }
-        return !scheduler.GetWorkSemaphore()->IsFree(tick);
+        return !(device.CompletedTick() >= (tick));
     }
     return false;
 }
@@ -2149,7 +2149,7 @@ void BufferCache::ProcessIdleBlocks() {
         const VkDeviceMemory memory = it->first;
         if (chunk.used != 0 || memory == static_cast<VkDeviceMemory>(residency_memory) ||
             now - chunk.empty_second < 5 || !pending_binds.empty() ||
-            !scheduler.GetWorkSemaphore()->IsFree(chunk.empty_tick + 1)) {
+            !(device.CompletedTick() >= (chunk.empty_tick + 1))) {
             ++it;
             continue;
         }
@@ -3132,7 +3132,7 @@ void BufferCache::QueuePromotions(u64 submitted) {
     // not once a second (LayerMaintain): loading a level replaced hundreds within a second.
     if (LayerMode() && !layer_retired.empty()) {
         std::erase_if(layer_retired, [&](const auto& retired) {
-            return scheduler.GetWorkSemaphore()->IsFree(retired.second);
+            return (device.CompletedTick() >= (retired.second));
         });
     }
     ReportInPlaceBlocks();

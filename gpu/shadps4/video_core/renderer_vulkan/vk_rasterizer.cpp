@@ -110,7 +110,7 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
 
 Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& instance_,
                        Scheduler& scheduler_, Runtime& runtime_, AmdGpu::Liverpool* liverpool_)
-    : instance{instance_}, scheduler{scheduler_}, recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(), instance_.GetDevice()}, runtime{runtime_}, page_manager{this},
+    : device{device}, instance{instance_}, scheduler{scheduler_}, recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(), instance_.GetDevice()}, runtime{runtime_}, page_manager{this},
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
       texture_cache{device, instance, scheduler, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
@@ -120,11 +120,13 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     // bbport (macOS): objects removed from the Metal residency set stay alive until the GPU has
     // completed the submission open at their removal (bbport_metal_residency.h).
     BbMetalResidency::SetTicks(
-        [](void* context) { return static_cast<Scheduler*>(context)->CurrentTick(); },
         [](void* context) {
-            return static_cast<Scheduler*>(context)->GetWorkSemaphore()->KnownGpuTick();
+            return static_cast<VideoCore::Backend::Device*>(context)->CurrentTick();
         },
-        &scheduler);
+        [](void* context) {
+            return static_cast<VideoCore::Backend::Device*>(context)->CompletedTick();
+        },
+        &device);
     // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
     scene_targets = std::make_unique<SceneTargets>(instance, scheduler, runtime_, texture_cache);
@@ -227,7 +229,7 @@ void Rasterizer::PublishSignals() {
 void Rasterizer::SignalAfterGpu(std::function<void()> signal, VAddr label, u64 value) {
     if (DrawPipe::OnStageB()) {
         // Kept here until the end of the guest submission or the next flush (in tick order).
-        local_signals.push_back({scheduler.CurrentTick(), std::move(signal), label, value});
+        local_signals.push_back({device.CurrentTick(), std::move(signal), label, value});
         local_signal_count.store(u32(local_signals.size()), std::memory_order_release);
         return;
     }
@@ -242,7 +244,7 @@ void Rasterizer::SignalAfterGpu(std::function<void()> signal, VAddr label, u64 v
                 std::jthread([this](std::stop_token token) { GpuSignalLoop(token); });
         }
         was_empty = gpu_signals.empty();
-        gpu_signals.push_back({scheduler.CurrentTick(), std::move(signal), label, value});
+        gpu_signals.push_back({device.CurrentTick(), std::move(signal), label, value});
     }
     // The signal thread waits on the condition only with nothing queued (else it waits for the
     // GPU and takes the rest when it gets back): no notify per fence (~60 a frame).
@@ -277,7 +279,7 @@ bool Rasterizer::HasUnsubmittedSignals() {
         return true; // for the current tick, held by the recording thread
     }
     std::scoped_lock lk{gpu_signals_mutex};
-    return !gpu_signals.empty() && gpu_signals.back().tick >= scheduler.CurrentTick();
+    return !gpu_signals.empty() && gpu_signals.back().tick >= device.CurrentTick();
 }
 
 bool Rasterizer::WriteGuestMemory(VAddr address, const void* data, u32 size) {
@@ -474,7 +476,7 @@ void Rasterizer::SubmitForSignalsNow() {
     const bool gpu_idle =
         idle_flush &&
         (!draw_pipe || !DrawPipe::OnStageB() || draw_pipe->Backlog() < idle_backlog) &&
-        scheduler.IsFree(scheduler.CurrentTick() - 1);
+        device.IsComplete(device.CurrentTick() - 1);
     const auto since_flush = std::chrono::nanoseconds(
         std::chrono::steady_clock::now().time_since_epoch().count() -
         last_flush_ns.load(std::memory_order_relaxed));
@@ -500,8 +502,6 @@ bool Rasterizer::PendingSignalValue(VAddr address, u64& value) {
 
 void Rasterizer::GpuSignalLoop(std::stop_token token) {
     Common::SetCurrentThreadName("bb:GpuSignals");
-    auto* semaphore = scheduler.GetWorkSemaphore();
-    const vk::Semaphore handle = semaphore->Handle();
     while (!token.stop_requested()) {
         u64 tick = 0;
         {
@@ -513,21 +513,16 @@ void Rasterizer::GpuSignalLoop(std::stop_token token) {
         }
         // Bounded waits: the tick may not be submitted yet (the GPU command thread submits it
         // when it runs out of work), and a stop request must be seen.
-        const vk::SemaphoreWaitInfo wait_info = {
-            .semaphoreCount = 1,
-            .pSemaphores = &handle,
-            .pValues = &tick,
-        };
         // bbport: a lost device ends the wait with a report (it spun here forever: the game froze
         // with its sound playing, Steam Deck); 10 s without progress prints what is stuck once.
         const auto wait_start = std::chrono::steady_clock::now();
         bool watched = false;
         while (!token.stop_requested()) {
-            const vk::Result result = instance.GetDevice().waitSemaphores(&wait_info, 5'000'000);
-            if (result == vk::Result::eSuccess) {
+            const auto result = device.WaitFor(tick, 5'000'000);
+            if (result == VideoCore::Backend::Device::WaitResult::Complete) {
                 break;
             }
-            if (result == vk::Result::eErrorDeviceLost) {
+            if (result == VideoCore::Backend::Device::WaitResult::DeviceLost) {
                 Breadcrumbs::ReportDeviceLost("waiting for the GPU");
                 ASSERT_MSG(false, "Device lost while waiting for the GPU");
             }
@@ -536,13 +531,13 @@ void Rasterizer::GpuSignalLoop(std::stop_token token) {
                 GpuWatchdog(tick);
             }
         }
-        semaphore->Refresh();
-        BbTimeline::Note(BbTimeline::GpuDone, semaphore->KnownGpuTick());
+        device.RefreshTicks();
+        BbTimeline::Note(BbTimeline::GpuDone, device.CompletedTick());
         while (true) {
             std::function<void()> signal;
             {
                 std::scoped_lock lk{gpu_signals_mutex};
-                if (gpu_signals.empty() || !semaphore->IsFree(gpu_signals.front().tick)) {
+                if (gpu_signals.empty() || device.CompletedTick() < gpu_signals.front().tick) {
                     break;
                 }
                 signal = std::move(gpu_signals.front().signal);
@@ -556,9 +551,8 @@ void Rasterizer::GpuSignalLoop(std::stop_token token) {
 }
 
 void Rasterizer::GpuWatchdog(u64 tick) {
-    auto* semaphore = scheduler.GetWorkSemaphore();
-    semaphore->Refresh();
-    const u64 done = semaphore->KnownGpuTick(), recording = scheduler.CurrentTick();
+    device.RefreshTicks();
+    const u64 done = device.CompletedTick(), recording = device.CurrentTick();
     if (tick < recording) {
         std::printf("GPU watchdog: submission %llu not finished after 10 s (the GPU finished %llu, "
                     "recording %llu): the GPU is stuck\n",
@@ -1727,8 +1721,8 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     BB_SECTION(DrawRecord);
     buffer_cache.NewPacket();
     if (FrameCapture::Active()) {
-        FrameCapture::BeginCommand("draw", scheduler.CurrentTick(),
-                                   scheduler.GetWorkSemaphore()->KnownGpuTick());
+        FrameCapture::BeginCommand("draw", device.CurrentTick(),
+                                   device.CompletedTick());
     }
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
@@ -2091,8 +2085,8 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
                                     const IndirectDraw& indirect) {
     buffer_cache.NewPacket();
     if (FrameCapture::Active()) {
-        FrameCapture::BeginCommand("draw_indirect", scheduler.CurrentTick(),
-                                   scheduler.GetWorkSemaphore()->KnownGpuTick());
+        FrameCapture::BeginCommand("draw_indirect", device.CurrentTick(),
+                                   device.CompletedTick());
     }
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
@@ -2223,8 +2217,8 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     BB_SECTION(DispatchRecord);
     buffer_cache.NewPacket();
     if (FrameCapture::Active()) {
-        FrameCapture::BeginCommand("dispatch", scheduler.CurrentTick(),
-                                   scheduler.GetWorkSemaphore()->KnownGpuTick());
+        FrameCapture::BeginCommand("dispatch", device.CurrentTick(),
+                                   device.CompletedTick());
     }
     FrameCapture::Poll();
     gbuffer_draw = false;
@@ -2317,8 +2311,8 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
                                         u32 size) {
     buffer_cache.NewPacket();
     if (FrameCapture::Active()) {
-        FrameCapture::BeginCommand("dispatch_indirect", scheduler.CurrentTick(),
-                                   scheduler.GetWorkSemaphore()->KnownGpuTick());
+        FrameCapture::BeginCommand("dispatch_indirect", device.CurrentTick(),
+                                   device.CompletedTick());
     }
     scheduler.PopPendingOperations();
     const u32 offset = 0;
@@ -2385,7 +2379,7 @@ u64 Rasterizer::Flush() {
     PublishSignals(); // the recording thread's (it is idle here, or this is it)
     last_flush_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                         std::memory_order_relaxed);
-    const u64 current_tick = scheduler.CurrentTick();
+    const u64 current_tick = device.CurrentTick();
     SubmitInfo info{};
     scheduler.Flush(info);
     BbTimeline::Note(BbTimeline::VulkanSubmit, current_tick, DrawPipe::OnStageB() ? 1 : 0);
@@ -5417,12 +5411,12 @@ void Rasterizer::NoteFrameStart() {
     u32 lag = 0;
     for (u32 back = 1; back < frame_ticks.size() && back < frame; ++back) {
         const u64 tick = frame_ticks[(frame - back) % frame_ticks.size()];
-        if (tick && !scheduler.IsFree(tick)) {
+        if (tick && !device.IsComplete(tick)) {
             lag = back;
         }
     }
     ++lag_histogram[lag];
-    frame_ticks[frame % frame_ticks.size()] = scheduler.CurrentTick();
+    frame_ticks[frame % frame_ticks.size()] = device.CurrentTick();
     if (frame % 600 == 0) {
         std::printf("GPU lag at frame start (frames not finished: count):");
         for (u32 i = 0; i < lag_histogram.size(); ++i) {

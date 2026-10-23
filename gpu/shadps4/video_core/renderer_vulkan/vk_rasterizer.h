@@ -465,6 +465,7 @@ private:
 private:
     friend class VideoCore::BufferCache;
 
+    VideoCore::Backend::Device& device; ///< the render adapter's (ticks, waits)
     const Instance& instance;
     Scheduler& scheduler;
     CommandRecorder recorder; ///< the render adapter's commands (renderer_backend/commands.h)

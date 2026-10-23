@@ -48,6 +48,23 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
 
 namespace Backend = VideoCore::Backend;
 
+Backend::Device::WaitResult BackendDevice::WaitFor(u64 tick, u64 timeout_ns) {
+    const vk::Semaphore handle = scheduler.GetWorkSemaphore()->Handle();
+    const vk::SemaphoreWaitInfo wait_info = {
+        .semaphoreCount = 1,
+        .pSemaphores = &handle,
+        .pValues = &tick,
+    };
+    switch (instance.GetDevice().waitSemaphores(&wait_info, timeout_ns)) {
+    case vk::Result::eSuccess:
+        return WaitResult::Complete;
+    case vk::Result::eErrorDeviceLost:
+        return WaitResult::DeviceLost;
+    default:
+        return WaitResult::Timeout;
+    }
+}
+
 Backend::BufferAllocation BackendDevice::Insert(UniqueBuffer&& buffer, bool sparse) {
     Backend::BufferAllocation result{
         .native = reinterpret_cast<u64>(static_cast<VkBuffer>(buffer.buffer)),

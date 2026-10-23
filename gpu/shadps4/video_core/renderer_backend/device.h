@@ -31,9 +31,16 @@ public:
 
     /// The tick of the submission now being recorded.
     [[nodiscard]] virtual u64 CurrentTick() const noexcept = 0;
-    /// The GPU has completed every submission up to `tick`.
+    /// The GPU has completed every submission up to `tick` (asks the GPU when not known yet).
     [[nodiscard]] virtual bool IsComplete(u64 tick) noexcept = 0;
+    /// The last tick known to be complete, without asking the GPU.
+    [[nodiscard]] virtual u64 CompletedTick() const noexcept = 0;
+    /// Asks the GPU how far it got (a system call: callers on hot paths throttle it).
+    virtual void RefreshTicks() = 0;
     virtual void Wait(u64 tick) = 0;
+    enum class WaitResult : u8 { Complete, Timeout, DeviceLost };
+    /// Waits up to `timeout_ns` for `tick` (it may not be submitted yet).
+    [[nodiscard]] virtual WaitResult WaitFor(u64 tick, u64 timeout_ns) = 0;
 
     /// Runs `release` once no submission that could use an object released now is pending,
     /// including work prepared before this call and recorded into a later submission. Callers

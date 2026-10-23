@@ -42,6 +42,13 @@ public:
     [[nodiscard]] bool IsComplete(u64 tick) noexcept override {
         return scheduler.IsFree(tick);
     }
+    [[nodiscard]] u64 CompletedTick() const noexcept override {
+        return const_cast<Scheduler&>(scheduler).GetWorkSemaphore()->KnownGpuTick();
+    }
+    void RefreshTicks() override {
+        scheduler.GetWorkSemaphore()->Refresh();
+    }
+    [[nodiscard]] WaitResult WaitFor(u64 tick, u64 timeout_ns) override;
     void Wait(u64 tick) override {
         scheduler.Wait(tick);
     }
