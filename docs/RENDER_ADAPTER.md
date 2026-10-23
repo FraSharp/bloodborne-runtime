@@ -428,6 +428,13 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   profile (`BB_GPU_PROFILE=1`) use them. The profile reports on MoltenVK's recording (13
   reports in 75 s); on the Metal path it reports nothing, as before. The game took no GPU
   clock reads in the test scene.
+- **M2, draw state:** the draw state (viewports, scissors, depth, stencil, culling, depth bias,
+  blend constants, write masks) is the adapter's `DrawState` (`renderer_backend/draw_state.h`):
+  tracked with its changes, set through `CommandRecorder::GetDrawState` and recorded with
+  `CommitDrawState`; the Vulkan backend's `DynamicState` adds the commit as dynamic state. The
+  rasterizer uses the recorder for it. Measured, new build first: 4.24 µs per draw against
+  4.23, 26.1 ms median both (a base-first pair read 4.60 against 4.07, with that new run's
+  frame rate low throughout; the reversed pair did not repeat it).
 
 ## Decisions
 

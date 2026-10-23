@@ -8,6 +8,7 @@
 
 #include "common/types.h"
 #include "video_core/renderer_backend/binding.h"
+#include "video_core/renderer_backend/draw_state.h"
 #include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_backend/pass.h"
 #include "video_core/renderer_backend/resource.h"
@@ -116,6 +117,11 @@ public:
     virtual void ForceNewPass() = 0;
     /// BB_PASS_LABELS=1: the next pass is recorded inside a debug label with this name.
     virtual void SetPassLabel(std::string label) = 0;
+
+    /// The draw state of the next draws; CommitDrawState records what changed. (The recorder
+    /// refers to the backend's stream: const recorders record too.)
+    [[nodiscard]] virtual DrawState& GetDrawState() const = 0;
+    virtual void CommitDrawState() const = 0;
 
     virtual void Draw(const DrawCommand& draw, const Crumb& crumb) = 0;
     virtual void Dispatch(const DispatchCommand& dispatch, const Crumb& crumb) = 0;

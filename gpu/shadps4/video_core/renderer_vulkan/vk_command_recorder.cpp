@@ -7,6 +7,7 @@
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_gpu_labels.h"
+#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 
@@ -166,6 +167,18 @@ void CommandRecorder::BufferBarrier(u64 buffer, u64 offset, u64 size, Backend::M
                                  .bufferMemoryBarrierCount = 1,
                                  .pBufferMemoryBarriers = &barrier});
     });
+}
+
+Backend::DrawState& CommandRecorder::GetDrawState() const {
+    return scheduler.GetDynamicState();
+}
+
+void CommandRecorder::CommitDrawState() const {
+    const auto& instance = scheduler.GetInstance();
+    scheduler.GetDynamicState().CommitWith(
+        instance.IsDepthBoundsSupported(), instance.IsDynamicColorWriteMaskSupported(),
+        instance.IsAttachmentFeedbackLoopLayoutSupported(),
+        [this](auto&& command) { scheduler.Record(std::move(command)); });
 }
 
 void CommandRecorder::BeginPass(const Backend::RenderState& state) {

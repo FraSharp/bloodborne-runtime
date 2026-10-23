@@ -26,6 +26,9 @@ public:
     void ForceNewPass() override;
     void SetPassLabel(std::string label) override;
 
+    [[nodiscard]] VideoCore::Backend::DrawState& GetDrawState() const override;
+    void CommitDrawState() const override;
+
     void Draw(const VideoCore::Backend::DrawCommand& draw,
               const VideoCore::Backend::Crumb& crumb) override;
     void Dispatch(const VideoCore::Backend::DispatchCommand& dispatch,

@@ -5012,11 +5012,7 @@ void Rasterizer::UpdateDynamicState(const GraphicsPipeline* pipeline, const bool
     UpdateRasterizationState();
     UpdateColorBlendingState(pipeline);
 
-    auto& dynamic_state = scheduler.GetDynamicState();
-    dynamic_state.CommitWith(instance.IsDepthBoundsSupported(),
-                             instance.IsDynamicColorWriteMaskSupported(),
-                             instance.IsAttachmentFeedbackLoopLayoutSupported(),
-                             [&](auto&& command) { scheduler.Record(std::move(command)); });
+    recorder.CommitDrawState();
 }
 
 void Rasterizer::UpdateViewportScissorState() const {
@@ -5156,14 +5152,14 @@ void Rasterizer::UpdateViewportScissorState() const {
         scissors.push_back(empty_scissor);
     }
 
-    auto& dynamic_state = scheduler.GetDynamicState();
+    auto& dynamic_state = recorder.GetDrawState();
     dynamic_state.SetViewports(viewports);
     dynamic_state.SetScissors(scissors);
 }
 
 void Rasterizer::UpdateDepthStencilState() const {
     const auto& regs = Regs();
-    auto& dynamic_state = scheduler.GetDynamicState();
+    auto& dynamic_state = recorder.GetDrawState();
 
     const auto depth_test_enabled =
         regs.depth_control.depth_enable && regs.depth_buffer.DepthValid();
@@ -5248,7 +5244,7 @@ void Rasterizer::UpdateDepthStencilState() const {
 void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
                                       const bool is_indexed) const {
     const auto& regs = Regs();
-    auto& dynamic_state = scheduler.GetDynamicState();
+    auto& dynamic_state = recorder.GetDrawState();
     const auto primitive = pipeline->GetGraphicsKey().fixed_quad_outer
                                ? AmdGpu::PrimitiveType::TriangleList
                                : regs.primitive_type;
@@ -5288,13 +5284,13 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
 
 void Rasterizer::UpdateRasterizationState() const {
     const auto& regs = Regs();
-    auto& dynamic_state = scheduler.GetDynamicState();
+    auto& dynamic_state = recorder.GetDrawState();
     dynamic_state.SetLineWidth(regs.line_control.Width());
 }
 
 void Rasterizer::UpdateColorBlendingState(const GraphicsPipeline* pipeline) const {
     const auto& regs = Regs();
-    auto& dynamic_state = scheduler.GetDynamicState();
+    auto& dynamic_state = recorder.GetDrawState();
     dynamic_state.SetBlendConstants(regs.blend_constants);
     dynamic_state.SetColorWriteMasks(pipeline->GetGraphicsKey().write_masks);
     dynamic_state.SetAttachmentFeedbackLoopEnabled(attachment_feedback_loop);
