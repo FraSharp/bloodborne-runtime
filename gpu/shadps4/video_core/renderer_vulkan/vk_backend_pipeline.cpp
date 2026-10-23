@@ -201,14 +201,17 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
     };
     boost::container::static_vector<vk::PipelineShaderStageCreateInfo, 5> shader_stages;
     {
+        // Held from here: the caller may release a shader while the pipeline is made.
         std::scoped_lock lock{objects_mutex};
         for (const auto& stage : desc.stages) {
-            const vk::UniqueShaderModule* module = shaders.Get(stage.shader);
-            ASSERT_MSG(module, "A graphics pipeline's shader is stale");
+            ShaderRecord* shader = shaders.Get(stage.shader);
+            ASSERT_MSG(shader, "A graphics pipeline's shader is stale");
+            ++shader->holders;
+            record->shaders.push_back(stage.shader);
             shader_stages.push_back({
                 .pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr,
                 .stage = vk::ShaderStageFlagBits(u32(stage.stage)),
-                .module = **module,
+                .module = *shader->module,
                 .pName = "main",
             });
         }
@@ -287,6 +290,7 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         // inputs the vertex shader does not write.
         LOG_ERROR(Render_Vulkan, "Failed to create graphics pipeline {}: {}", name,
                   vk::to_string(result));
+        ReleasePipelineShaders(*record);
         return {}; // its layouts were never used: freed now
     }
     record->pipeline = std::move(pipeline);
@@ -303,9 +307,11 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
     vk::ShaderModule module;
     {
         std::scoped_lock lock{objects_mutex};
-        const vk::UniqueShaderModule* entry = shaders.Get(desc.shader);
-        ASSERT_MSG(entry, "A compute pipeline's shader is stale");
-        module = **entry;
+        ShaderRecord* shader = shaders.Get(desc.shader);
+        ASSERT_MSG(shader, "A compute pipeline's shader is stale");
+        ++shader->holders;
+        record->shaders.push_back(desc.shader);
+        module = *shader->module;
     }
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,
@@ -324,6 +330,7 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
     if (result != vk::Result::eSuccess) {
         LOG_ERROR(Render_Vulkan, "Failed to create compute pipeline {}: {}", name,
                   vk::to_string(result));
+        ReleasePipelineShaders(*record);
         return {}; // its layouts were never used: freed now
     }
     record->pipeline = std::move(pipeline);
@@ -331,6 +338,22 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
         SetObjectName(device, *record->pipeline, "Compute Pipeline {}", name);
     }
     return InsertPipeline(std::move(record));
+}
+
+void BackendDevice::ReleasePipelineShaders(PipelineRecord& record) {
+    boost::container::static_vector<vk::UniqueShaderModule, 5> freed;
+    {
+        std::scoped_lock lock{objects_mutex};
+        for (const auto shader : record.shaders) {
+            if (auto module = ReleaseShaderLocked(shader)) {
+                freed.push_back(std::move(module));
+            }
+        }
+    }
+    record.shaders.clear();
+    for (auto& module : freed) {
+        DeferRelease([module = std::move(module)] {});
+    }
 }
 
 void BackendDevice::DestroyPipeline(Backend::PipelineHandle pipeline) {
@@ -347,6 +370,7 @@ void BackendDevice::DestroyPipeline(Backend::PipelineHandle pipeline) {
         record = std::move(*entry);
         pipelines.Erase(pipeline);
     }
+    ReleasePipelineShaders(*record);
     DeferRelease([record = std::move(record)] {});
 }
 

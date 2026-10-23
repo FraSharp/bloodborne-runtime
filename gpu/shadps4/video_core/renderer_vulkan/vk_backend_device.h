@@ -5,6 +5,7 @@
 
 #include <memory>
 #include <mutex>
+#include <boost/container/static_vector.hpp>
 
 #include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/handle_table.h"
@@ -93,6 +94,7 @@ public:
         vk::UniquePipelineLayout layout;
         vk::UniquePipeline pipeline;
         bool push_descriptors{}; ///< the set is pushed, not allocated
+        boost::container::static_vector<VideoCore::Backend::ShaderHandle, 5> shaders; ///< held
     };
     /// Valid until the pipeline is destroyed; null for a stale handle.
     [[nodiscard]] const PipelineRecord* GetPipelineRecord(VideoCore::Backend::PipelineHandle pipeline);
@@ -127,6 +129,16 @@ private:
                                                        std::string_view name);
     VideoCore::Backend::PipelineAllocation InsertPipeline(std::unique_ptr<PipelineRecord> record);
 
+    /// A shader and its holders: the caller until DestroyShader, and each pipeline made with it.
+    struct ShaderRecord {
+        vk::UniqueShaderModule module;
+        u32 holders{1};
+    };
+    /// Drops a holder of `shader`; under objects_mutex. The module, when it was the last.
+    [[nodiscard]] vk::UniqueShaderModule ReleaseShaderLocked(VideoCore::Backend::ShaderHandle shader);
+    /// Drops `record`'s holds on its shaders.
+    void ReleasePipelineShaders(PipelineRecord& record);
+
     // No VkPipelineCache: it was never saved, and pipelines loaded from the shader cache (what
     // persists) never had one.
 
@@ -136,7 +148,7 @@ private:
         images;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
-    VideoCore::Backend::HandleTable<VideoCore::Backend::ShaderTag, vk::UniqueShaderModule> shaders;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::ShaderTag, ShaderRecord> shaders;
     VideoCore::Backend::HandleTable<VideoCore::Backend::PipelineTag, std::unique_ptr<PipelineRecord>>
         pipelines;
 };

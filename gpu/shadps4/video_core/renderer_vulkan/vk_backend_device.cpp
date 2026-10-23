@@ -369,7 +369,7 @@ Backend::ShaderAllocation BackendDevice::CreateShader(std::span<const u32> spirv
         .native = reinterpret_cast<u64>(static_cast<VkShaderModule>(*module)),
     };
     std::scoped_lock lock{objects_mutex};
-    allocation.handle = shaders.Insert(std::move(module));
+    allocation.handle = shaders.Insert(ShaderRecord{.module = std::move(module)});
     return allocation;
 }
 
@@ -380,20 +380,27 @@ void BackendDevice::DestroyShader(Backend::ShaderHandle shader) {
     vk::UniqueShaderModule object;
     {
         std::scoped_lock lock{objects_mutex};
-        vk::UniqueShaderModule* entry = shaders.Get(shader);
-        if (!entry) {
-            return;
-        }
-        object = std::move(*entry);
-        shaders.Erase(shader);
+        object = ReleaseShaderLocked(shader);
     }
-    DeferRelease([object = std::move(object)] {});
+    if (object) {
+        DeferRelease([object = std::move(object)] {});
+    }
+}
+
+vk::UniqueShaderModule BackendDevice::ReleaseShaderLocked(Backend::ShaderHandle shader) {
+    ShaderRecord* entry = shaders.Get(shader);
+    if (!entry || --entry->holders != 0) {
+        return {};
+    }
+    vk::UniqueShaderModule object = std::move(entry->module);
+    shaders.Erase(shader);
+    return object;
 }
 
 u64 BackendDevice::NativeHandle(Backend::ShaderHandle shader) {
     std::scoped_lock lock{objects_mutex};
-    const vk::UniqueShaderModule* entry = shaders.Get(shader);
-    return entry ? reinterpret_cast<u64>(static_cast<VkShaderModule>(**entry)) : 0;
+    const ShaderRecord* entry = shaders.Get(shader);
+    return entry ? reinterpret_cast<u64>(static_cast<VkShaderModule>(*entry->module)) : 0;
 }
 
 Backend::SamplerHandle BackendDevice::CreateSampler(const Backend::SamplerDesc& desc) {

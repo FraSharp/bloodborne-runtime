@@ -72,9 +72,11 @@ public:
     /// A shader from SPIR-V (the shader recompiler's output; the Metal backend converts it).
     [[nodiscard]] virtual ShaderAllocation CreateShader(std::span<const u32> spirv,
                                                         std::string_view name) = 0;
+    /// Releases the caller's shader. Pipelines made with it keep it: it is freed when the last
+    /// of them is. Once per CreateShader.
     virtual void DestroyShader(ShaderHandle shader) = 0;
 
-    /// Pipelines from their descriptions (the shaders are the caller's and outlive them).
+    /// Pipelines from their descriptions. A pipeline holds its shaders until it is destroyed.
     [[nodiscard]] virtual PipelineAllocation CreateGraphicsPipeline(
         const GraphicsPipelineDesc& desc, std::string_view name) = 0;
     [[nodiscard]] virtual PipelineAllocation CreateComputePipeline(

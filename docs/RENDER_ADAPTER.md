@@ -2,8 +2,7 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders, vertex input and
-pipelines through the adapter; pipelines owning their shaders next).
+**State:** approved on 2026-10-22. A0 to A5 are done; next: A6 (presenter, overlay, upscalers).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -114,8 +113,11 @@ rewrites, as today. Pipelines are created from backend-neutral descriptions (tod
 pipeline data) is shared; the Metal backend adds its binary archive. N2 later replaces the SPIR-V input with
 shaders converted ahead of time.
 
-Pipelines own their shaders, so a shader is freed when its last pipeline is freed. That closes
-the roadmap item about the shadow layer keeping every shader for the session.
+Pipelines hold their shaders, so a shader is freed when its caller and its last pipeline have
+released it. The Vulkan backend does so since A5. The Metal shadow still keeps every shader for
+the session: its PSO cache keeps pipeline states built from shaders compiled into each module.
+The Metal backend's pipelines (M2) hold their shaders the same way, which closes that roadmap
+item.
 
 ### Presentation and native interop
 
@@ -141,7 +143,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A2 ✓ | Buffers, images, views and samplers created and destroyed through the adapter, with deferred release | Metal API validation clean; texture memory unchanged |
 | A3 ✓ | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
 | A4 ✓ | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
-| A5 | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
+| A5 ✓ | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
 | A6 | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
@@ -290,6 +292,15 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   was never saved, and pipelines loaded from the shader cache never had one. Measured: every
   pipeline built (400 Metal pipelines, 0 failed), Metal API validation without new messages,
   37.7 FPS against 37.5 and 4.4 µs per draw against 4.4 (new build first), the frame correct.
+
+- **A5, shaders held by pipelines:** a pipeline holds its shaders until it is destroyed;
+  `DestroyShader` releases the caller's hold, and the module is freed (deferred) when no hold is
+  left. The auxiliary shaders a pipeline makes for itself (rect- and quad-list tessellation, the
+  clip-distance discard fragment), never freed before, are released once their pipeline is
+  made and go with it. `ReplaceShader` can no longer free a module a live pipeline was made
+  with. Measured: 400 pipelines built (0 failed), Metal API validation without new messages,
+  4.38 µs per draw against 4.37, 37.8 FPS against 37.7, the frame correct. Every pipeline of
+  the test run builds; the 550 of the acceptance were a longer session's count.
 
 ## Decisions
 

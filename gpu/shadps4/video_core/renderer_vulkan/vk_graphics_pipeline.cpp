@@ -114,11 +114,13 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
     return blend;
 }
 
-// The pipeline's own auxiliary stages (rect and quad lists, fixed-quad tessellation), made
-// through the render adapter. Not freed yet: pipelines will own their shaders (A5).
-static Backend::ShaderHandle AuxShader(const Instance& instance, std::span<const u32> spirv) {
+// The pipeline's own auxiliary stages (rect and quad lists, clip-distance emulation), made
+// through the render adapter. Released once the pipeline is made: it holds them.
+static Backend::ShaderHandle AuxShader(const Instance& instance, std::span<const u32> spirv,
+                                       std::span<Backend::ShaderHandle> made, u32& num_made) {
     const auto shader = BackendDevice::From(instance).CreateShader(spirv, {});
     ASSERT_MSG(shader.handle, "Failed to compile an auxiliary SPIR-V shader");
+    made[num_made++] = shader.handle;
     return shader.handle;
 }
 
@@ -196,6 +198,8 @@ GraphicsPipeline::GraphicsPipeline(
     const bool is_rect_list = key.prim_type == AmdGpu::PrimitiveType::RectList;
     const bool is_quad_list = key.prim_type == AmdGpu::PrimitiveType::QuadList;
     boost::container::static_vector<Backend::PipelineStage, MaxShaderStages> pipeline_stages;
+    std::array<Backend::ShaderHandle, 3> aux{};
+    u32 num_aux = 0;
     auto stage = u32(Shader::SwStage::Vertex);
     if (key.fixed_quad_outer) {
         const auto domain = u32(Shader::SwStage::TessellationEval);
@@ -217,7 +221,7 @@ GraphicsPipeline::GraphicsPipeline(
             sdata.tcs = Shader::Backend::SPIRV::EmitAuxilaryTessShader(type, fs_info);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::TessellationControl, AuxShader(instance, sdata.tcs)});
+            {Backend::ShaderStage::TessellationControl, AuxShader(instance, sdata.tcs, aux, num_aux)});
     }
     stage = u32(Shader::SwStage::TessellationEval);
     if (infos[stage] && !key.fixed_quad_outer) {
@@ -229,7 +233,7 @@ GraphicsPipeline::GraphicsPipeline(
                 AuxShaderType::PassthroughTES, fs_info);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::TessellationEvaluation, AuxShader(instance, sdata.tes)});
+            {Backend::ShaderStage::TessellationEvaluation, AuxShader(instance, sdata.tes, aux, num_aux)});
     }
     stage = u32(Shader::SwStage::Fragment);
     if (infos[stage]) {
@@ -240,7 +244,7 @@ GraphicsPipeline::GraphicsPipeline(
             sdata.fragment = Shader::Backend::SPIRV::EmitDiscardFragmentShader(vs.outputs);
         }
         pipeline_stages.push_back(
-            {Backend::ShaderStage::Fragment, AuxShader(instance, sdata.fragment)});
+            {Backend::ShaderStage::Fragment, AuxShader(instance, sdata.fragment, aux, num_aux)});
     }
 
     const auto color_counts = vk::SampleCountFlags{caps.color_sample_counts};
@@ -310,6 +314,9 @@ GraphicsPipeline::GraphicsPipeline(
     };
     const auto debug_str = GetDebugString();
     const auto created = device.CreateGraphicsPipeline(desc, debug_str);
+    for (u32 i = 0; i < num_aux; ++i) {
+        device.DestroyShader(aux[i]);
+    }
     if (!created.handle) {
         if (preloading) {
             // bbport: a pipeline from the cache the driver rejects is a damaged cache entry: the
