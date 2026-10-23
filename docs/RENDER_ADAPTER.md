@@ -3,7 +3,7 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is in progress
-(access declarations done; bindings next).
+(access declarations and bindings done; dynamic state and passes next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -231,6 +231,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   for its transitions (its descriptor writes still give `eGeneral` until the bindings move).
   Validation was clean; frames on Metal and MoltenVK correct; three alternating Metal pairs
   35.1, 35.7, 35.3 FPS against 34.8, 34.1, 35.5, recording 4.2–4.5 µs per draw against 4.2–5.2.
+
+- **A4, bindings:** the rasterizer binds through the adapter's flat slots
+  (`renderer_backend/binding.h`: `SlotWrite` with a slot, a count, a kind and its elements;
+  `BufferBinding`, `ImageBinding`), not Vulkan descriptor writes. The bindings share the layout
+  of Vulkan's descriptor infos (checked at compile time), so the Vulkan backend reads them in
+  place; it converts each write straight into the recording chunk
+  (`Scheduler::AllocateRecordData`). A first version converted into a temporary array and then
+  copied it: about 4% slower in three alternating Metal pairs. Without that copy: 33.4, 33.6,
+  34.6 FPS against 34.0, 35.5, 33.5, recording 4.2–4.7 µs per draw against 4.3–4.6. Validation
+  clean; the frame correct.
 
 ## Decisions
 

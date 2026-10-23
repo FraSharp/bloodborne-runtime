@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <memory>
 #include <span>
 
 #include <boost/container/small_vector.hpp>
@@ -11,6 +12,7 @@
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_pipeline_common.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Vulkan {
 
@@ -24,8 +26,8 @@ Pipeline::~Pipeline() = default;
 
 
 void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
-                             std::span<const vk::DescriptorImageInfo> image_infos,
-                             std::span<const vk::DescriptorBufferInfo> buffer_infos) const {
+                             std::span<const VideoCore::Backend::ImageBinding> image_infos,
+                             std::span<const VideoCore::Backend::BufferBinding> buffer_infos) const {
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
@@ -38,16 +40,17 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     if (set_writes.empty()) {
         return;
     }
+    // The adapter's bindings are laid out like Vulkan's descriptor infos (vk_state.h).
+    const std::span<const vk::DescriptorImageInfo> vk_images{
+        reinterpret_cast<const vk::DescriptorImageInfo*>(image_infos.data()), image_infos.size()};
+    const std::span<const vk::DescriptorBufferInfo> vk_buffers{
+        reinterpret_cast<const vk::DescriptorBufferInfo*>(buffer_infos.data()),
+        buffer_infos.size()};
 
-    if (uses_push_descriptors) {
-        if (!scheduler.IsRecordingDeferred()) {
-            scheduler.Record([&](vk::CommandBuffer cmdbuf) {
-                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, set_writes);
-            });
-            return;
-        }
+    if (uses_push_descriptors && scheduler.IsRecordingDeferred()) {
         // Writes and the infos they point to are laid out in the recording chunk, with the
-        // pointers already aimed at those copies: the command only carries a span.
+        // pointers already aimed at those copies: the command only carries a span. The writes
+        // are converted straight into the chunk.
         // bbport: when every write points into the caller's info arrays (draws and
         // dispatches), each array is copied once and the pointers are rebased: a copy per
         // descriptor (two per write) cost the draw recording thread ~3% of its time.
@@ -59,70 +62,76 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
             if (!bulk) {
                 break;
             }
-            bulk = !write.pTexelBufferView &&
-                   (!write.pImageInfo || within(write.pImageInfo, write.descriptorCount,
-                                                image_infos)) &&
-                   (!write.pBufferInfo || within(write.pBufferInfo, write.descriptorCount,
-                                                 buffer_infos));
+            bulk = (!write.images || within(write.images, write.count, image_infos)) &&
+                   (!write.buffers || within(write.buffers, write.count, buffer_infos));
         }
+        const size_t count = set_writes.size();
         if (bulk) {
-            scheduler.ReserveRecordData(set_writes.size() * sizeof(vk::WriteDescriptorSet) +
-                                        image_infos.size_bytes() + buffer_infos.size_bytes() +
-                                        256);
-            const auto writes =
-                scheduler.RecordData(std::span<const vk::WriteDescriptorSet>{set_writes});
-            const auto images = scheduler.RecordData(image_infos);
-            const auto buffers = scheduler.RecordData(buffer_infos);
-            auto* patched = const_cast<vk::WriteDescriptorSet*>(writes.data());
-            for (size_t i = 0; i < writes.size(); ++i) {
-                auto& write = patched[i];
-                if (write.pImageInfo) {
-                    write.pImageInfo = images.data() + (write.pImageInfo - image_infos.data());
+            scheduler.ReserveRecordData(count * sizeof(vk::WriteDescriptorSet) +
+                                        vk_images.size_bytes() + vk_buffers.size_bytes() + 256);
+            const auto images = scheduler.RecordData(vk_images);
+            const auto buffers = scheduler.RecordData(vk_buffers);
+            auto* writes = scheduler.AllocateRecordData<vk::WriteDescriptorSet>(count);
+            for (size_t i = 0; i < count; ++i) {
+                const auto& write = set_writes[i];
+                std::construct_at(&writes[i], ToVk(write));
+                if (write.images) {
+                    writes[i].pImageInfo = images.data() + (write.images - image_infos.data());
                 }
-                if (write.pBufferInfo) {
-                    write.pBufferInfo = buffers.data() + (write.pBufferInfo - buffer_infos.data());
+                if (write.buffers) {
+                    writes[i].pBufferInfo = buffers.data() + (write.buffers - buffer_infos.data());
                 }
             }
-            scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
+            scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
+                                 vk::CommandBuffer cmdbuf) {
                 cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
             });
             return;
         }
-        size_t bytes = set_writes.size() * sizeof(vk::WriteDescriptorSet) + 64;
+        size_t bytes = count * sizeof(vk::WriteDescriptorSet) + 64;
         for (const auto& write : set_writes) {
-            bytes += write.descriptorCount *
-                         (sizeof(vk::DescriptorBufferInfo) + sizeof(vk::DescriptorImageInfo) +
-                          sizeof(vk::BufferView)) +
+            bytes += write.count * (sizeof(vk::DescriptorBufferInfo) + sizeof(vk::DescriptorImageInfo)) +
                      32;
         }
         scheduler.ReserveRecordData(bytes);
-        const auto writes = scheduler.RecordData(std::span<const vk::WriteDescriptorSet>{set_writes});
-        auto* patched = const_cast<vk::WriteDescriptorSet*>(writes.data());
-        for (size_t i = 0; i < writes.size(); ++i) {
-            auto& write = patched[i];
+        auto* writes = scheduler.AllocateRecordData<vk::WriteDescriptorSet>(count);
+        for (size_t i = 0; i < count; ++i) {
+            std::construct_at(&writes[i], ToVk(set_writes[i]));
+            auto& write = writes[i];
             if (write.pBufferInfo) {
-                write.pBufferInfo = scheduler.RecordData(std::span{write.pBufferInfo, write.descriptorCount}).data();
+                write.pBufferInfo =
+                    scheduler.RecordData(std::span{write.pBufferInfo, write.descriptorCount}).data();
             }
             if (write.pImageInfo) {
-                write.pImageInfo = scheduler.RecordData(std::span{write.pImageInfo, write.descriptorCount}).data();
-            }
-            if (write.pTexelBufferView) {
-                write.pTexelBufferView =
-                    scheduler.RecordData(std::span{write.pTexelBufferView, write.descriptorCount}).data();
+                write.pImageInfo =
+                    scheduler.RecordData(std::span{write.pImageInfo, write.descriptorCount}).data();
             }
         }
-        scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
+        scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
+                             vk::CommandBuffer cmdbuf) {
             cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
+        });
+        return;
+    }
+
+    boost::container::small_vector<vk::WriteDescriptorSet, 64> vk_writes;
+    vk_writes.reserve(set_writes.size());
+    for (const auto& write : set_writes) {
+        vk_writes.push_back(ToVk(write));
+    }
+    if (uses_push_descriptors) {
+        scheduler.Record([&](vk::CommandBuffer cmdbuf) {
+            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, vk_writes);
         });
         return;
     }
 
     // Descriptor set updates are device calls: they stay on this thread.
     const auto desc_set = desc_heap.Commit(*desc_layout);
-    for (auto& set_write : set_writes) {
+    for (auto& set_write : vk_writes) {
         set_write.dstSet = desc_set;
     }
-    instance.GetDevice().updateDescriptorSets(set_writes, {});
+    instance.GetDevice().updateDescriptorSets(vk_writes, {});
     scheduler.Record([bind_point, layout, desc_set](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindDescriptorSets(bind_point, layout, 0, desc_set, {});
     });

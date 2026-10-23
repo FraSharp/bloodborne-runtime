@@ -5,6 +5,7 @@
 
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
+#include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 #include <boost/container/small_vector.hpp>
@@ -57,12 +58,13 @@ public:
         return is_compute;
     }
 
-    using DescriptorWrites = std::vector<vk::WriteDescriptorSet>;
+    /// The render adapter's slot writes (docs/RENDER_ADAPTER.md, A4), pushed as descriptors.
+    using DescriptorWrites = std::vector<VideoCore::Backend::SlotWrite>;
     /// `image_infos` and `buffer_infos`: the arrays the writes point into, if known (their
     /// descriptors are then copied for the recording thread in one piece each).
     void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
-                       std::span<const vk::DescriptorImageInfo> image_infos = {},
-                       std::span<const vk::DescriptorBufferInfo> buffer_infos = {}) const;
+                       std::span<const VideoCore::Backend::ImageBinding> image_infos = {},
+                       std::span<const VideoCore::Backend::BufferBinding> buffer_infos = {}) const;
 
 protected:
     [[nodiscard]] std::string GetDebugString() const;

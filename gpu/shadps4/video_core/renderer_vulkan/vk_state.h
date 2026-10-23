@@ -5,7 +5,9 @@
 
 #include <array>
 #include <bit>
+#include <cstddef>
 
+#include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
@@ -92,6 +94,20 @@ static_assert(s32(vk::ComponentSwizzle::eIdentity) == s32(Backend::ComponentSwiz
               s32(vk::ComponentSwizzle::eG) == s32(Backend::ComponentSwizzle::G) &&
               s32(vk::ComponentSwizzle::eB) == s32(Backend::ComponentSwizzle::B) &&
               s32(vk::ComponentSwizzle::eA) == s32(Backend::ComponentSwizzle::A));
+static_assert(s32(vk::DescriptorType::eSampler) == s32(Backend::BindingKind::Sampler) &&
+              s32(vk::DescriptorType::eSampledImage) == s32(Backend::BindingKind::SampledImage) &&
+              s32(vk::DescriptorType::eStorageImage) == s32(Backend::BindingKind::StorageImage) &&
+              s32(vk::DescriptorType::eUniformBuffer) == s32(Backend::BindingKind::UniformBuffer) &&
+              s32(vk::DescriptorType::eStorageBuffer) == s32(Backend::BindingKind::StorageBuffer));
+// Bindings are read in place as Vulkan's descriptor infos.
+static_assert(sizeof(Backend::BufferBinding) == sizeof(VkDescriptorBufferInfo) &&
+              offsetof(Backend::BufferBinding, buffer) == offsetof(VkDescriptorBufferInfo, buffer) &&
+              offsetof(Backend::BufferBinding, offset) == offsetof(VkDescriptorBufferInfo, offset) &&
+              offsetof(Backend::BufferBinding, range) == offsetof(VkDescriptorBufferInfo, range));
+static_assert(sizeof(Backend::ImageBinding) == sizeof(VkDescriptorImageInfo) &&
+              offsetof(Backend::ImageBinding, sampler) == offsetof(VkDescriptorImageInfo, sampler) &&
+              offsetof(Backend::ImageBinding, view) == offsetof(VkDescriptorImageInfo, imageView) &&
+              offsetof(Backend::ImageBinding, layout) == offsetof(VkDescriptorImageInfo, imageLayout));
 // Pipeline keys hold write masks; the serialized shader cache depends on their size.
 static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags));
 
@@ -175,6 +191,26 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
         },
         .imageOffset = {c.x, c.y, c.z},
         .imageExtent = {c.width, c.height, c.depth},
+    };
+}
+[[nodiscard]] inline Backend::BufferBinding MakeBufferBinding(vk::Buffer buffer, u64 offset,
+                                                              u64 range) noexcept {
+    return {reinterpret_cast<u64>(static_cast<VkBuffer>(buffer)), offset, range};
+}
+[[nodiscard]] inline Backend::ImageBinding MakeImageBinding(vk::Sampler sampler, vk::ImageView view,
+                                                            vk::ImageLayout layout) noexcept {
+    return {reinterpret_cast<u64>(static_cast<VkSampler>(sampler)),
+            reinterpret_cast<u64>(static_cast<VkImageView>(view)), static_cast<u32>(layout)};
+}
+/// The adapter's slot write as Vulkan's (its infos are read in place).
+[[nodiscard]] inline vk::WriteDescriptorSet ToVk(const Backend::SlotWrite& w) noexcept {
+    return vk::WriteDescriptorSet{
+        .dstBinding = w.slot,
+        .dstArrayElement = 0,
+        .descriptorCount = w.count,
+        .descriptorType = static_cast<vk::DescriptorType>(w.kind),
+        .pImageInfo = reinterpret_cast<const vk::DescriptorImageInfo*>(w.images),
+        .pBufferInfo = reinterpret_cast<const vk::DescriptorBufferInfo*>(w.buffers),
     };
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {

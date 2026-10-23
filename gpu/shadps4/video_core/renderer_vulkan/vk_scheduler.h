@@ -939,6 +939,16 @@ public:
         return {dst, data.size()};
     }
 
+    /// Room for `count` objects of T in the current chunk, for the caller to fill (deferred
+    /// recording only); the command that uses them must follow before the next reservation.
+    template <typename T>
+    T* AllocateRecordData(size_t count) {
+        ProducerScope producer{*this, "AllocateRecordData"};
+        const size_t bytes = count * sizeof(T);
+        ReserveRecordData(bytes + alignof(T));
+        return static_cast<T*>(CurrentChunk().Allocate(bytes, alignof(T)));
+    }
+
     /// Hands recorded commands to the recording threads. Called at points where no caller holds
     /// the raw command buffer; small batches are kept. Without `force` (the end of a draw or
     /// dispatch: nothing but the dynamic state and the render pass carries over to the next
