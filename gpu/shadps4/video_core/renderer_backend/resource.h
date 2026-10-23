@@ -29,10 +29,12 @@ struct BufferTag;
 struct ImageTag;
 struct ImageViewTag;
 struct SamplerTag;
+struct ShaderTag;
 using BufferHandle = Handle<BufferTag>;
 using ImageHandle = Handle<ImageTag>;
 using ImageViewHandle = Handle<ImageViewTag>;
 using SamplerHandle = Handle<SamplerTag>;
+using ShaderHandle = Handle<ShaderTag>;
 
 enum class MemoryClass : u8 {
     DeviceLocal,
@@ -209,6 +211,12 @@ struct BufferImageCopy {
     u32 layers{1};
     s32 x{}, y{}, z{};
     u32 width{1}, height{1}, depth{1};
+};
+
+/// A shader the device made from SPIR-V; an empty handle when the driver rejected the code.
+struct ShaderAllocation {
+    ShaderHandle handle;
+    u64 native{}; ///< Device::NativeHandle(handle)
 };
 
 /// An image the device created.

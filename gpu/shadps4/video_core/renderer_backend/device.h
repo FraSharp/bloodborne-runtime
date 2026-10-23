@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <span>
 #include <string_view>
 
 #include "common/types.h"
@@ -67,6 +68,11 @@ public:
                                                               std::string_view name) = 0;
     virtual void DestroyImageView(ImageViewHandle view) = 0;
 
+    /// A shader from SPIR-V (the shader recompiler's output; the Metal backend converts it).
+    [[nodiscard]] virtual ShaderAllocation CreateShader(std::span<const u32> spirv,
+                                                        std::string_view name) = 0;
+    virtual void DestroyShader(ShaderHandle shader) = 0;
+
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
 
@@ -77,6 +83,7 @@ public:
     [[nodiscard]] virtual u64 NativeHandle(BufferHandle buffer) = 0;
     [[nodiscard]] virtual u64 NativeHandle(ImageHandle image) = 0;
     [[nodiscard]] virtual u64 NativeHandle(ImageViewHandle view) = 0;
+    [[nodiscard]] virtual u64 NativeHandle(ShaderHandle shader) = 0;
 };
 
 } // namespace VideoCore::Backend

@@ -9,6 +9,7 @@
 #include "common/assert.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_discard_frag.h"
 #include "shader_recompiler/backend/spirv/emit_spirv_quad_rect.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/vk_graphics_pipeline.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
@@ -111,6 +112,14 @@ AttachmentBlend AttachmentBlendState(const GraphicsPipelineKey& key, u32 i) {
                                                                    : Backend::BlendFactor::Zero; // 1-A
     }
     return blend;
+}
+
+// The pipeline's own auxiliary stages (rect and quad lists, fixed-quad tessellation), made
+// through the render adapter. Not freed yet: pipelines will own their shaders (A5).
+static vk::ShaderModule AuxShader(const Instance& instance, std::span<const u32> spirv) {
+    const auto shader = BackendDevice::From(instance).CreateShader(spirv, {});
+    ASSERT_MSG(shader.handle, "Failed to compile an auxiliary SPIR-V shader");
+    return vk::ShaderModule{reinterpret_cast<VkShaderModule>(shader.native)};
 }
 
 GraphicsPipeline::GraphicsPipeline(
@@ -292,7 +301,7 @@ GraphicsPipeline::GraphicsPipeline(
         }
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eTessellationControl,
-            .module = CompileSPV(sdata.tcs, instance.GetDevice()),
+            .module = AuxShader(instance, sdata.tcs),
             .pName = "main",
         });
     }
@@ -311,7 +320,7 @@ GraphicsPipeline::GraphicsPipeline(
         }
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eTessellationEvaluation,
-            .module = CompileSPV(sdata.tes, instance.GetDevice()),
+            .module = AuxShader(instance, sdata.tes),
             .pName = "main",
         });
     }
@@ -330,7 +339,7 @@ GraphicsPipeline::GraphicsPipeline(
         }
         shader_stages.emplace_back(vk::PipelineShaderStageCreateInfo{
             .stage = vk::ShaderStageFlagBits::eFragment,
-            .module = CompileSPV(sdata.fragment, instance.GetDevice()),
+            .module = AuxShader(instance, sdata.fragment),
             .pName = "main",
         });
     }

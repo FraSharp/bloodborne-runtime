@@ -25,6 +25,7 @@
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/amdgpu/liverpool.h"
 #include "video_core/cache_storage.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 #include "video_core/renderer_vulkan/vk_draw_prep.h"
@@ -1341,32 +1342,22 @@ vk::ShaderModule PipelineCache::CompileModule(Shader::Info& info, Shader::Runtim
         auto vertex_spv =
             Shader::Backend::SPIRV::EmitSPIRV(profile, vertex_info, ir_program, probe_binding);
         DumpShader(vertex_spv, info.pgm_hash, info.hw_stage, perm_idx, "fixed-vertex.spv");
-        const auto probe_module = CompileSPV(vertex_spv, instance.GetDevice());
-        instance.GetDevice().destroyShaderModule(probe_module);
+        ReleaseShader(MakeShader(vertex_spv, {}));
         std::printf("Fixed quad vertex module: %zu words, %u patch inputs\n", vertex_spv.size(),
                     std::popcount(info.uses_patches));
     }
     DumpShader(spv, info.pgm_hash, info.hw_stage, perm_idx, "spv");
 
-    vk::ShaderModule module;
-
     auto patch = GetShaderPatch(info.pgm_hash, info.hw_stage, perm_idx, "spv");
     const bool is_patched = patch && EmulatorSettings.IsPatchShaders();
     if (is_patched) {
         LOG_INFO(Loader, "Loaded patch for {} shader {:#x}", info.hw_stage, info.pgm_hash);
-        module = CompileSPV(*patch, instance.GetDevice());
-    } else {
-        module = CompileSPV(spv, instance.GetDevice());
     }
-    if (MetalShadow::Enabled()) {
-        MetalShadow::RegisterModule(module, is_patched ? std::span<const u32>{*patch}
-                                                       : std::span<const u32>{spv});
-    }
+    const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
+    const vk::ShaderModule module =
+        MakeShader(is_patched ? std::span<const u32>{*patch} : std::span<const u32>{spv}, name);
 
     RegisterShaderBinary(std::move(spv), info.pgm_hash, perm_idx);
-
-    const auto name = GetShaderName(info.hw_stage, info.pgm_hash, perm_idx);
-    Vulkan::SetObjectName(instance.GetDevice(), module, name);
     if (EmulatorSettings.IsShaderCollect()) {
         DebugState.CollectShader(name, info.sw_stage, module, spv, code,
                                  patch ? *patch : std::span<const u32>{}, is_patched);
@@ -1482,15 +1473,41 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
                            program->modules[perm_idx].spec.fetch_shader_data, perm_hash);
 }
 
+vk::ShaderModule PipelineCache::MakeShader(std::span<const u32> spirv, std::string_view name) {
+    const auto shader = BackendDevice::From(instance).CreateShader(spirv, name);
+    ASSERT_MSG(shader.handle, "Failed to compile SPIR-V shader {}", name);
+    AdoptShader(shader);
+    return vk::ShaderModule{reinterpret_cast<VkShaderModule>(shader.native)};
+}
+
+void PipelineCache::AdoptShader(const VideoCore::Backend::ShaderAllocation& shader) {
+    std::scoped_lock lock{shader_handles_mutex};
+    shader_handles[shader.native] = shader.handle;
+}
+
+void PipelineCache::ReleaseShader(vk::ShaderModule module) {
+    const u64 native = reinterpret_cast<u64>(static_cast<VkShaderModule>(module));
+    VideoCore::Backend::ShaderHandle handle;
+    {
+        std::scoped_lock lock{shader_handles_mutex};
+        const auto it = shader_handles.find(native);
+        if (it == shader_handles.end()) {
+            return;
+        }
+        handle = it->second;
+        shader_handles.erase(it);
+    }
+    BackendDevice::From(instance).DestroyShader(handle);
+}
+
 std::optional<vk::ShaderModule> PipelineCache::ReplaceShader(vk::ShaderModule module,
                                                              std::span<const u32> spv_code) {
     std::optional<vk::ShaderModule> new_module{};
     for (const auto& [_, program] : program_cache) {
         for (auto& m : program->modules) {
             if (m.module == module) {
-                const auto& d = instance.GetDevice();
-                d.destroyShaderModule(m.module);
-                m.module = CompileSPV(spv_code, d);
+                ReleaseShader(m.module);
+                m.module = MakeShader(spv_code, {});
                 new_module = m.module;
             }
         }

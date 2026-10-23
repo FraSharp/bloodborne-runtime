@@ -75,6 +75,11 @@ public:
     /// The create info the backend builds for `desc` (for Vulkan code that makes images like it).
     [[nodiscard]] vk::ImageCreateInfo ImageCreateInfo(const VideoCore::Backend::ImageDesc& desc) const;
 
+    [[nodiscard]] VideoCore::Backend::ShaderAllocation CreateShader(
+        std::span<const u32> spirv, std::string_view name) override;
+    void DestroyShader(VideoCore::Backend::ShaderHandle shader) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::ShaderHandle shader) override;
+
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
     void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
@@ -106,6 +111,7 @@ private:
         images;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::ShaderTag, vk::UniqueShaderModule> shaders;
 };
 
 /// The barrier state of an image backing created by this backend.

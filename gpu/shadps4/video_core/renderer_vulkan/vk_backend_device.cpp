@@ -9,6 +9,7 @@
 #include "bbport_guest_memory.h"
 #include "bbport_metal_residency.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_state.h"
@@ -348,6 +349,51 @@ u64 BackendDevice::NativeHandle(Backend::ImageViewHandle view) {
     std::scoped_lock lock{objects_mutex};
     const vk::UniqueImageView* entry = views.Get(view);
     return entry ? reinterpret_cast<u64>(static_cast<VkImageView>(**entry)) : 0;
+}
+
+Backend::ShaderAllocation BackendDevice::CreateShader(std::span<const u32> spirv,
+                                                      std::string_view name) {
+    auto [result, module] = instance.GetDevice().createShaderModuleUnique(
+        {.codeSize = spirv.size_bytes(), .pCode = spirv.data()});
+    if (result != vk::Result::eSuccess) {
+        return {};
+    }
+    // The Metal path builds its pipeline states from the same SPIR-V.
+    if (MetalShadow::Enabled()) {
+        MetalShadow::RegisterModule(*module, spirv);
+    }
+    if (!name.empty()) {
+        SetObjectName(instance.GetDevice(), *module, name);
+    }
+    Backend::ShaderAllocation allocation{
+        .native = reinterpret_cast<u64>(static_cast<VkShaderModule>(*module)),
+    };
+    std::scoped_lock lock{objects_mutex};
+    allocation.handle = shaders.Insert(std::move(module));
+    return allocation;
+}
+
+void BackendDevice::DestroyShader(Backend::ShaderHandle shader) {
+    if (!shader) {
+        return;
+    }
+    vk::UniqueShaderModule object;
+    {
+        std::scoped_lock lock{objects_mutex};
+        vk::UniqueShaderModule* entry = shaders.Get(shader);
+        if (!entry) {
+            return;
+        }
+        object = std::move(*entry);
+        shaders.Erase(shader);
+    }
+    DeferRelease([object = std::move(object)] {});
+}
+
+u64 BackendDevice::NativeHandle(Backend::ShaderHandle shader) {
+    std::scoped_lock lock{objects_mutex};
+    const vk::UniqueShaderModule* entry = shaders.Get(shader);
+    return entry ? reinterpret_cast<u64>(static_cast<VkShaderModule>(**entry)) : 0;
 }
 
 Backend::SamplerHandle BackendDevice::CreateSampler(const Backend::SamplerDesc& desc) {

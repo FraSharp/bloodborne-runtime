@@ -2,7 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A4 are done; A5 (pipelines and shaders) is next.
+**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders through the adapter;
+pipelines from their keys next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -262,6 +263,13 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   raised recording from ~4.2 to ~5.8 µs per draw. Measured: 38.6 and 38.7 FPS against 37.9,
   4.1 µs per draw against 4.2. The rasterizer's only remaining Vulkan call is the vertex input
   state, which moves with the pipelines (A5).
+
+- **A5, shaders:** game shaders are made through `Device::CreateShader` (SPIR-V in, a handle
+  out; an empty handle when the driver rejects the code, which the shader-cache loader treats
+  as a damaged entry) and freed through `DestroyShader`. The Vulkan backend registers the SPIR-V
+  with the Metal path itself. The pipeline cache keeps each module's handle (the probe module
+  and `ReplaceShader` free through it). One Metal run: every Metal pipeline built (0 failed, no
+  SPIR-V missing), the Vulkan cache warm, 38.5 FPS and 4.2 µs per draw, the frame correct.
 
 ## Decisions
 
