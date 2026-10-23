@@ -38,7 +38,7 @@ struct TilingInfo {
 };
 
 TileManager::TileManager(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
-                         Vulkan::Runtime& runtime_, StreamBuffer& stream_buffer_)
+                         VideoCore::Backend::Transfers& runtime_, StreamBuffer& stream_buffer_)
     : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, stream_buffer{stream_buffer_},
       recorder{scheduler_, Vulkan::BackendDevice::From(instance_).GetDescriptorHeap(),
                instance_.GetDevice()} {

@@ -435,6 +435,13 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   rasterizer uses the recorder for it. Measured, new build first: 4.24 µs per draw against
   4.23, 26.1 ms median both (a base-first pair read 4.60 against 4.07, with that new run's
   frame rate low throughout; the reversed pair did not repeat it).
+- **M2, transfers:** `renderer_backend/transfers.h` is the adapter's transfers and declared
+  uses on the caches' objects (buffer and image copies, uploads and downloads, fills and
+  updates, clears with their deferral, image and buffer accesses, barrier flushes, the staging
+  pool). The Vulkan `Runtime` implements it (`final`: calls through it stay direct); the
+  texture cache, its images, the tile manager and the buffer cache hold the interface. Measured,
+  new build first: 4.11 µs per draw against 4.17 (a base-first pair read 4.61 against 4.18
+  again; reversed, nothing), the frame correct.
 
 ## Decisions
 

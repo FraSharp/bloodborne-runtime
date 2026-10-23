@@ -5,6 +5,7 @@
 
 #include "common/types.h"
 #include "video_core/buffer_cache/buffer.h"
+#include "video_core/renderer_backend/transfers.h"
 #include "video_core/renderer_vulkan/vk_barrier_tracker.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/texture_cache/image.h"
@@ -22,7 +23,8 @@ class SceneTargets;
 class Instance;
 class Scheduler;
 
-class Runtime {
+/// The Vulkan backend's transfers and declared uses (renderer_backend/transfers.h).
+class Runtime final : public VideoCore::Backend::Transfers {
 public:
     explicit Runtime(const Instance& instance, Scheduler& scheduler);
     ~Runtime() = default;
@@ -35,27 +37,31 @@ public:
         return instance;
     }
 
-    StagingBufferPool& GetStagingPool() {
+    StagingBufferPool& GetStagingPool() override {
         return staging_pool;
     }
 
-    void TickFrame();
+    void TickFrame() override;
     SceneTargets* scene_targets = nullptr;
 
     // The render adapter's regions (docs/RENDER_ADAPTER.md, A3), converted where recorded.
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
-                    std::span<const VideoCore::Backend::BufferCopy> copies);
+                    std::span<const VideoCore::Backend::BufferCopy> copies) override;
+    void CopyFromGuestChunk(u64 src, const VideoCore::Buffer* dst,
+                            std::span<const VideoCore::Backend::BufferCopy> copies) override {
+        CopyFromGuestChunk(vk::Buffer{reinterpret_cast<VkBuffer>(src)}, dst, copies);
+    }
     void CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
                             std::span<const VideoCore::Backend::BufferCopy> copies);
     void UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,
-                     std::span<const VideoCore::Backend::BufferImageCopy> upload_copies);
+                     std::span<const VideoCore::Backend::BufferImageCopy> upload_copies) override;
     void DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
-                       std::span<const VideoCore::Backend::BufferImageCopy> download_copies);
+                       std::span<const VideoCore::Backend::BufferImageCopy> download_copies) override;
 
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
                     std::span<const vk::BufferCopy> copies);
 
-    void FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32 value);
+    void FillBuffer(const VideoCore::Buffer* dst, u64 offset, u64 size, u32 value) override;
 
     void InlineData(VideoCore::Buffer* dst, u64 offset, u32 value);
     /// bbport BB_GUEST_IN_PLACE: copies from the game's memory itself (a guest memory chunk's
@@ -63,15 +69,15 @@ public:
     void CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
                             std::span<const vk::BufferCopy> copies);
     /// bbport: `data` written into `dst` by the GPU in stream order (vkCmdUpdateBuffer pieces).
-    void UpdateBuffer(const VideoCore::Buffer* dst, u64 offset, std::span<const u8> data);
+    void UpdateBuffer(const VideoCore::Buffer* dst, u64 offset, std::span<const u8> data) override;
 
     /// The render adapter's declaration of a use (docs/RENDER_ADAPTER.md): the layout, stages
     /// and accesses follow from it and the image (depth, stencil, feedback-loop support).
     bool Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess access,
-                 std::optional<VideoCore::SubresourceRange> subres_range = {});
+                 std::optional<VideoCore::SubresourceRange> subres_range = {}) override;
     void AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
-                      VideoCore::Backend::BufferAccess access);
-    void AccessGlobal(VideoCore::Backend::BufferAccess access);
+                      VideoCore::Backend::BufferAccess access) override;
+    void AccessGlobal(VideoCore::Backend::BufferAccess access) override;
 
     bool Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                  vk::PipelineStageFlags2 dst_stage, vk::AccessFlags2 dst_access,
@@ -95,58 +101,55 @@ public:
     void DownloadImage(VideoCore::Image* src, const VideoCore::Buffer* dst,
                        std::span<const vk::BufferImageCopy> download_copies);
 
-    void CopyImage(VideoCore::Image* src, VideoCore::Image* dst);
+    void CopyImage(VideoCore::Image* src, VideoCore::Image* dst) override;
     void CopyImageWithBuffer(VideoCore::Image* src, VideoCore::Image* dst,
                              const VideoCore::Buffer* buffer, u64 offset);
-    void CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32 slice);
+    void CopyMip(VideoCore::Image* src, VideoCore::Image* dst, u32 mip, u32 slice) override;
 
-    void CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst);
+    void CopyColorAndDepth(VideoCore::Image* src, VideoCore::Image* dst) override;
 
     void CopyDepthStencil(VideoCore::Image* src, VideoCore::Image* dst,
-                          const VideoCore::SubresourceRange& sub_range);
+                          const VideoCore::SubresourceRange& sub_range) override;
 
     void ResolveImage(VideoCore::Image* src, VideoCore::Image* dst,
                       const VideoCore::SubresourceRange& src_range,
-                      const VideoCore::SubresourceRange& dst_range);
+                      const VideoCore::SubresourceRange& dst_range) override;
     void ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
-                    const VideoCore::Backend::ClearColor& clear_value);
+                    const VideoCore::Backend::ClearColor& clear_value) override;
     /// bbport BB_DEFER_CLEARS (default on, =0 to disable): ClearImage notes the clear on the
     /// image; a render pass that draws into the whole cleared range takes it as its load action
     /// (TakePendingClear), and
     /// anything else that uses the image records it first (ResolvePendingClear, from Transit).
     /// A clear between passes is a render pass of its own on tile-based GPUs.
     static bool DeferClears();
-    enum class ClearResolveReason : u8 {
-        Copy, Sample, OtherAccess, ReducedPass, UpscalerRedirect, ViewRange,
-        SmallRenderArea, MultiLevelOrLayer, BackingSwap, Superseded, Other,
-        Count,
-    };
+    using ClearResolveReason = VideoCore::Backend::Transfers::ClearResolveReason;
     void ResolvePendingClear(VideoCore::Image* image,
-                             ClearResolveReason reason = ClearResolveReason::Other);
+                             ClearResolveReason reason = ClearResolveReason::Other) override;
     bool TakePendingClear(VideoCore::Image* image, const VideoCore::SubresourceRange& range,
-                          VideoCore::Backend::ClearColor& value);
+                          VideoCore::Backend::ClearColor& value) override;
 
-    void SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool copy_backing = true);
+    void SetBackingSamples(VideoCore::Image* image, u32 num_samples,
+                           bool copy_backing = true) override;
 
     void AccessBuffer(const VideoCore::Buffer* handle, u64 offset, u64 size,
                       vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access);
 
     bool IsBufferAccessed(const VideoCore::Buffer* handle, u64 offset, u64 size,
-                          bool check_read_access = false);
+                          bool check_read_access = false) override;
 
     /// bbport BB_LAYER_MEMORY: a shader reached memory through the page table (any buffer of the
     /// game's memory). A write there makes every later access wait for a barrier.
     void AccessGlobal(vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access);
 
-    void FlushBarriers();
+    void FlushBarriers() override;
 
     /// bbport: runs before this thread changes image state (layouts, pending image
     /// barriers): the rasterizer joins its texture binding helper there (BindHelper).
-    void SetImageAccessHook(void (*hook)(void*), void* context) {
+    void SetImageAccessHook(void (*hook)(void*), void* context) override {
         image_access_hook = hook;
         image_access_context = context;
     }
-    void BeforeImageAccess() {
+    void BeforeImageAccess() override {
         if (image_access_hook) {
             image_access_hook(image_access_context);
         }

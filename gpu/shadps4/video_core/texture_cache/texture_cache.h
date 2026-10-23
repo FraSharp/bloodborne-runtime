@@ -6,6 +6,7 @@
 #include <string>
 #include <atomic>
 #include <chrono>
+#include "video_core/renderer_backend/transfers.h"
 #include "bbport_toggles.h"
 
 #include <condition_variable>
@@ -86,7 +87,7 @@ public:
 
 public:
     TextureCache(Backend::Device& device, const Vulkan::Instance& instance,
-                 Vulkan::Scheduler& scheduler, Vulkan::Runtime& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
+                 Vulkan::Scheduler& scheduler, VideoCore::Backend::Transfers& runtime, AmdGpu::Liverpool* liverpool, BufferCache& buffer_cache,
                  PageManager& tracker);
     ~TextureCache();
 
@@ -401,7 +402,7 @@ private:
     Backend::Device& device;
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
-    Vulkan::Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime;
     AmdGpu::Liverpool* liverpool;
     BufferCache& buffer_cache;
     PageManager& tracker;

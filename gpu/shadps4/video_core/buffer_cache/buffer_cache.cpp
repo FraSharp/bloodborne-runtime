@@ -680,7 +680,7 @@ std::optional<u32> FindMemoryType(const vk::PhysicalDeviceMemoryProperties& prop
 
 BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& instance_,
                          Vulkan::Scheduler& scheduler_,
-                         Vulkan::Runtime& runtime_, AmdGpu::Liverpool* liverpool_,
+                         VideoCore::Backend::Transfers& runtime_, AmdGpu::Liverpool* liverpool_,
                          TextureCache& texture_cache_, PageManager& tracker)
     : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_},
       staging_pool{runtime_.GetStagingPool()}, liverpool{liverpool_},
@@ -2725,7 +2725,7 @@ void BufferCache::ProcessLateWrites() {
                 phys + (to - at) <= chunk->phys + chunk->size) {
                 const auto* arena = GetArena(block, block);
                 const Backend::BufferCopy copy{phys - chunk->phys, at - arena->cpu_addr, to - at};
-                runtime.CopyFromGuestChunk(chunk->buffer, arena, std::span{&copy, 1});
+                runtime.CopyFromGuestChunk(Vulkan::ToNative(chunk->buffer), arena, std::span{&copy, 1});
                 BbStats::late_vram_writes.fetch_add(1, std::memory_order_relaxed);
             }
             at = to;
@@ -3422,7 +3422,7 @@ bool BufferCache::SynchronizeMemory(const Buffer* arena, VAddr device_addr, u32 
                 continue;
             }
         }
-        runtime.CopyFromGuestChunk(chunk_buffer, arena, std::span{&copy, 1});
+        runtime.CopyFromGuestChunk(Vulkan::ToNative(chunk_buffer), arena, std::span{&copy, 1});
     }
     if (is_texel_buffer && !is_written) {
         return SynchronizeMemoryFromImage(arena, arena->Offset(device_addr), device_addr, size);

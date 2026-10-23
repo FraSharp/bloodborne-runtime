@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include "video_core/renderer_backend/transfers.h"
 #include "common/enum.h"
 #include "common/incremental_id.h"
 #include "common/types.h"
@@ -38,7 +39,7 @@ DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
 struct Image {
     explicit Image(Backend::Device& device, const Vulkan::Instance& instance,
-                   Vulkan::Runtime& runtime, Common::SlotVector<ImageView>& slot_image_views,
+                   VideoCore::Backend::Transfers& runtime, Common::SlotVector<ImageView>& slot_image_views,
                    const ImageInfo& info);
     ~Image();
 
@@ -128,7 +129,7 @@ public:
 
     ImageInfo info;
     Backend::Device* device{};
-    Vulkan::Runtime* runtime;
+    VideoCore::Backend::Transfers* runtime;
     Common::SlotVector<ImageView>* slot_image_views;
     vk::ImageAspectFlags aspect_mask = vk::ImageAspectFlagBits::eColor;
     vk::SampleCountFlags supported_samples = vk::SampleCountFlagBits::e1;

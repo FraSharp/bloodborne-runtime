@@ -7,6 +7,7 @@
 #include <utility>
 #include <boost/container_hash/hash.hpp>
 
+#include "video_core/renderer_backend/transfers.h"
 #include "common/types.h"
 #include "video_core/amdgpu/tiling.h"
 #include "video_core/buffer_cache/buffer.h"
@@ -45,7 +46,7 @@ class TileManager {
 
 public:
     explicit TileManager(const Vulkan::Instance& instance, Vulkan::Scheduler& scheduler,
-                         Vulkan::Runtime& runtime, StreamBuffer& stream_buffer);
+                         VideoCore::Backend::Transfers& runtime, StreamBuffer& stream_buffer);
     ~TileManager();
 
     void TileImage(Image& in_image, std::span<Backend::BufferImageCopy> buffer_copies,
@@ -65,7 +66,7 @@ private:
 private:
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
-    Vulkan::Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime;
     StreamBuffer& stream_buffer;
     Vulkan::CommandRecorder recorder; ///< the render adapter's, for the tiling dispatches
     std::unordered_map<TilingKey, Vulkan::HostPipeline, TilingKey::Hash> tiling_pipelines;

@@ -68,7 +68,7 @@ static Backend::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
 
 
 Image::Image(Backend::Device& device_, const Vulkan::Instance& instance,
-             Vulkan::Runtime& runtime_, Common::SlotVector<ImageView>& slot_image_views_,
+             VideoCore::Backend::Transfers& runtime_, Common::SlotVector<ImageView>& slot_image_views_,
              const ImageInfo& info_)
     : guest_begin{info_.guest_address}, guest_end{info_.guest_address + info_.guest_size},
       info{info_}, device{&device_}, runtime{&runtime_}, slot_image_views{&slot_image_views_} {

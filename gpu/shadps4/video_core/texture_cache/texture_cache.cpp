@@ -115,7 +115,7 @@ u64 HashUploadGuestMemory(VAddr address, u64 size, bool shared) {
 } // namespace
 
 TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& instance_,
-                           Vulkan::Scheduler& scheduler_, Vulkan::Runtime& runtime_,
+                           Vulkan::Scheduler& scheduler_, VideoCore::Backend::Transfers& runtime_,
                            AmdGpu::Liverpool* liverpool_, BufferCache& buffer_cache_,
                            PageManager& tracker_)
     : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
