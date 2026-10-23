@@ -9,6 +9,7 @@
 #include <string_view>
 
 #include "video_core/renderer_backend/pipeline.h"
+#include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 namespace Vulkan {
@@ -72,6 +73,39 @@ private:
     BackendDevice* device{};
     VideoCore::Backend::SamplerHandle sampler;
     vk::Sampler native;
+};
+
+/// An image the device made from a Vulkan create info (optimal tiling, undefined initial layout),
+/// for code that still records itself; freed once the GPU is past it.
+class HostImage {
+public:
+    HostImage() = default;
+    explicit HostImage(BackendDevice& device) : device{&device} {}
+    ~HostImage();
+
+    HostImage(HostImage&& other) noexcept;
+    HostImage& operator=(HostImage&& other) noexcept;
+    HostImage(const HostImage&) = delete;
+    HostImage& operator=(const HostImage&) = delete;
+
+    void Create(const vk::ImageCreateInfo& create_info);
+    void Destroy();
+
+    operator vk::Image() const noexcept {
+        return vk::Image{reinterpret_cast<VkImage>(allocation.native)};
+    }
+    explicit operator bool() const noexcept {
+        return bool(allocation.handle);
+    }
+    [[nodiscard]] const VideoCore::Backend::ImageAllocation& Allocation() const noexcept {
+        return allocation;
+    }
+
+    vk::ImageCreateInfo image_ci{}; ///< as it was made
+
+private:
+    BackendDevice* device{};
+    VideoCore::Backend::ImageAllocation allocation;
 };
 
 } // namespace Vulkan

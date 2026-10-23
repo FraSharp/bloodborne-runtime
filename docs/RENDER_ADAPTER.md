@@ -337,6 +337,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   implements it, keeping its semaphores for the presenter's submissions, and the presenter
   calls it through those names. Measured: 38.5 FPS, 4.15 µs per draw, the frame correct.
 
+- **A6, upscaler images:** the images of the upscalers, scene resolution and object motion are
+  made through the device (`HostImage`, `vk_host_objects.h`, from their Vulkan create infos)
+  and freed once the GPU is past them; FidelityFX, MetalFX and FSR 4 receive their Vulkan
+  objects. `ImageDesc::mutable_format` lets an image refuse views in other formats: made
+  mutable, the upscaler images cost MetalFX about 2.5% (30.9 against 30.1 ms median); kept as
+  they were, 30.1 against 29.9. Measured: no faults with FSR 3.1 (35.6 ms median against
+  35.2–35.4), TAA (with Metal API validation, no new messages) and MetalFX, frames correct.
+
 ## Decisions
 
 Taken by the maintainer on 2026-10-22:

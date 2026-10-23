@@ -242,8 +242,8 @@ private:
     std::string ui_trace;
     bool display_redirect = false; ///< the display pass of an upscaled frame
     bool ui_read_barrier = false;
-    Vulkan::UniqueImage ui_image;
-    Vulkan::UniqueImage ui_depth_image;
+    HostImage ui_image;
+    HostImage ui_depth_image;
     vk::UniqueImageView ui_view;
     vk::UniqueImageView ui_depth_view;
     bool depth_blit = false;
@@ -262,7 +262,7 @@ private:
                          vk::ComponentMapping mapping);
     std::vector<MirrorView> ui_views;
     struct DisplayImage {
-        Vulkan::UniqueImage image;
+        HostImage image;
         std::vector<MirrorView> views;
         vk::Format format{};
         u32 width = 0, height = 0;
@@ -280,17 +280,17 @@ private:
     std::unique_ptr<MetalFxUpscaler> metalfx;
     bool fsr4_failed = false;
     bool dlss_failed = false;
-    Vulkan::UniqueImage motion_image;
-    Vulkan::UniqueImage output_image;
+    HostImage motion_image;
+    HostImage output_image;
     vk::UniqueImageView motion_view;
     vk::UniqueImageView output_view;
-    Vulkan::UniqueImage opaque_image;   ///< scene color before the blended draws
-    Vulkan::UniqueImage reactive_image; ///< R8 reactive mask
+    HostImage opaque_image;   ///< scene color before the blended draws
+    HostImage reactive_image; ///< R8 reactive mask
     vk::UniqueImageView opaque_view;
     vk::UniqueImageView reactive_view;
     HostPipeline reactive_pipeline;
     HostPipeline merge_pipeline;
-    std::array<Vulkan::UniqueImage, 2> taa_history;
+    std::array<HostImage, 2> taa_history;
     std::array<vk::UniqueImageView, 2> taa_history_views;
     u32 taa_next = 0;
     HostSampler taa_sampler;
@@ -299,7 +299,7 @@ private:
     HostPipeline taa_sharpen_ldr_pipeline;
     // bbport: FSR 4 in linear light on the scaled presets (fsr4_color.comp): the decoded input
     // and the passes that decode it and encode the output again.
-    Vulkan::UniqueImage fsr4_linear_image;
+    HostImage fsr4_linear_image;
     bool fsr4_linear_frame = false; ///< this frame's FSR 4 input was decoded (and the output encoded)
     vk::UniqueImageView fsr4_linear_view;
     HostPipeline fsr4_decode_pipeline;
@@ -312,7 +312,7 @@ private:
     void RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageView color, u32 w, u32 h, u32 ow,
                             u32 oh);
     // ExtraSharpen: a copy of the upscaled frame (RCAS reads neighbours) and the target views.
-    Vulkan::UniqueImage extra_sharpen_image;
+    HostImage extra_sharpen_image;
     vk::UniqueImageView extra_sharpen_view;
     u32 extra_sharpen_width = 0, extra_sharpen_height = 0;
     vk::UniqueImageView ui_storage_view;

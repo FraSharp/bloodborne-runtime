@@ -203,15 +203,18 @@ u64 BackendDevice::NativeHandle(Backend::BufferHandle buffer) {
 }
 
 vk::ImageCreateInfo BackendDevice::ImageCreateInfo(const Backend::ImageDesc& desc) const {
-    vk::ImageCreateFlags flags{vk::ImageCreateFlagBits::eMutableFormat |
-                               vk::ImageCreateFlagBits::eExtendedUsage};
+    vk::ImageCreateFlags flags{};
+    if (desc.mutable_format) {
+        flags |= vk::ImageCreateFlagBits::eMutableFormat | vk::ImageCreateFlagBits::eExtendedUsage;
+    }
     if (desc.views_of_3d_slices) {
         flags |= vk::ImageCreateFlagBits::e2DArrayCompatible;
         if (instance.Is2dViewOf3dSupported()) {
             flags |= vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
         }
     }
-    if (desc.uncompressed_block_views && instance.IsBlockTexelViewSupported()) {
+    if (desc.uncompressed_block_views && desc.mutable_format &&
+        instance.IsBlockTexelViewSupported()) {
         flags |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
     }
     return vk::ImageCreateInfo{

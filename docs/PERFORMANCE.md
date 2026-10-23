@@ -76,6 +76,9 @@ route. Both upscalers rendered it correctly; image quality is a separate choice.
 
 ## Made things worse
 
+- Images that allow views in other formats (`VK_IMAGE_CREATE_MUTABLE_FORMAT_BIT`) where none are
+  needed (Metal may then leave them uncompressed). The upscaler's images made so cost MetalFX
+  about 2.5% of frame time (30.9 against 30.1 ms median).
 - A CPU fence on swapchain acquire.
 - Waiting on the CPU for each frame before presenting it: crashes while a save loaded.
 

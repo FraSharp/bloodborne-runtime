@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 
@@ -199,7 +200,7 @@ ObjectMotion::Target& ObjectMotion::GetTarget(u32 width, u32 height) {
                     slot->width ? " (replacing one)" : "");
     }
     const auto device = instance.GetDevice();
-    slot->image = Vulkan::UniqueImage(device, instance.GetAllocator());
+    slot->image = HostImage(BackendDevice::From(instance));
     slot->image.Create(vk::ImageCreateInfo{
         .imageType = vk::ImageType::e2D,
         .format = vk::Format::eR32G32B32A32Sfloat,

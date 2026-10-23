@@ -5,6 +5,7 @@
 
 #include "common/assert.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_host_objects.h"
 
 namespace Vulkan {
@@ -75,6 +76,57 @@ HostSampler& HostSampler::operator=(HostSampler&& other) noexcept {
         native = std::exchange(other.native, {});
     }
     return *this;
+}
+
+HostImage::~HostImage() {
+    Destroy();
+}
+
+HostImage::HostImage(HostImage&& other) noexcept
+    : image_ci{other.image_ci}, device{std::exchange(other.device, nullptr)},
+      allocation{std::exchange(other.allocation, {})} {}
+
+HostImage& HostImage::operator=(HostImage&& other) noexcept {
+    if (this != &other) {
+        Destroy();
+        image_ci = other.image_ci;
+        device = std::exchange(other.device, nullptr);
+        allocation = std::exchange(other.allocation, {});
+    }
+    return *this;
+}
+
+void HostImage::Create(const vk::ImageCreateInfo& create_info) {
+    ASSERT(device && create_info.tiling == vk::ImageTiling::eOptimal &&
+           create_info.initialLayout == vk::ImageLayout::eUndefined);
+    Destroy();
+    image_ci = create_info;
+    // The adapter's types have Vulkan's values (vk_state.h).
+    allocation = device->CreateImage(
+        {
+            .type = Backend::ImageType(s32(create_info.imageType)),
+            .format = FromVk(create_info.format),
+            .width = create_info.extent.width,
+            .height = create_info.extent.height,
+            .depth = create_info.extent.depth,
+            .levels = create_info.mipLevels,
+            .layers = create_info.arrayLayers,
+            .samples = u32(create_info.samples),
+            .usage = Backend::ImageUse(u32(create_info.usage)),
+            .views_of_3d_slices = bool(create_info.flags & vk::ImageCreateFlagBits::e2DArrayCompatible),
+            .uncompressed_block_views =
+                bool(create_info.flags & vk::ImageCreateFlagBits::eBlockTexelViewCompatible),
+            .mutable_format = bool(create_info.flags & vk::ImageCreateFlagBits::eMutableFormat),
+        },
+        {});
+    ASSERT_MSG(allocation.handle, "Failed to create an image of a host pass");
+}
+
+void HostImage::Destroy() {
+    if (device && allocation.handle) {
+        device->DestroyImage(allocation.handle);
+    }
+    allocation = {};
 }
 
 } // namespace Vulkan

@@ -115,6 +115,9 @@ struct ImageDesc {
     ImageUse usage{ImageUse::None};
     bool views_of_3d_slices{};       ///< a 3D image viewed as 2D slices
     bool uncompressed_block_views{}; ///< a block-compressed image viewed as uncompressed
+    /// Views in other formats of the same size. Metal may leave images that allow them
+    /// uncompressed: the upscaler's images cost MetalFX ~2.5% so (docs/PERFORMANCE.md).
+    bool mutable_format{true};
 
     auto operator<=>(const ImageDesc&) const = default;
 };

@@ -383,6 +383,7 @@ void FsrPass::CreateImages(Img& img) const {
         .width = cur_size.width,
         .height = cur_size.height,
         .usage = Backend::ImageUse::Sampled | Backend::ImageUse::Storage,
+        .mutable_format = false,
     };
     img.intermediary = device->CreateImage(desc, fmt::format("FSR Intermediary Image #{}", img.id));
     desc.usage = Backend::ImageUse::TransferSource | Backend::ImageUse::Sampled |

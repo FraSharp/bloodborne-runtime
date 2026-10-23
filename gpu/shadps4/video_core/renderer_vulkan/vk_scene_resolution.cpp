@@ -405,7 +405,7 @@ SceneTargets::Entry& SceneTargets::Get(VideoCore::ImageId id, u32 level) {
         entry->source = id;
         entry->uid = original.image_uid;
         entry->level = level;
-        entry->image = Vulkan::UniqueImage(instance.GetDevice(), instance.GetAllocator());
+        entry->image = HostImage(BackendDevice::From(instance));
         auto ci = BackendDevice::From(instance).ImageCreateInfo(original.backing->desc);
         ci.pNext = nullptr;
         const auto proxy = ProxySize(original, level);
