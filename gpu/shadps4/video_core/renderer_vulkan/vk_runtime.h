@@ -109,7 +109,7 @@ public:
                       const VideoCore::SubresourceRange& src_range,
                       const VideoCore::SubresourceRange& dst_range);
     void ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
-                    const vk::ClearValue& clear_value);
+                    const VideoCore::Backend::ClearColor& clear_value);
     /// bbport BB_DEFER_CLEARS (default on, =0 to disable): ClearImage notes the clear on the
     /// image; a render pass that draws into the whole cleared range takes it as its load action
     /// (TakePendingClear), and
@@ -124,7 +124,7 @@ public:
     void ResolvePendingClear(VideoCore::Image* image,
                              ClearResolveReason reason = ClearResolveReason::Other);
     bool TakePendingClear(VideoCore::Image* image, const VideoCore::SubresourceRange& range,
-                          vk::ClearColorValue& value);
+                          VideoCore::Backend::ClearColor& value);
 
     void SetBackingSamples(VideoCore::Image* image, u32 num_samples, bool copy_backing = true);
 
@@ -159,7 +159,7 @@ private:
                        vk::AccessFlags2 dst_mask, vk::PipelineStageFlags2 dst_stage,
                        std::optional<VideoCore::SubresourceRange> subres_range);
     void RecordClear(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
-                     const vk::ClearColorValue& color);
+                     const VideoCore::Backend::ClearColor& value);
     void (*image_access_hook)(void*) = nullptr;
     void* image_access_context = nullptr;
     const Instance& instance;

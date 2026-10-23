@@ -3557,9 +3557,8 @@ bool Rasterizer::IsComputeImageClear(const Pipeline* pipeline) {
 
     // Perform image clear
     const float* values = reinterpret_cast<float*>(buf0.base_address);
-    const vk::ClearValue clear = {
-        .color = {.float32 = std::array<float, 4>{values[0], values[1], values[2], values[3]}},
-    };
+    const Backend::ClearColor clear{std::bit_cast<u32>(values[0]), std::bit_cast<u32>(values[1]),
+                                    std::bit_cast<u32>(values[2]), std::bit_cast<u32>(values[3])};
     const VideoCore::SubresourceRange range = {
         .base =
             {
@@ -4461,7 +4460,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         // bbport BB_DEFER_CLEARS: a deferred clear of exactly this view becomes the pass's load
         // action (the pass's final size is checked below); otherwise it is recorded now.
-        vk::ClearColorValue taken_clear{};
+        Backend::ClearColor taken_clear{};
         const bool takes_clear = image->pending_clear && !reduced && !image->binding.is_bound &&
                                  !is_clear && !(cb == 0 && color_redirected) &&
                                  runtime.TakePendingClear(image, image_view.info.range, taken_clear);
@@ -4494,14 +4493,14 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.num_layers = std::min<u32>(state.num_layers, image_view.info.range.extent.layers);
 
         const auto clear_value =
-            is_clear ? LiverpoolToVK::ColorBufferClearValue(col_buf) : vk::ClearValue{};
+            is_clear ? LiverpoolToVK::ColorBufferClearValue(col_buf) : Backend::ClearColor{};
         auto& attachment = state.color_attachments[cb];
         attachment.image_view = Vulkan::ToNative(image_view.Handle());
         attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image->backing).state.layout);
-        attachment.clear_value = clear_value.color.uint32;
+        attachment.clear_value = clear_value;
         attachment.is_clear = is_clear;
         if (takes_clear) {
-            attachment.clear_value = taken_clear.uint32;
+            attachment.clear_value = taken_clear;
             attachment.is_clear = true;
             taken_clears.push_back(image_id);
         }
@@ -4868,9 +4867,9 @@ void Rasterizer::CopyBuffer(VAddr dst, VAddr src, u32 num_bytes, bool dst_gds, b
         }
         return buffer_cache.ObtainBuffer(dst, num_bytes, true, true);
     }();
-    const vk::BufferCopy copy = {
-        .srcOffset = src_offset,
-        .dstOffset = dst_offset,
+    const Backend::BufferCopy copy{
+        .src_offset = src_offset,
+        .dst_offset = dst_offset,
         .size = num_bytes,
     };
     runtime.CopyBuffer(src_buffer, dst_buffer, std::span{&copy, 1});

@@ -25,19 +25,19 @@ namespace Vulkan {
 // vkCmdCopyBuffer with that many regions it cost ~37 ns of GPU time per range (~2.1 ms per
 // frame) plus the recording; buffer_multi_copy.comp copies all ranges in one dispatch.
 static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
-                      const VideoCore::Buffer* dst, std::span<const vk::BufferCopy> copies) {
+                      const VideoCore::Buffer* dst, std::span<const VideoCore::Backend::BufferCopy> copies) {
     if (copies.size() < 8 || BbToggle::Disabled(BbToggle::MultiCopyShader)) {
         return false;
     }
     u64 src_min = ~0ull, src_max = 0, dst_min = ~0ull, dst_max = 0;
     for (const auto& copy : copies) {
-        if ((copy.srcOffset | copy.dstOffset | copy.size) & 3) {
+        if ((copy.src_offset | copy.dst_offset | copy.size) & 3) {
             return false; // dword copies only
         }
-        src_min = std::min(src_min, copy.srcOffset);
-        src_max = std::max(src_max, copy.srcOffset + copy.size);
-        dst_min = std::min(dst_min, copy.dstOffset);
-        dst_max = std::max(dst_max, copy.dstOffset + copy.size);
+        src_min = std::min(src_min, copy.src_offset);
+        src_max = std::max(src_max, copy.src_offset + copy.size);
+        dst_min = std::min(dst_min, copy.dst_offset);
+        dst_max = std::max(dst_max, copy.dst_offset + copy.size);
     }
     auto& runtime = rasterizer.GetRuntime();
     auto& scheduler = runtime.GetScheduler();
@@ -61,8 +61,8 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     thread_local std::vector<u32> regions;
     regions.resize(copies.size() * 4);
     for (size_t i = 0; i < copies.size(); ++i) {
-        regions[i * 4 + 0] = static_cast<u32>((copies[i].srcOffset - src_min) / 4);
-        regions[i * 4 + 1] = static_cast<u32>((copies[i].dstOffset - dst_min) / 4);
+        regions[i * 4 + 0] = static_cast<u32>((copies[i].src_offset - src_min) / 4);
+        regions[i * 4 + 1] = static_cast<u32>((copies[i].dst_offset - dst_min) / 4);
         regions[i * 4 + 2] = static_cast<u32>(copies[i].size / 4);
         regions[i * 4 + 3] = 0;
     }
@@ -110,7 +110,7 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
 // cannot contain), the copies run before the pass began, then a barrier: the pass is not split
 // (a split stores and reloads all its attachments: the G-buffer ~24 times a frame).
 static bool HoistCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
-                      const VideoCore::Buffer* dst, std::span<const vk::BufferCopy> copies) {
+                      const VideoCore::Buffer* dst, std::span<const VideoCore::Backend::BufferCopy> copies) {
     auto& runtime = rasterizer.GetRuntime();
     auto& scheduler = runtime.GetScheduler();
     if (!Scheduler::HoistCopies() || !scheduler.IsRendering() || copies.empty()) {
@@ -119,8 +119,8 @@ static bool HoistCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     static std::atomic<u64> hoisted{0}, conflicts{0}, unplaced{0};
     static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
     for (const auto& copy : copies) {
-        if (runtime.IsBufferAccessed(src, copy.srcOffset, copy.size) ||
-            runtime.IsBufferAccessed(dst, copy.dstOffset, copy.size, true)) {
+        if (runtime.IsBufferAccessed(src, copy.src_offset, copy.size) ||
+            runtime.IsBufferAccessed(dst, copy.dst_offset, copy.size, true)) {
             if (stats) ++conflicts;
             return false;
         }
@@ -150,17 +150,24 @@ static bool HoistCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     bool joins = batch && batch_generation == scheduler.PassAnchorGeneration();
     for (const auto& copy : copies) {
         if (!joins) break;
-        const u64 s0 = base_src + copy.srcOffset, d0 = base_dst + copy.dstOffset;
+        const u64 s0 = base_src + copy.src_offset, d0 = base_dst + copy.dst_offset;
         joins = !overlaps(batch->written, s0, s0 + copy.size) &&
                 !overlaps(batch->written, d0, d0 + copy.size) &&
                 !overlaps(batch->read, d0, d0 + copy.size);
     }
     const auto note = [&](Batch& b) {
         b.copies.push_back({src->Handle(), dst->Handle(),
-                            std::vector<vk::BufferCopy>(copies.begin(), copies.end())});
+                            [&] {
+                                std::vector<vk::BufferCopy> regions;
+                                regions.reserve(copies.size());
+                                for (const auto& copy : copies) {
+                                    regions.push_back(ToVk(copy));
+                                }
+                                return regions;
+                            }()});
         for (const auto& copy : copies) {
-            b.read.emplace_back(base_src + copy.srcOffset, base_src + copy.srcOffset + copy.size);
-            b.written.emplace_back(base_dst + copy.dstOffset, base_dst + copy.dstOffset + copy.size);
+            b.read.emplace_back(base_src + copy.src_offset, base_src + copy.src_offset + copy.size);
+            b.written.emplace_back(base_dst + copy.dst_offset, base_dst + copy.dst_offset + copy.size);
         }
     };
     bool placed = false;
@@ -230,7 +237,7 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     ASSERT(ctl_buf_sharp.GetStride() == sizeof(CopyShaderControl));
     const auto ctl_buf = reinterpret_cast<const CopyShaderControl*>(ctl_buf_sharp.base_address);
 
-    static std::vector<vk::BufferCopy> copies;
+    static std::vector<VideoCore::Backend::BufferCopy> copies;
     copies.clear();
     copies.reserve(cs_program.dim_x);
     // bbport BB_COPY_SHADER_TRACE=1 (diagnostics): the copy shader's buffers, every 2 s.
@@ -286,10 +293,10 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     while (batch_end < copies.size()) {
         // Place first copy into the current batch
         const auto& copy = copies[batch_start];
-        auto src_offset_min = copy.srcOffset;
-        auto src_offset_max = copy.srcOffset + copy.size;
-        auto dst_offset_min = copy.dstOffset;
-        auto dst_offset_max = copy.dstOffset + copy.size;
+        auto src_offset_min = copy.src_offset;
+        auto src_offset_max = copy.src_offset + copy.size;
+        auto dst_offset_min = copy.dst_offset;
+        auto dst_offset_max = copy.dst_offset + copy.size;
 
         for (++batch_end; batch_end < copies.size(); batch_end++) {
             // Compute new src and dst bounds if we were to batch this copy
@@ -322,8 +329,8 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
         // Apply found buffer base.
         const auto vk_copies = std::span{copies}.subspan(batch_start, batch_end - batch_start);
         for (auto& copy : vk_copies) {
-            copy.srcOffset = copy.srcOffset - src_offset_min + src_buf_offset;
-            copy.dstOffset = copy.dstOffset - dst_offset_min + dst_buf_offset;
+            copy.src_offset = copy.src_offset - src_offset_min + src_buf_offset;
+            copy.dst_offset = copy.dst_offset - dst_offset_min + dst_buf_offset;
         }
 
         // Execute buffer copies.

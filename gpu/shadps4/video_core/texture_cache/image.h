@@ -110,7 +110,7 @@ public:
     /// image records it first (Runtime::ResolvePendingClear).
     bool pending_clear = false;
     SubresourceRange pending_clear_range{};
-    vk::ClearColorValue pending_clear_value{};
+    Backend::ClearColor pending_clear_value{};
     VAddr track_addr = 0;
     VAddr track_addr_end = 0;
     VAddr guest_begin = 0; ///< info.guest_address

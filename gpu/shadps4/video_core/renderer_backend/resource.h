@@ -177,6 +177,10 @@ struct ImageViewAllocation {
     u64 native{}; ///< Device::NativeHandle(handle)
 };
 
+/// A colour clear's value as 32-bit words, read as float, signed or unsigned per the image's
+/// format (as VkClearColorValue).
+using ClearColor = std::array<u32, 4>;
+
 /// How a draw or dispatch uses an image; each backend derives its layouts and barriers.
 enum class ImageAccess : u8 {
     Sampled,                   ///< read by shaders (depth images: depth read-only)

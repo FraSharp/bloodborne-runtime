@@ -980,9 +980,9 @@ bool Runtime::DeferClears() {
 }
 
 void Runtime::ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
-                         const vk::ClearValue& clear_value) {
+                         const VideoCore::Backend::ClearColor& clear_value) {
     if (!DeferClears()) {
-        RecordClear(dst, range, clear_value.color);
+        RecordClear(dst, range, clear_value);
         return;
     }
     // A later clear of the same range replaces a pending one: nothing used the image between.
@@ -991,7 +991,7 @@ void Runtime::ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRang
     }
     dst->pending_clear = true;
     dst->pending_clear_range = range;
-    dst->pending_clear_value = clear_value.color;
+    dst->pending_clear_value = clear_value;
     dst->flags |= VideoCore::ImageFlagBits::GpuModified;
     dst->flags &= ~VideoCore::ImageFlagBits::Dirty;
     const u64 n = clears_deferred.fetch_add(1, std::memory_order_relaxed) + 1;
@@ -1023,7 +1023,7 @@ void Runtime::ResolvePendingClear(VideoCore::Image* image, ClearResolveReason re
 }
 
 bool Runtime::TakePendingClear(VideoCore::Image* image, const VideoCore::SubresourceRange& range,
-                               vk::ClearColorValue& value) {
+                               VideoCore::Backend::ClearColor& value) {
     if (!image->pending_clear || image->pending_clear_range != range) {
         return false;
     }
@@ -1034,7 +1034,9 @@ bool Runtime::TakePendingClear(VideoCore::Image* image, const VideoCore::Subreso
 }
 
 void Runtime::RecordClear(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
-                          const vk::ClearColorValue& color) {
+                          const VideoCore::Backend::ClearColor& value) {
+    vk::ClearColorValue color{};
+    color.uint32 = value;
     scheduler.EndRendering();
 
     const bool needs_flush =

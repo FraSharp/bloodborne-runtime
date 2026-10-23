@@ -402,6 +402,10 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   accesses in those terms instead of Vulkan layouts and stages (the present-frame dumps, a
   diagnostic, still name theirs). Measured: MetalFX 30.1 ms median, TAA 31.7, FSR 3.1 35.7
   (29.9–30.1, 31.5 and 35.2–35.6 before), no faults, frames correct.
+- **M2, clears and copy regions:** colour clears carry their value as the adapter's
+  `ClearColor` (32-bit words), deferred clears included; the copy shader's copies, the
+  rasterizer's buffer copies and the tiling downloads pass the adapter's regions. Measured (new
+  build second): 4.15 µs per draw against 4.22, 25.9 ms median both, the frame correct.
 
 ## Decisions
 

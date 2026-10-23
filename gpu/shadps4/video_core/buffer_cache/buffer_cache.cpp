@@ -3606,11 +3606,7 @@ bool BufferCache::SynchronizeMemoryFromImage(const Buffer* arena, u64 arena_offs
         }
     }
     auto& tile_manager = texture_cache.GetTileManager();
-    boost::container::small_vector<vk::BufferImageCopy, 8> vk_copies;
-    for (const auto& copy : buffer_copies) {
-        vk_copies.push_back(Vulkan::ToVk(copy));
-    }
-    tile_manager.TileImage(image, vk_copies, arena, arena_offset);
+    tile_manager.TileImage(image, buffer_copies, arena, arena_offset);
     if (UnifiedGuestMemory()) {
         if (UnifiedCpuSyncEnabled()) {
             NoteWriteTick(device_addr, image.info.guest_size);
