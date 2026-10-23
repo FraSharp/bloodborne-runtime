@@ -9,6 +9,7 @@
 
 #include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_backend/handle_table.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
@@ -52,6 +53,10 @@ public:
     void Wait(u64 tick) override {
         scheduler.Wait(tick);
     }
+    [[nodiscard]] CommandRecorder& Recorder() noexcept override {
+        return recorder;
+    }
+
     void DeferRelease(Common::UniqueFunction<void>&& release) override {
         // Past the next submission: the draw pipeline records draws prepared earlier.
         scheduler.DeferOperationPastNext(std::move(release));
@@ -145,6 +150,7 @@ private:
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;
     DescriptorHeap descriptor_heap;
+    CommandRecorder recorder; ///< the draw scheduler's command stream
 
     VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
     VideoCore::Backend::QueryPoolAllocation CreateQueries(vk::QueryType type, u32 count,

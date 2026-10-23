@@ -7,6 +7,7 @@
 #include <string>
 
 #include "common/types.h"
+#include "common/unique_function.h"
 #include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/draw_state.h"
 #include "video_core/renderer_backend/format.h"
@@ -171,6 +172,23 @@ public:
     /// Writes `value` (`num_bytes`: 4 or 8) to the buffer once every earlier command has
     /// finished; a 64-bit value as two 32-bit writes, the high half first.
     virtual void WriteLabel(u64 buffer, u64 offset, u64 value, u32 num_bytes) = 0;
+
+    /// Hands what was recorded to the GPU; a new submission (tick) begins.
+    virtual void Submit() = 0;
+    /// Submits and waits until the GPU has finished it.
+    virtual void Finish() = 0;
+    /// Hands recorded commands to the recording threads (`force`: also a short segment; at the
+    /// end of a draw or dispatch a long enough one is cut anyway).
+    virtual void Kick(bool force = false) = 0;
+    /// Runs the deferred work whose submissions the GPU has finished.
+    virtual void CollectCompleted() = 0;
+
+    /// Copies from guest memory the CPU makes in stream order (the recording threads): `copy`
+    /// runs there; NoteHostCopySource marks the range it reads, HostCopiesPendingFor whether
+    /// one reading a range is still queued.
+    virtual void RecordHostCopy(Common::UniqueFunction<void>&& copy) = 0;
+    virtual void NoteHostCopySource(u64 address, u64 size) = 0;
+    [[nodiscard]] virtual bool HostCopiesPendingFor(u64 address, u64 size) = 0;
 
     /// Debug labels for capture tools (`color`: 0xAARRGGBB, 0 for none).
     virtual void BeginLabel(const char* name) = 0;

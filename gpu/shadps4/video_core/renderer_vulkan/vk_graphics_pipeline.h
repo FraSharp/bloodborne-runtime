@@ -69,6 +69,16 @@ public:
                          VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
                          u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const;
 
+    /// The vertex input in the render adapter's terms (each binding with its divisor).
+    void GetVertexInputs(VertexInputs<VideoCore::Backend::VertexAttribute>& attributes,
+                         VertexInputs<VideoCore::Backend::VertexBinding>& bindings,
+                         VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0,
+                         u32 step_rate_1, std::span<const AmdGpu::Buffer> sharps = {}) const {
+        VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
+        GetVertexInputs(attributes, bindings, divisors, guest_buffers, step_rate_0, step_rate_1,
+                        sharps);
+    }
+
 private:
     GraphicsPipelineKey key;
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader{};

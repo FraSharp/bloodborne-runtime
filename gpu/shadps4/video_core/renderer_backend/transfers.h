@@ -74,6 +74,9 @@ public:
     [[nodiscard]] virtual bool IsBufferAccessed(const Buffer* buffer, u64 offset, u64 size,
                                                 bool check_read_access = false) = 0;
     virtual void FlushBarriers() = 0;
+    /// The state value image bindings and attachments of `image` carry (ImageBinding::layout,
+    /// RenderAttachment::image_layout): the backend's own state of its current backing.
+    [[nodiscard]] virtual u32 BindingLayout(const Image& image) const = 0;
 
     /// Runs before this thread changes image state (the rasterizer's texture binding helper).
     virtual void SetImageAccessHook(void (*hook)(void*), void* context) = 0;

@@ -877,11 +877,11 @@ void BufferCache::SmallGuestCopy(const BbCopy::Item& item) {
         // BB_VK_RECORD_THREAD=0 (issue #39).
         item.run(item);
     } else if (!BbToggle::Disabled(BbToggle::PoolSmallCopies)) {
-        scheduler.RecordHostCopy([item] { item.run(item); });
+        device.Recorder().RecordHostCopy([item] { item.run(item); });
     } else {
         BbCopy::QueueCopy(item);
     }
-    scheduler.NoteHostCopySource(item.source, item.size);
+    device.Recorder().NoteHostCopySource(item.source, item.size);
 }
 
 void BufferCache::ExtendWriteFault(VAddr device_addr, u64 guest_rip) {
@@ -1061,7 +1061,7 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
         } else {
             // No readback queue: a copy in stream order, waited for.
             LayerCopyBack(from >> block_shift, (from >> block_shift) + 1);
-            scheduler.Finish();
+            device.Recorder().Finish();
         }
         layer_read_trap_bytes.fetch_add(total, std::memory_order_relaxed);
     } else if (layer_copy_back_tick != 0 && !device.IsComplete(layer_copy_back_tick)) {
@@ -1156,7 +1156,7 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
             copy.dst_offset += download.offset;
         }
         runtime.CopyBuffer(arena, download.buffer, copies);
-        scheduler.Finish();
+        device.Recorder().Finish();
         download.buffer->Invalidate(download.offset, download.size);
         write_back(download.mapped, download.offset);
     }
@@ -1593,7 +1593,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
                 SmallGuestCopy(item);
             } else {
                 BbCopy::Async([item] { item.run(item); });
-                scheduler.NoteHostCopySource(item.source, item.size);
+                device.Recorder().NoteHostCopySource(item.source, item.size);
             }
         }
         return {staging.buffer, staging.offset};
@@ -3473,7 +3473,7 @@ const Buffer* BufferCache::UploadCopies(const Buffer* arena, std::span<Backend::
                 staging.Flush();
             });
             for (const auto& copy : *group) {
-                scheduler.NoteHostCopySource(copy.source, copy.size);
+                device.Recorder().NoteHostCopySource(copy.source, copy.size);
             }
         };
         for (auto& copy : copies) {

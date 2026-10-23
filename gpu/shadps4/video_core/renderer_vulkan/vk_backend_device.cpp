@@ -33,7 +33,8 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
                              bool enable_validation, bool enable_crash_diagnostic)
     : instance{window, physical_device_index, enable_validation, enable_crash_diagnostic},
       scheduler{instance, true}, capabilities{QueryResourceCapabilities(instance)},
-      descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
+      descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes},
+      recorder{scheduler, descriptor_heap, instance.GetDevice()} {
     instance.SetBackendDevice(this);
     MetalResources::Init(static_cast<VkDevice>(instance.GetDevice()));
     capabilities.non_coherent_atom_size = instance.NonCoherentAtomSize();

@@ -58,6 +58,13 @@ public:
     void SetVertexInput(std::span<const VideoCore::Backend::VertexBinding> bindings,
                         std::span<const VideoCore::Backend::VertexAttribute> attributes) override;
     void WriteLabel(u64 buffer, u64 offset, u64 value, u32 num_bytes) override;
+    void Submit() override;
+    void Finish() override;
+    void Kick(bool force = false) override;
+    void CollectCompleted() override;
+    void RecordHostCopy(Common::UniqueFunction<void>&& copy) override;
+    void NoteHostCopySource(u64 address, u64 size) override;
+    [[nodiscard]] bool HostCopiesPendingFor(u64 address, u64 size) override;
     void BeginLabel(const char* name) override;
     void EndLabel() override;
     void InsertLabel(const char* name, u32 color) override;

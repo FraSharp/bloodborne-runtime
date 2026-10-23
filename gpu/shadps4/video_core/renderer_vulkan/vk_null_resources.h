@@ -31,6 +31,13 @@ public:
     vk::Buffer Buffer() const {
         return buffer;
     }
+    /// The buffer and a view as the backend's objects (Device::NativeHandle).
+    [[nodiscard]] u64 NativeBuffer() const {
+        return reinterpret_cast<u64>(static_cast<VkBuffer>(buffer));
+    }
+    [[nodiscard]] u64 NativeImageView(AmdGpu::ImageType type, bool integer) const {
+        return reinterpret_cast<u64>(static_cast<VkImageView>(ImageView(type, integer)));
+    }
     /// A view of the given recompiler view type (AmdGpu::Image::GetViewType).
     vk::ImageView ImageView(AmdGpu::ImageType type, bool integer) const;
 

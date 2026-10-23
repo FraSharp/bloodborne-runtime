@@ -8,6 +8,7 @@
 
 #include "common/types.h"
 #include "common/unique_function.h"
+#include "video_core/renderer_backend/commands.h"
 #include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_backend/resource.h"
 
@@ -41,6 +42,9 @@ public:
     enum class WaitResult : u8 { Complete, Timeout, DeviceLost };
     /// Waits up to `timeout_ns` for `tick` (it may not be submitted yet).
     [[nodiscard]] virtual WaitResult WaitFor(u64 tick, u64 timeout_ns) = 0;
+
+    /// The command stream the renderer records into.
+    [[nodiscard]] virtual CommandRecorder& Recorder() noexcept = 0;
 
     /// Runs `release` once no submission that could use an object released now is pending,
     /// including work prepared before this call and recorded into a later submission. Callers

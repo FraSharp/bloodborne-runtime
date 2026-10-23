@@ -39,7 +39,8 @@ public:
 
     /// Records the check of the arguments at `offset` in `args` (outside a render pass); returns
     /// the buffer and offset to dispatch from.
-    std::pair<vk::Buffer, u64> CheckArgs(const VideoCore::Buffer& args, u64 offset);
+    /// The checked arguments: a native buffer and an offset.
+    std::pair<u64, u64> CheckArgs(const VideoCore::Buffer& args, u64 offset);
 
 private:
     static constexpr u32 NumSlots = 1024;

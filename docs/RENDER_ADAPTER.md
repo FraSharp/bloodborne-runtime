@@ -454,6 +454,19 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   draw path changed (the tick reads are now virtual calls of a few a frame to a few thousand).
   Measured against M1 (`4ca9561`), M2 so far costs nothing: median 26.3 against 26.4 ms (M1
   first) and 26.0 against 26.1 (reversed), 4.22 against 4.25 µs per draw reversed.
+- **M2, stream control:** the device has a command stream (`Device::Recorder`, the draw
+  scheduler's), and the recorder submits, finishes, kicks the recording threads, runs the work
+  whose submissions are done and queues the host copies (guest-memory copies the CPU makes in
+  stream order). The rasterizer and the caches use it instead of the scheduler.
+- **M2, the rasterizer without Vulkan types:** buffers, views, pipelines and samplers are
+  native handles (`Native()`; slot bindings through `BindingOf`, null bindings through
+  `NullBufferBinding`); image bindings and attachments carry the layout the transfers
+  interface reports (`BindingLayout`) or `GeneralLayout`; index types, topologies and formats
+  are the adapter's (formats named with `FormatName`); the vertex input comes in the adapter's
+  terms without a separate divisor list. The upscaler's and scene resolution's targets are
+  read through native accessors. `vk_rasterizer.cpp` names no Vulkan type. Measured: 4.42 µs
+  per draw against 4.21 (new second) and 4.22 against 4.11 (new first), median 26.3 against
+  26.0 and 26.8 against 26.7; MetalFX 30.1 ms median as before; frames correct.
 
 ## Decisions
 

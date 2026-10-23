@@ -181,6 +181,35 @@ void CommandRecorder::CommitDrawState() const {
         [this](auto&& command) { scheduler.Record(std::move(command)); });
 }
 
+void CommandRecorder::Submit() {
+    SubmitInfo info{};
+    scheduler.Flush(info);
+}
+
+void CommandRecorder::Finish() {
+    scheduler.Finish();
+}
+
+void CommandRecorder::Kick(bool force) {
+    scheduler.KickRecording(force);
+}
+
+void CommandRecorder::CollectCompleted() {
+    scheduler.PopPendingOperations();
+}
+
+void CommandRecorder::RecordHostCopy(Common::UniqueFunction<void>&& copy) {
+    scheduler.RecordHostCopy([copy = std::move(copy)] { copy(); });
+}
+
+void CommandRecorder::NoteHostCopySource(u64 address, u64 size) {
+    scheduler.NoteHostCopySource(address, size);
+}
+
+bool CommandRecorder::HostCopiesPendingFor(u64 address, u64 size) {
+    return scheduler.HostCopiesPendingFor(address, size);
+}
+
 void CommandRecorder::BeginPass(const Backend::RenderState& state) {
     scheduler.BeginRendering(state);
 }

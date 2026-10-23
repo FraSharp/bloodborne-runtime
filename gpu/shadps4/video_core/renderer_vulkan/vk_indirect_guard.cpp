@@ -74,7 +74,7 @@ IndirectGuard::IndirectGuard(const Instance& instance_, Scheduler& scheduler_)
 
 IndirectGuard::~IndirectGuard() = default;
 
-std::pair<vk::Buffer, u64> IndirectGuard::CheckArgs(const VideoCore::Buffer& args, u64 offset) {
+std::pair<u64, u64> IndirectGuard::CheckArgs(const VideoCore::Buffer& args, u64 offset) {
     // A storage binding starts at a multiple of the device's alignment: the arguments are
     // `first` dwords into it.
     const u64 alignment = instance.StorageMinAlignment();
@@ -106,7 +106,7 @@ std::pair<vk::Buffer, u64> IndirectGuard::CheckArgs(const VideoCore::Buffer& arg
                        .count = {1, 1, 1}});
     recorder.Barrier(Use::ComputeWrite, Use::IndirectRead | Use::ComputeRead);
     Report();
-    return {checked->Handle(), u64(slot) * 16};
+    return {checked->Native(), u64(slot) * 16};
 }
 
 void IndirectGuard::Report() {

@@ -162,12 +162,19 @@ Rasterizer::~Rasterizer() {
     BbMetalResidency::SetTicks(nullptr, nullptr, nullptr);
 }
 
-vk::ImageView Rasterizer::NullImageView(const Shader::ImageResource& desc,
+u64 Rasterizer::NullImageView(const Shader::ImageResource& desc,
                                         const AmdGpu::Image& sharp) const {
     // The view type and component type the recompiler declared (ImageType, GetAttributeType).
-    return null_resources ? null_resources->ImageView(sharp.GetViewType(desc.is_array),
-                                                      AmdGpu::IsInteger(sharp.GetNumberFmt()))
-                          : vk::ImageView{};
+    return null_resources ? null_resources->NativeImageView(sharp.GetViewType(desc.is_array),
+                                                            AmdGpu::IsInteger(sharp.GetNumberFmt()))
+                          : 0;
+}
+
+VideoCore::Backend::BufferBinding Rasterizer::NullBufferBinding() const {
+    return null_resources
+               ? VideoCore::Backend::BufferBinding{null_resources->NativeBuffer(), 0,
+                                                   NullResources::BufferSize}
+               : VideoCore::Backend::BufferBinding{0, 0, VideoCore::Backend::WholeRange};
 }
 
 bool Rasterizer::HonestLabels() {
@@ -416,7 +423,7 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
     // The 64-bit label as two 32-bit end-of-pipe writes, the high half first: whoever sees the
     // new low half (the guest polls that) sees the new high half too.
     recorder.SetBufferMarkers(marker);
-    recorder.WriteLabel(ToNative(target->first->Handle()), target->second, value, num_bytes);
+    recorder.WriteLabel(target->first->Native(), target->second, value, num_bytes);
     if (!marker) {
         runtime.AccessBuffer(target->first, target->second, num_bytes, BufferAccess::TransferWrite);
     }
@@ -771,7 +778,7 @@ void Rasterizer::PrepareRenderState(const GraphicsPipeline* pipeline) {
         cb_descs[0].first && std::popcount(key.mrt_mask) <= 2) {
         const auto& color = texture_cache.GetImage(cb_descs[0].first);
         const auto& depth = texture_cache.GetImage(db_desc.first);
-        if (ToVk(color.info.pixel_format) == vk::Format::eR16G16B16A16Sfloat &&
+        if (color.info.pixel_format == VideoCore::Backend::Format::R16G16B16A16Sfloat &&
             color.info.size.width == depth.info.size.width &&
             color.info.size.height == depth.info.size.height) {
             upscaler->OnSceneColor(cb_descs[0].first);
@@ -1486,7 +1493,7 @@ void Rasterizer::RunDrawPacket(void* context, const u8* data, u32 size) {
     if (packet.kind == PacketKind::Special) {
         // A draw FilterDraw handles (fast clear elimination, resolve, depth copy, skip).
         FrameCapture::Poll();
-        self.scheduler.PopPendingOperations();
+        self.recorder.CollectCompleted();
         self.FilterDraw();
     } else if (cs) {
         stage_cs = cs;
@@ -1694,7 +1701,7 @@ void Rasterizer::Draw(bool is_indexed, u32 index_offset, const PreparedDraw* pre
     if (!pipelined || !FilterDrawPasses()) {
         DrainDrawPipe(DrawPipe::ReasonDraw);
         FrameCapture::Poll();
-        scheduler.PopPendingOperations();
+        recorder.CollectCompleted();
         if (!FilterDraw()) {
             return;
         }
@@ -1726,7 +1733,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     }
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
-        scheduler.PopPendingOperations();
+        recorder.CollectCompleted();
     }
     // bbport (BB_PREUPLOAD): once a frame, guest GPU memory the CPU wrote and then left alone is
     // uploaded ahead of its use, BB_PREUPLOAD_MB (16) at most per frame.
@@ -1783,7 +1790,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
             // bbport: the upscaler switched on or off, or its size changed (rare): no frame
             // still in flight may use the motion history being restarted (switching it at
             // run time with object motion on lost the device on MoltenVK).
-            scheduler.Finish();
+            recorder.Finish();
             object_motion->InvalidateHistory();
             camera_motion->InvalidateHistory();
         }
@@ -2006,7 +2013,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     const auto& fetch_shader = pipeline->GetFetchShader();
     const auto [vertex_offset, instance_offset] = GetDrawOffsets(regs, vs_info, fetch_shader);
 
-    const vk::Pipeline handle = pipeline->Handle();
+    const u64 handle = pipeline->Allocation().native;
     const u32 num_indices = fixed_quad ? fixed_quad_vertices
                             : rect_triangles   ? rect_vertices
                             : quad_triangles ? regs.num_indices / 4 * 6
@@ -2022,7 +2029,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
         .program = {vs_info.ProgramBase(), ps_info ? ps_info->ProgramBase() : 0},
         .count = {num_indices, num_instances, 0},
     };
-    recorder.Draw({.pipeline = ToNative(handle),
+    recorder.Draw({.pipeline = handle,
                    .indexed = draw_indexed,
                    .count = num_indices,
                    .instances = num_instances,
@@ -2046,7 +2053,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
 
     BB_SECTION(Kick);
     ResetBindings(false);
-    scheduler.KickRecording();
+    recorder.Kick();
 }
 
 void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u32 stride,
@@ -2059,7 +2066,7 @@ void Rasterizer::DrawIndirect(bool is_indexed, VAddr arg_address, u32 offset, u3
                            !BbToggle::Disabled(BbToggle::PipelinedIndirectDraws);
     if (!pipelined) {
         DrainDrawPipe();
-        scheduler.PopPendingOperations();
+        recorder.CollectCompleted();
         if (!FilterDraw()) {
             return;
         }
@@ -2090,7 +2097,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     }
     if (DrawPipe::OnStageB()) {
         FrameCapture::Poll();
-        scheduler.PopPendingOperations();
+        recorder.CollectCompleted();
     }
     const VAddr count_address = indirect.count;
     const u32 stride = indirect.stride;
@@ -2154,10 +2161,10 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
 
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
                                  : sizeof(VkDrawIndirectCommand)));
-    const vk::Pipeline handle = pipeline->Handle();
-    const vk::Buffer args = buffer->Handle();
+    const u64 handle = pipeline->Allocation().native;
+    const u64 args = buffer->Native();
     const u64 args_offset = base;
-    const vk::Buffer counts = count_address != 0 ? count_buffer->Handle() : vk::Buffer{};
+    const u64 counts = count_address != 0 ? count_buffer->Native() : 0;
     const u64 counts_offset = count_address != 0 ? count_offset : 0;
     const auto* vs_crumb = pipeline->GetStages()[u32(Shader::SwStage::Vertex)];
     const auto* ps_crumb = pipeline->GetStages()[u32(Shader::SwStage::Fragment)];
@@ -2169,11 +2176,11 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
         .address = indirect.args,
         .count = {max_count, stride, 0},
     };
-    recorder.Draw({.pipeline = ToNative(handle),
+    recorder.Draw({.pipeline = handle,
                    .indexed = is_indexed,
-                   .args_buffer = ToNative(args),
+                   .args_buffer = args,
                    .args_offset = args_offset,
-                   .count_buffer = counts ? ToNative(counts) : 0,
+                   .count_buffer = counts,
                    .count_offset = counts_offset,
                    .max_draws = max_count,
                    .stride = stride},
@@ -2191,7 +2198,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     DebugState.IncDrawCall();
 
     ResetBindings(false);
-    scheduler.KickRecording();
+    recorder.Kick();
 }
 
 void Rasterizer::DispatchDirect() {
@@ -2223,7 +2230,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
     FrameCapture::Poll();
     gbuffer_draw = false;
 
-    scheduler.PopPendingOperations();
+    recorder.CollectCompleted();
 
     const auto& cs_program = CsRegs();
 
@@ -2270,7 +2277,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
                            {image_infos.data(), image_infos.size()},
                            {buffer_infos.data(), buffer_infos.size()});
 
-    const vk::Pipeline handle = pipeline->Handle();
+    const u64 handle = pipeline->Allocation().native;
     const u32 dim_x = cs_program.dim_x, dim_y = cs_program.dim_y, dim_z = cs_program.dim_z;
     if (FrameCapture::Active()) {
         FrameCapture::Dispatch(cs.pgm_hash, dim_x, dim_y, dim_z);
@@ -2281,11 +2288,11 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         .program = {cs.ProgramBase(), 0},
         .count = {dim_x, dim_y, dim_z},
     };
-    recorder.Dispatch({.pipeline = ToNative(handle), .groups = {dim_x, dim_y, dim_z}}, crumb);
+    recorder.Dispatch({.pipeline = handle, .groups = {dim_x, dim_y, dim_z}}, crumb);
     DebugState.IncDispatch();
 
     ResetBindings(true);
-    scheduler.KickRecording();
+    recorder.Kick();
 }
 
 void Rasterizer::DispatchIndirect(VAddr address, u32 offset, u32 size) {
@@ -2314,7 +2321,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         FrameCapture::BeginCommand("dispatch_indirect", device.CurrentTick(),
                                    device.CompletedTick());
     }
-    scheduler.PopPendingOperations();
+    recorder.CollectCompleted();
     const u32 offset = 0;
 
     if (!BindResources(pipeline)) {
@@ -2331,7 +2338,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     recorder.EndPass();
     // Group counts checked on the GPU first (vk_indirect_guard.h); recorded before the
     // pipeline's bindings, which the check's own pipeline would disturb.
-    vk::Buffer args = buffer->Handle();
+    u64 args = buffer->Native();
     u64 args_offset = base;
     if (IndirectGuard::Enabled()) {
         if (!indirect_guard) {
@@ -2343,8 +2350,8 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
                            {image_infos.data(), image_infos.size()},
                            {buffer_infos.data(), buffer_infos.size()});
 
-    const vk::Pipeline handle = pipeline->Handle();
-    const vk::Buffer raw_args = buffer->Handle();
+    const u64 handle = pipeline->Allocation().native;
+    const u64 raw_args = buffer->Native();
     const u64 raw_offset = base;
     const auto& cs_crumb = pipeline->GetStage(Shader::SwStage::Compute);
     const u32 args_slot = Breadcrumbs::ArgsSlot();
@@ -2356,10 +2363,10 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         .count = {buffer_cache.IsInPlace(address, size) ? 1u : 0u, 0, 0},
         .args_slot = args_slot,
     };
-    recorder.Dispatch({.pipeline = ToNative(handle),
-                       .args_buffer = ToNative(args),
+    recorder.Dispatch({.pipeline = handle,
+                       .args_buffer = args,
                        .args_offset = args_offset,
-                       .crumb_args_buffer = ToNative(raw_args), // what the game wrote
+                       .crumb_args_buffer = raw_args, // what the game wrote
                        .crumb_args_offset = raw_offset},
                       crumb);
     if (FrameCapture::Active()) {
@@ -2370,7 +2377,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     DebugState.IncDispatch();
 
     ResetBindings(true);
-    scheduler.KickRecording();
+    recorder.Kick();
 }
 
 u64 Rasterizer::Flush() {
@@ -2380,8 +2387,7 @@ u64 Rasterizer::Flush() {
     last_flush_ns.store(std::chrono::steady_clock::now().time_since_epoch().count(),
                         std::memory_order_relaxed);
     const u64 current_tick = device.CurrentTick();
-    SubmitInfo info{};
-    scheduler.Flush(info);
+    recorder.Submit();
     BbTimeline::Note(BbTimeline::VulkanSubmit, current_tick, DrawPipe::OnStageB() ? 1 : 0);
     return current_tick;
 }
@@ -2389,7 +2395,7 @@ u64 Rasterizer::Flush() {
 void Rasterizer::Finish() {
     DrainDrawPipe();
     PublishSignals();
-    scheduler.Finish();
+    recorder.Finish();
 }
 
 void Rasterizer::OnSubmit() {
@@ -2808,9 +2814,7 @@ void Rasterizer::EmitVertexBuffers() {
     if (num_buffers == 0) {
         return;
     }
-    // vk::Buffer and vk::DeviceSize are 64-bit: the adapter's u64 spans over the same arrays.
-    const std::span<const u64> buffers{reinterpret_cast<const u64*>(v.host_buffers.data()),
-                                       num_buffers};
+    const std::span<const u64> buffers{v.host_buffers.data(), num_buffers};
     const std::span<const u64> offsets{v.host_offsets.data(), num_buffers};
     if (dynamic_input) {
         recorder.BindVertexBuffers(buffers, offsets, {}, {});
@@ -2834,7 +2838,6 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     auto& bindings = v.bindings;
     attributes.clear();
     bindings.clear();
-    VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
     VertexInputs<AmdGpu::Buffer> guest_buffers;
     // Inputs a draw-preparation worker read from the same registers and (verified) user data.
     const auto& fetch = pipeline->GetFetchShader();
@@ -2860,7 +2863,7 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
             }
         }
     } else {
-        pipeline->GetVertexInputs(attributes, bindings, divisors, guest_buffers,
+        pipeline->GetVertexInputs(attributes, bindings, guest_buffers,
                                   regs.vgt_instance_step_rate_0, regs.vgt_instance_step_rate_1,
                                   packet_vsharps);
         if (BbCeStats::Enabled() && !packet_vsharps.empty()) {
@@ -2975,11 +2978,11 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
                     host_buffer_info->offset + buffer.base_address - host_buffer_info->base_address,
                     false);
             }
-            host_buffers.emplace_back(host_buffer_info->buffer->Handle());
+            host_buffers.emplace_back(host_buffer_info->buffer->Native());
             host_offsets.push_back(host_buffer_info->offset + buffer.base_address -
                                    host_buffer_info->base_address);
         } else {
-            host_buffers.emplace_back(null_resources ? null_resources->Buffer() : vk::Buffer{});
+            host_buffers.emplace_back(null_resources ? null_resources->NativeBuffer() : 0);
             host_offsets.push_back(0);
         }
         host_sizes.push_back(null_resources && (buffer.base_address == 0 || buffer.GetSize() == 0)
@@ -2997,8 +3000,7 @@ void Rasterizer::BindIndexBuffer(u32 index_offset) {
 }
 
 void Rasterizer::EmitIndexBuffer() {
-    recorder.BindIndexBuffer(ToNative(index_bind.handle), index_bind.offset,
-                             static_cast<VideoCore::Backend::IndexType>(index_bind.type));
+    recorder.BindIndexBuffer(index_bind.buffer, index_bind.offset, index_bind.type);
 }
 
 // bbport (RectsAsTriangles): the rects of a rect list as two triangles each, through a vertex shader
@@ -3089,7 +3091,6 @@ u32 Rasterizer::ExpandFixedQuads(const GraphicsPipeline* pipeline, bool is_index
     const u64 bytes = u64(patches) * count * 16 + mesh.size() * 8;
     auto& stream = buffer_cache.GetStreamBuffer();
     const auto [data, offset] = stream.Map(bytes, 16);
-    VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
     VertexInputs<AmdGpu::Buffer> guest_buffers;
     auto& v = vertex_binds;
     v.attributes.clear();
@@ -3098,7 +3099,7 @@ u32 Rasterizer::ExpandFixedQuads(const GraphicsPipeline* pipeline, bool is_index
     v.host_offsets.clear();
     v.host_sizes.clear();
     v.host_strides.clear();
-    pipeline->GetVertexInputs(v.attributes, v.bindings, divisors, guest_buffers, 1, 1);
+    pipeline->GetVertexInputs(v.attributes, v.bindings, guest_buffers, 1, 1);
     v.num_buffers = count + 1;
     u64 at = 0;
     for (u32 attr = 0; attr < count; ++attr) {
@@ -3118,7 +3119,7 @@ u32 Rasterizer::ExpandFixedQuads(const GraphicsPipeline* pipeline, bool is_index
             }
             out[patch] = value;
         }
-        v.host_buffers.push_back(stream.Handle());
+        v.host_buffers.push_back(stream.Native());
         v.host_offsets.push_back(offset + at);
         v.host_sizes.push_back(u64(patches) * 16);
         v.host_strides.push_back(16);
@@ -3126,7 +3127,7 @@ u32 Rasterizer::ExpandFixedQuads(const GraphicsPipeline* pipeline, bool is_index
     }
     auto* coords = reinterpret_cast<Shader::FixedQuadPoint*>(data + at);
     std::copy(mesh.begin(), mesh.end(), coords);
-    v.host_buffers.push_back(stream.Handle());
+    v.host_buffers.push_back(stream.Native());
     v.host_offsets.push_back(offset + at);
     v.host_sizes.push_back(mesh.size() * 8);
     v.host_strides.push_back(8);
@@ -3170,9 +3171,8 @@ u32 Rasterizer::ExpandRects(const GraphicsPipeline* pipeline, bool is_indexed, u
 
     VertexInputs<VideoCore::Backend::VertexAttribute> attributes;
     VertexInputs<VideoCore::Backend::VertexBinding> bindings;
-    VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
     VertexInputs<AmdGpu::Buffer> guest_buffers;
-    pipeline->GetVertexInputs(attributes, bindings, divisors, guest_buffers,
+    pipeline->GetVertexInputs(attributes, bindings, guest_buffers,
                               regs.vgt_instance_step_rate_0, regs.vgt_instance_step_rate_1);
     auto& v = vertex_binds;
     if (guest_buffers.size() != v.num_buffers || v.host_buffers.size() != v.num_buffers) {
@@ -3271,7 +3271,7 @@ u32 Rasterizer::ExpandRects(const GraphicsPipeline* pipeline, bool is_indexed, u
                 out += s.components;
             }
         }
-        v.host_buffers[s.index] = stream.Handle();
+        v.host_buffers[s.index] = stream.Native();
         v.host_offsets[s.index] = offset + at;
         v.host_sizes[s.index] = u64(rects) * 6 * size;
         v.host_strides[s.index] = size;
@@ -3310,7 +3310,7 @@ bool Rasterizer::BindQuadTriangles(bool is_indexed, u32 index_offset) {
         const auto [data, offset] = stream.Map(u64(quads) * 6 * sizeof(u32), sizeof(u32));
         split(reinterpret_cast<u32*>(data), [](u32 q, u32 i) { return q * 4 + i; });
         stream.Commit();
-        index_bind = {stream.Handle(), offset, vk::IndexType::eUint32};
+        index_bind = {stream.Native(), offset, VideoCore::Backend::IndexType::UInt32};
         EmitIndexBuffer();
         return true;
     }
@@ -3335,7 +3335,9 @@ bool Rasterizer::BindQuadTriangles(bool is_indexed, u32 index_offset) {
         split(reinterpret_cast<u32*>(data), [in](u32 q, u32 i) { return in[q * 4 + i]; });
     }
     stream.Commit();
-    index_bind = {stream.Handle(), offset, is_index16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32};
+    index_bind = {stream.Native(), offset,
+                  is_index16 ? VideoCore::Backend::IndexType::UInt16
+                             : VideoCore::Backend::IndexType::UInt32};
     EmitIndexBuffer();
     return true;
 }
@@ -3346,7 +3348,8 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
 
     // Figure out index type and size.
     const bool is_index16 = regs.index_buffer_type.index_type == AmdGpu::IndexType::Index16;
-    const vk::IndexType index_type = is_index16 ? vk::IndexType::eUint16 : vk::IndexType::eUint32;
+    const auto index_type = is_index16 ? VideoCore::Backend::IndexType::UInt16
+                                       : VideoCore::Backend::IndexType::UInt32;
     const u32 index_size = is_index16 ? sizeof(u16) : sizeof(u32);
     const VAddr index_address =
         regs.index_base_address.Address<VAddr>() + index_offset * index_size;
@@ -3363,7 +3366,7 @@ void Rasterizer::ResolveIndexBuffer(u32 index_offset) {
         FrameCapture::Binding("index", 0, index_size, index_address, index_buffer_size,
                               buffer->BufferDeviceAddress(), offset, false);
     }
-    index_bind = {buffer->Handle(), offset, index_type};
+    index_bind = {buffer->Native(), offset, index_type};
 }
 
 void Rasterizer::ResetBindings(bool is_compute) {
@@ -3635,11 +3638,11 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 push_data.AddOffset(binding.buffer, 0);
             }
-            buffer_infos.push_back(MakeBufferBinding(constant_ring->Handle(), ring->offset, ring->size));
+            buffer_infos.push_back(VideoCore::Backend::BufferBinding{constant_ring->Native(), ring->offset, ring->size});
         } else if (desc.IsSpecial()) {
             if (desc.buffer_type == Shader::BufferType::GdsBuffer) {
                 const auto* gds_buf = buffer_cache.GetGdsBuffer();
-                buffer_infos.push_back(MakeBufferBinding(gds_buf->Handle(), 0, gds_buf->SizeBytes()));
+                buffer_infos.push_back(VideoCore::BindingOf(*gds_buf, 0, gds_buf->SizeBytes()));
                 needs_barrier |= runtime.IsBufferAccessed(gds_buf, 0, gds_buf->SizeBytes());
             } else if (desc.buffer_type == Shader::BufferType::Flatbuf) {
                 auto& vk_buffer = buffer_cache.GetStreamBuffer();
@@ -3650,13 +3653,12 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 }
                 const u64 offset =
                     vk_buffer.Copy(stage.FlatUserData().data(), ubo_size, alignment);
-                buffer_infos.push_back(MakeBufferBinding(vk_buffer.Handle(), offset, ubo_size));
+                buffer_infos.push_back(VideoCore::BindingOf(vk_buffer, offset, ubo_size));
             } else if (desc.buffer_type == Shader::BufferType::ClipPlanes) {
                 // Permutations compiled without enabled planes never read the buffer, so the
                 // declared binding is satisfied with a null descriptor instead of a copy.
                 if (Regs().clipper_control.user_clip_plane_enable == 0) {
-                    buffer_infos.push_back(MakeBufferBinding(null_resources ? null_resources->Buffer() : vk::Buffer{}, 0,
-                                          null_resources ? NullResources::BufferSize : VK_WHOLE_SIZE));
+                    buffer_infos.push_back(NullBufferBinding());
                 } else {
                     auto& vk_buffer = buffer_cache.GetStreamBuffer();
                     std::array<float, AmdGpu::NUM_CLIP_PLANES * 4> planes{};
@@ -3669,14 +3671,14 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     }
                     const u32 ubo_size = static_cast<u32>(sizeof(planes));
                     const u64 offset = vk_buffer.Copy(planes.data(), ubo_size, alignment);
-                    buffer_infos.push_back(MakeBufferBinding(vk_buffer.Handle(), offset, ubo_size));
+                    buffer_infos.push_back(VideoCore::BindingOf(vk_buffer, offset, ubo_size));
                 }
             } else if (desc.buffer_type == Shader::BufferType::BdaPagetable) {
                 const auto* bda_buffer = buffer_cache.GetBdaPageTableBuffer();
-                buffer_infos.push_back(MakeBufferBinding(bda_buffer->Handle(), 0, bda_buffer->SizeBytes()));
+                buffer_infos.push_back(VideoCore::BindingOf(*bda_buffer, 0, bda_buffer->SizeBytes()));
             } else if (desc.buffer_type == Shader::BufferType::FaultBuffer) {
                 const auto* fault_buffer = buffer_cache.GetFaultBuffer();
-                buffer_infos.push_back(MakeBufferBinding(fault_buffer->Handle(), 0, fault_buffer->SizeBytes()));
+                buffer_infos.push_back(VideoCore::BindingOf(*fault_buffer, 0, fault_buffer->SizeBytes()));
             } else if (desc.buffer_type == Shader::BufferType::SharedMemory) {
                 auto& lds_buffer = buffer_cache.GetStreamBuffer();
                 const auto& cs_program = CsRegs();
@@ -3684,7 +3686,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 const auto [data, offset] = lds_buffer.Map(lds_size, alignment);
                 std::memset(data, 0, lds_size);
                 lds_buffer.Commit();
-                buffer_infos.push_back(MakeBufferBinding(lds_buffer.Handle(), offset, lds_size));
+                buffer_infos.push_back(VideoCore::BindingOf(lds_buffer, offset, lds_size));
             } else {
                 UNREACHABLE_MSG("Unexpected buffer type {}", u32(desc.buffer_type));
             }
@@ -3716,8 +3718,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                                      memory->ClampRangeSize(vsharp.base_address, vsharp.GetSize()));
             }
             if (vsharp.base_address == 0 || vsharp.GetSize() == 0) {
-                buffer_infos.push_back(MakeBufferBinding(null_resources ? null_resources->Buffer() : vk::Buffer{}, 0,
-                                          null_resources ? NullResources::BufferSize : VK_WHOLE_SIZE));
+                buffer_infos.push_back(NullBufferBinding());
             } else if (Shader::IsPagedBuffer(VideoCore::BufferCache::LayerPagedActive(), vsharp)) {
                 // bbport BB_LAYER_MEMORY: nearly all memory as one buffer: the shader reaches it
                 // through the page table; the descriptor holds its record. It may touch any
@@ -3749,7 +3750,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                     }
                 }
                 push_data.AddOffset(binding.buffer, 0);
-                buffer_infos.push_back(MakeBufferBinding(record->Handle(), record_offset, 32));
+                buffer_infos.push_back(VideoCore::BindingOf(*record, record_offset, 32));
                 bound_buffers.emplace_back(nullptr, 0, 0, desc.is_written);
                 if (desc.is_written) {
                     texture_cache.InvalidateMemoryFromGPU(
@@ -3780,8 +3781,8 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                 push_data.AddOffset(binding.buffer, adjust);
                 // bbport BB_LAYER_MEMORY: a huge binding may come back cut at the end of its
                 // guest chunk's buffer.
-                buffer_infos.push_back(MakeBufferBinding(
-                    buffer->Handle(), offset_aligned,
+                buffer_infos.push_back(VideoCore::BindingOf(
+                    *buffer, offset_aligned,
                     std::min<u64>(size + adjust, buffer->SizeBytes() - offset_aligned)));
                 bound_buffers.emplace_back(buffer, offset, size, desc.is_written);
                 if (desc.is_written) {
@@ -3935,7 +3936,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                         "bindings %u mip_fallback %d\n",
                         stage.sw_stage == Shader::SwStage::Compute ? "cs" : "gfx",
                         (unsigned long long)stage.pgm_hash,
-                        vk::to_string(ToVk(image.info.pixel_format)).c_str(), image.info.size.width,
+                        VideoCore::Backend::FormatName(image.info.pixel_format), image.info.size.width,
                         image.info.size.height, int(image_desc.needs_native),
                         int(image_desc.is_written), num_bindings, int(mip_fallback_mode));
         };
@@ -4013,8 +4014,8 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
         const auto& desc = *desc_ptr;
         bool is_storage = desc.type == VideoCore::TextureCache::BindingType::Storage;
         if (!image_id) {
-            image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE, null_image_views[binding_index],
-                                     vk::ImageLayout::eGeneral));
+            image_infos.push_back({.view = null_image_views[binding_index],
+                                   .layout = VideoCore::Backend::GeneralLayout});
         } else {
             if (auto& old_image = texture_cache.GetImage(image_id);
                 old_image.binding.needs_rebind) {
@@ -4040,9 +4041,9 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 !(upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
                 if (const auto proxy = scene_targets->SampleProxy(image, desc.view_info)) {
                     image.usage.texture = 1u;
-                    image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE, proxy->view, proxy->layout));
+                    image_infos.push_back({.view = proxy->NativeView(), .layout = proxy->NativeLayout()});
                     if (set_ok && binding_index < resolved.size()) {
-                        resolved[binding_index] = {image_id, proxy->view, image.backing,
+                        resolved[binding_index] = {image_id, proxy->NativeView(), image.backing,
                                                    desc.view_info.range, true};
                     }
                     ++proxy_samples;
@@ -4067,15 +4068,15 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                 FrameCapture::Sampled(image.info, is_storage);
             }
 
-            vk::ImageView view = image_view.Handle();
-            vk::ImageLayout layout = ImageStateOf(*image.backing).state.layout;
+            u64 view = image_view.Native();
+            u32 layout = runtime.BindingLayout(image);
             if (upscaler->Enabled()) {
                 // bbport: the display pass reads the upscaled frame (scaled presets).
                 upscaler->RedirectSampled(image_id, image_view.info, view, layout);
             }
-            image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE, view, layout));
+            image_infos.push_back({.view = view, .layout = layout});
             if (set_ok && binding_index < resolved.size()) {
-                resolved[binding_index] = {image_id, image_view.Handle(), image.backing,
+                resolved[binding_index] = {image_id, image_view.Native(), image.backing,
                                            desc.view_info.range};
                 set_ok = !is_storage && !binding.force_general && !binding.is_target;
             }
@@ -4160,9 +4161,9 @@ void Rasterizer::BindSamplers(const Shader::Info& stage, const PreparedStage* pr
             ProbeSampler(stage, sampler_index, ssharp, prepared != nullptr, "bind");
         }
         ForceAnisotropy(ssharp, sampler.is_depth);
-        const auto vk_sampler = NativeSampler(texture_cache.GetSampler(
+        const u64 vk_sampler = (texture_cache.GetSampler(
             ssharp, Regs().ta_bc_base, sampler.is_depth, sampler.is_depth ? 0.0f : sampler_lod_bias));
-        image_infos.push_back(MakeImageBinding(vk_sampler, VK_NULL_HANDLE, vk::ImageLayout::eGeneral));
+        image_infos.push_back({.sampler = vk_sampler, .layout = VideoCore::Backend::GeneralLayout});
         set_writes[write_index++] = {.slot = binding.unified++,
                                      .count = 1,
                                      .kind = VideoCore::Backend::BindingKind::Sampler,
@@ -4260,9 +4261,8 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
     for (u32 i = 0; i < count; ++i) {
         const auto& entry = set.entries[i];
         if (!entry.id) {
-            image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE,
-                                     NullImageView(stage.images[i], prepared->image_sharps[i]),
-                                     vk::ImageLayout::eGeneral));
+            image_infos.push_back({.view = NullImageView(stage.images[i], prepared->image_sharps[i]),
+                                   .layout = VideoCore::Backend::GeneralLayout});
             continue;
         }
         texture_cache.MarkFound(entry.id);
@@ -4271,13 +4271,14 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
         bound_images.emplace_back(entry.id);
         image.usage.texture = 1u;
         if (entry.proxy) {
-            image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE, entry.view,
-                                     scene_targets->PrepareSample(image, entry.range.base.level)));
+            image_infos.push_back(
+                {.view = entry.view,
+                 .layout = scene_targets->PrepareSampleLayout(image, entry.range.base.level)});
             ++proxy_samples;
             continue;
         }
         barrier |= runtime.Transit(&image, ImageAccess::Sampled, entry.range);
-        image_infos.push_back(MakeImageBinding(VK_NULL_HANDLE, entry.view, ImageStateOf(*image.backing).state.layout));
+        image_infos.push_back({.view = entry.view, .layout = runtime.BindingLayout(image)});
     }
     (void)first_image_idx;
     return true;
@@ -4394,7 +4395,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                 !same_size(image, desc.view_info.range.base.level)) reduced = false;
             if (debug_pass) {
                 why += fmt::format(" [{} {}x{} eligible {} bound {} rebind {} level {} layer {}]",
-                                   vk::to_string(ToVk(image.info.pixel_format)), image.info.size.width,
+                                   VideoCore::Backend::FormatName(image.info.pixel_format), image.info.size.width,
                                    image.info.size.height, scene_targets->Eligible(image),
                                    u32(image.binding.is_bound), u32(image.binding.needs_rebind),
                                    desc.view_info.range.base.level,
@@ -4410,7 +4411,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         if (db_desc.first) {
             const auto& depth = texture_cache.GetImage(db_desc.first);
             why += fmt::format(" depth [{} {}x{} eligible {}]",
-                               vk::to_string(ToVk(depth.info.pixel_format)), depth.info.size.width,
+                               VideoCore::Backend::FormatName(depth.info.pixel_format), depth.info.size.width,
                                depth.info.size.height, scene_targets->Eligible(depth));
         }
         std::printf("Scene pass: reduced %d %s\n", reduced, why.c_str());
@@ -4489,8 +4490,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         const auto clear_value =
             is_clear ? LiverpoolToVK::ColorBufferClearValue(col_buf) : Backend::ClearColor{};
         auto& attachment = state.color_attachments[cb];
-        attachment.image_view = Vulkan::ToNative(image_view.Handle());
-        attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image->backing).state.layout);
+        attachment.image_view = image_view.Native();
+        attachment.image_layout = runtime.BindingLayout(*image);
         attachment.clear_value = clear_value;
         attachment.is_clear = is_clear;
         if (takes_clear) {
@@ -4501,15 +4502,15 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         if (reduced) {
             const auto target = scene_targets->Attachment(image_id, desc.view_info);
-            attachment.image_view = Vulkan::ToNative(target.view);
-            attachment.image_layout = Vulkan::ToNative(target.layout);
+            attachment.image_view = target.NativeView();
+            attachment.image_layout = target.NativeLayout();
         }
         image->usage.render_target = 1u;
         if (cb == 0 && color_redirected) {
             guest_extent = {image->info.size.width, image->info.size.height};
             original_color = {attachment.image_view, attachment.image_layout};
-            attachment.image_view = Vulkan::ToNative(redirect.view);
-            attachment.image_layout = Vulkan::ToNative(redirect.layout);
+            attachment.image_view = redirect.NativeView();
+            attachment.image_layout = redirect.NativeLayout();
         }
     }
     for (u32 cb = state.num_color_attachments; cb < state.color_attachments.size(); ++cb) {
@@ -4547,8 +4548,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.num_layers = std::min<u32>(state.num_layers, image_view.info.range.extent.layers);
 
         auto& attachment = state.depth_stencil_attachment;
-        attachment.image_view = Vulkan::ToNative(image_view.Handle());
-        attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image.backing).state.layout);
+        attachment.image_view = image_view.Native();
+        attachment.image_layout = runtime.BindingLayout(image);
         attachment.clear_value = {};
         attachment.is_clear = 0;
 
@@ -4565,8 +4566,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         if (reduced) {
             const auto target = scene_targets->Attachment(image_id, desc.view_info);
-            attachment.image_view = Vulkan::ToNative(target.view);
-            attachment.image_layout = Vulkan::ToNative(target.layout);
+            attachment.image_view = target.NativeView();
+            attachment.image_layout = target.NativeLayout();
         }
         image.usage.depth_target = true;
         if (upscaler->Enabled()) {
@@ -4574,8 +4575,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             depth_redirected = upscaler->RedirectDepth(image_id, depth_redirect);
             if (depth_redirected) {
                 guest_extent = {image.info.size.width, image.info.size.height};
-                attachment.image_view = Vulkan::ToNative(depth_redirect.view);
-                attachment.image_layout = Vulkan::ToNative(depth_redirect.layout);
+                attachment.image_view = depth_redirect.NativeView();
+                attachment.image_layout = depth_redirect.NativeLayout();
                 redirect = depth_redirect;
             }
         }
@@ -4604,7 +4605,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
                     }
                     const auto& info = texture_cache.GetImage(id).info;
                     return fmt::format("{:#x} {}x{} {}", info.guest_address, info.size.width,
-                                       info.size.height, vk::to_string(ToVk(info.pixel_format)));
+                                       info.size.height, VideoCore::Backend::FormatName(info.pixel_format));
                 };
                 std::printf("Upscaler: pass not redirected (color %s: %s, depth %s: %s, %u "
                             "targets)\n",
@@ -4618,9 +4619,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             }
             if (depth_redirected) {
                 auto& depth_image = texture_cache.GetImage(db_desc.first);
-                state.depth_stencil_attachment.image_view = Vulkan::ToNative(
-                    texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Handle());
-                state.depth_stencil_attachment.image_layout = Vulkan::ToNative(ImageStateOf(*depth_image.backing).state.layout);
+                state.depth_stencil_attachment.image_view = texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Native();
+                state.depth_stencil_attachment.image_layout = runtime.BindingLayout(depth_image);
             }
         } else {
             state.width = redirect.width;
@@ -4681,7 +4681,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             auto& attachment = state.color_attachments[cb];
             attachment.is_clear = false;
             attachment.clear_value = {};
-            attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image.backing).state.layout);
+            attachment.image_layout = runtime.BindingLayout(image);
         }
         taken_clears.erase(taken_clears.begin() + k);
     }
@@ -4878,7 +4878,7 @@ u32 Rasterizer::ReadDataFromGds(u32 gds_offset) {
 }
 
 bool Rasterizer::HostCopiesPendingFor(VAddr addr, u64 size) {
-    return scheduler.HostCopiesPendingFor(addr, size);
+    return recorder.HostCopiesPendingFor(addr, size);
 }
 
 bool Rasterizer::InvalidateMemory(VAddr addr, u64 size, bool assume_locks) {
@@ -5244,12 +5244,11 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
                                : regs.primitive_type;
 
     const auto is_list_topology = [](const AmdGpu::PrimitiveType type) {
-        const auto topology = ToVk(LiverpoolToVK::PrimitiveType(type));
-        return topology == vk::PrimitiveTopology::ePointList ||
-               topology == vk::PrimitiveTopology::eLineList ||
-               topology == vk::PrimitiveTopology::eTriangleList ||
-               topology == vk::PrimitiveTopology::eLineListWithAdjacency ||
-               topology == vk::PrimitiveTopology::eTriangleListWithAdjacency;
+        using Topology = VideoCore::Backend::PrimitiveTopology;
+        const auto topology = LiverpoolToVK::PrimitiveType(type);
+        return topology == Topology::PointList || topology == Topology::LineList ||
+               topology == Topology::TriangleList || topology == Topology::LineListWithAdjacency ||
+               topology == Topology::TriangleListWithAdjacency;
     };
     const auto is_patch_list_topology = [](const AmdGpu::PrimitiveType type) {
         // Quad and rect lists are emulated using tessellation.
@@ -5373,14 +5372,15 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
         std::string targets;
         for (u32 cb = 0; cb < state.num_color_attachments; ++cb) {
             targets += cb_descs[cb].first
-                           ? vk::to_string(ToVk(texture_cache.GetImage(cb_descs[cb].first).info.pixel_format))
+                           ? std::string{VideoCore::Backend::FormatName(
+                                 texture_cache.GetImage(cb_descs[cb].first).info.pixel_format)}
                            : std::string{"-"};
             targets += ' ';
         }
         return fmt::format("pass {}x{} [{}] depth {} vs {:016x} ps {:016x}", state.width,
                            state.height, targets,
-                           db_desc.first ? vk::to_string(
-                                               ToVk(texture_cache.GetImage(db_desc.first).info.pixel_format))
+                           db_desc.first ? std::string{VideoCore::Backend::FormatName(
+                                               texture_cache.GetImage(db_desc.first).info.pixel_format)}
                                          : std::string{"-"},
                            vs.pgm_hash, ps ? ps->pgm_hash : 0);
     };

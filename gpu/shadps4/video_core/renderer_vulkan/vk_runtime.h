@@ -142,6 +142,7 @@ public:
     void AccessGlobal(vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 src_access);
 
     void FlushBarriers() override;
+    [[nodiscard]] u32 BindingLayout(const VideoCore::Image& image) const override;
 
     /// bbport: runs before this thread changes image state (layouts, pending image
     /// barriers): the rasterizer joins its texture binding helper there (BindHelper).

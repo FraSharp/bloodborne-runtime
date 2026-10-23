@@ -1172,6 +1172,10 @@ void Runtime::AccessGlobal(vk::PipelineStageFlags2 src_stage, vk::AccessFlags2 s
     }
 }
 
+u32 Runtime::BindingLayout(const VideoCore::Image& image) const {
+    return static_cast<u32>(ImageStateOf(*image.backing).state.layout);
+}
+
 void Runtime::FlushBarriers() {
     BeforeImageAccess();
     vk::DependencyInfo dep_info{};

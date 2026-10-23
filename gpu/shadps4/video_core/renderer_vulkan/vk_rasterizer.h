@@ -397,7 +397,7 @@ private:
     /// (TextureSetMemo): a hit only redoes the per-draw effects (binding flags, transitions).
     struct TextureSetEntry {
         VideoCore::ImageId id{}; ///< after the depth redirect; null descriptor when invalid
-        vk::ImageView view;
+        u64 view{}; ///< native
         const void* backing = nullptr;
         VideoCore::SubresourceRange range;
         bool proxy = false; ///< sampled from the scene proxy (view: SampleProxy on each use)
@@ -490,8 +490,10 @@ private:
     /// bbport: stand-ins for null descriptors when the driver has none (MoltenVK), else null.
     std::unique_ptr<NullResources> null_resources;
     /// bbport: per image binding of BindTextures, the stand-in view of an empty binding.
-    std::array<vk::ImageView, Shader::NUM_IMAGES> null_image_views{};
-    vk::ImageView NullImageView(const Shader::ImageResource& desc, const AmdGpu::Image& sharp) const;
+    std::array<u64, Shader::NUM_IMAGES> null_image_views{}; ///< native
+    /// A binding for a buffer slot left empty (a null descriptor, or the null resources').
+    [[nodiscard]] VideoCore::Backend::BufferBinding NullBufferBinding() const;
+    u64 NullImageView(const Shader::ImageResource& desc, const AmdGpu::Image& sharp) const;
     std::array<float, 2> draw_jitter{};         ///< viewport offset of the current draw, pixels
     std::array<float, 2> target_scale{1.0f, 1.0f}; ///< pass drawn into the upscaler's output-size images
     /// The UI pass on an output of another aspect ratio: where the game's 16:9 screen ends
@@ -587,10 +589,10 @@ private:
     struct VertexBinds {
         VertexInputs<VideoCore::Backend::VertexAttribute> attributes; ///< the render adapter's
         VertexInputs<VideoCore::Backend::VertexBinding> bindings;
-        VertexInputs<vk::Buffer> host_buffers;
-        VertexInputs<vk::DeviceSize> host_offsets;
-        VertexInputs<vk::DeviceSize> host_sizes;
-        VertexInputs<vk::DeviceSize> host_strides;
+        VertexInputs<u64> host_buffers; ///< native
+        VertexInputs<u64> host_offsets;
+        VertexInputs<u64> host_sizes;
+        VertexInputs<u64> host_strides;
         u32 num_buffers = 0;
     } vertex_binds;
     /// ExpandRects' scratch: guest vertex per rect corner, corner order and 4th-corner weights.
@@ -601,9 +603,9 @@ private:
     std::vector<u32> rect_vertex_ids;
     std::vector<RectCorners> rect_corners;
     struct IndexBind {
-        vk::Buffer handle;
+        u64 buffer; ///< native
         u64 offset;
-        vk::IndexType type;
+        VideoCore::Backend::IndexType type;
     } index_bind{};
     /// The direct draw whose vertex/index buffers BindResources may resolve early.
     struct DrawInputs {

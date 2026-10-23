@@ -28,6 +28,9 @@ public:
         ASSERT(!buffer.mapped_data.empty());
     }
 
+    [[nodiscard]] u64 Native() const noexcept {
+        return buffer.Native();
+    }
     [[nodiscard]] vk::Buffer Handle() const noexcept {
         return buffer.Handle();
     }

@@ -11,6 +11,7 @@
 #include <utility>
 #include <vector>
 
+#include "video_core/renderer_backend/binding.h"
 #include "common/assert.h"
 #include "common/types.h"
 #include "video_core/renderer_backend/device.h"
@@ -137,6 +138,11 @@ struct Buffer {
         return vk::Buffer{reinterpret_cast<VkBuffer>(native)};
     }
 
+    /// The backend's buffer (Device::NativeHandle).
+    [[nodiscard]] u64 Native() const noexcept {
+        return native;
+    }
+
     [[nodiscard]] Backend::BufferHandle AdapterHandle() const noexcept {
         return handle;
     }
@@ -166,6 +172,12 @@ private:
     u64 native{};
     u64 device_address{};
 };
+
+/// `range` bytes of `buffer` from `offset` as a slot binding.
+[[nodiscard]] inline Backend::BufferBinding BindingOf(const Buffer& buffer, u64 offset,
+                                                      u64 range) noexcept {
+    return {buffer.Native(), offset, range};
+}
 
 struct StreamBuffer : public Buffer {
     explicit StreamBuffer(Backend::Device& device, Vulkan::Scheduler& scheduler,

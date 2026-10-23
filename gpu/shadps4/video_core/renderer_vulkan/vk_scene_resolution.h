@@ -40,6 +40,14 @@ public:
         vk::ImageView view;
         vk::ImageLayout layout;
         vk::ImageUsageFlags usage;
+
+        /// The view and its layout as the render adapter carries them.
+        [[nodiscard]] u64 NativeView() const noexcept {
+            return reinterpret_cast<u64>(static_cast<VkImageView>(view));
+        }
+        [[nodiscard]] u32 NativeLayout() const noexcept {
+            return static_cast<u32>(layout);
+        }
     };
     Target Attachment(VideoCore::ImageId, const VideoCore::ImageViewInfo&);
     Target Read(VideoCore::ImageId, const VideoCore::ImageViewInfo&,
@@ -57,6 +65,10 @@ public:
     /// SampleProxy for a view obtained before (valid while Generation() is unchanged): the
     /// layout to sample it in.
     vk::ImageLayout PrepareSample(const VideoCore::Image& image, u32 level = 0);
+    /// PrepareSample's layout as the render adapter carries it.
+    u32 PrepareSampleLayout(const VideoCore::Image& image, u32 level = 0) {
+        return static_cast<u32>(PrepareSample(image, level));
+    }
     /// Changes when proxies and their views are destroyed (SetSize).
     [[nodiscard]] u64 Generation() const noexcept {
         return generation;
