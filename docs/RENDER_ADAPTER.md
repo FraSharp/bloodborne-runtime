@@ -322,7 +322,7 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   through the recorder. FSR 1 (`BB_FSR1=1`) was not run: it needs a window larger than the
   game's output. Measured: no faults with the upscaler off, FSR 3.1 (MoltenVK), TAA and MetalFX
   (Metal), frames correct; frame times as the base build (FSR 3.1 35.4 against 35.2 ms median,
-  TAA 31.5 both, MetalFX 29.9 both); Metal API validation without new messages.
+  TAA 31.5 both, MetalFX 29.9 both); Metal API validation (upscaler off) without new messages.
 
 ## Decisions
 
