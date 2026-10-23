@@ -451,8 +451,9 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   buffer cache's write checks use the device instead of the scheduler's semaphore. Measured in
   three pairs (base first, reversed, base first): 4.29/4.28/4.17 µs per draw against
   4.19/4.14/4.10, median 26.7/26.2/26.4 ms against 26.2/26.0/25.9 (about 1.5%). No call on the
-  draw path changed (the tick reads are now virtual calls of a few a frame to a few thousand);
-  step 1 as a whole is to be measured against the build before it.
+  draw path changed (the tick reads are now virtual calls of a few a frame to a few thousand).
+  Measured against M1 (`4ca9561`), M2 so far costs nothing: median 26.3 against 26.4 ms (M1
+  first) and 26.0 against 26.1 (reversed), 4.22 against 4.25 µs per draw reversed.
 
 ## Decisions
 
