@@ -9,13 +9,13 @@
 - macOS: Xcode Command Line Tools and [Homebrew](https://brew.sh):
 
   ```bash
-  brew install bash pkgconf glslang nasm cmake ninja spirv-tools
+  brew install bash pkgconf glslang nasm cmake ninja spirv-tools clang-format
   ```
 
   FSR 4.1.1 on Metal also needs Xcode with its Metal Toolchain
   (`xcodebuild -downloadComponent MetalToolchain`), even when `xcode-select` points at the
-  Command Line Tools. Without it, or without `spirv-tools`, the build skips FSR 4.1.1 with a
-  warning, and the game reports it unavailable.
+  Command Line Tools. Without it, or without `spirv-tools` or `clang-format` (DXC needs it),
+  the build skips FSR 4.1.1 with a warning, and the game reports it unavailable.
 
 - Your own dump of the game with update 1.09, prepared as in
   [Game files](https://github.com/bloodborne-native/bloodborne-mac/blob/main/docs/guide/game-files.md).

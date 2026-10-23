@@ -24,7 +24,8 @@ if [[ $(uname -s) == Darwin ]]; then
     deps=$PWD/deps/macos-$macarch
     # Also when deps/ predates FSR 4.1.1 on Metal and its tools can be built (spirv-val).
     if [[ ! -f $deps/.built-ffmpeg ]] ||
-        { [[ ! -f $deps/.built-fsr4-native-macos ]] && command -v spirv-val >/dev/null; }; then
+        { [[ ! -f $deps/.built-fsr4-native-macos ]] && command -v spirv-val >/dev/null &&
+            command -v clang-format >/dev/null; }; then
         BB_ARCH=$macarch bash scripts/macos/build-deps.sh
     fi
     export PKG_CONFIG_LIBDIR=$deps/lib/pkgconfig:$deps/share/pkgconfig

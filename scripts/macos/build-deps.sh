@@ -142,7 +142,10 @@ if needed spirv-cross-cli; then
     cp "$work/spirv-cross-cli/spirv-cross" "$prefix/bin/spirv-cross"
     mark spirv-cross-cli
 fi
-if needed dxc; then
+# DXC generates some of its sources with clang-format at configure time.
+if needed dxc && ! command -v clang-format >/dev/null; then
+    echo '== dxc skipped: no clang-format (brew install clang-format); FSR 4.1.1 on Metal is not built'
+elif needed dxc; then
     echo "== dxc"
     fetch dxc "https://github.com/microsoft/DirectXShaderCompiler.git#$DXC_VERSION"
     # Generated sources are copied, not compared: the comparison fails with newer Pythons.
@@ -157,6 +160,8 @@ if needed dxc; then
 fi
 if needed fsr4-native-macos && ! command -v spirv-val >/dev/null; then
     echo '== fsr4-native-macos skipped: no spirv-val (brew install spirv-tools); FSR 4.1.1 on Metal is not built'
+elif needed fsr4-native-macos && [[ ! -x $prefix/bin/dxc ]]; then
+    echo '== fsr4-native-macos skipped: no DXC; FSR 4.1.1 on Metal is not built'
 elif needed fsr4-native-macos; then
     echo "== fsr4-native-macos"
     fetch fsr4-native-macos "https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos/archive/$FSR4_NATIVE_COMMIT.tar.gz"
