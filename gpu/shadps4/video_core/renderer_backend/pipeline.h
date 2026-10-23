@@ -97,6 +97,8 @@ struct ComputePipelineDesc {
     ShaderHandle shader;
     BindingLayout layout;
     bool host_pass{};
+    /// Specialization constants: constant i takes `specialization[i]` (32 bits each).
+    std::span<const u32> specialization;
 };
 
 /// A pipeline the device made; an empty handle when the driver rejected it.

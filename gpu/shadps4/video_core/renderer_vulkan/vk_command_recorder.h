@@ -33,6 +33,9 @@ public:
     void BindIndexBuffer(u64 buffer, u64 offset, VideoCore::Backend::IndexType type) override;
     void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                            std::span<const u64> sizes, std::span<const u64> strides) override;
+    void Barrier(VideoCore::Backend::MemoryUse before, VideoCore::Backend::MemoryUse after) override;
+    void BufferBarrier(u64 buffer, u64 offset, u64 size, VideoCore::Backend::MemoryUse before,
+                       VideoCore::Backend::MemoryUse after) override;
     /// Pushes the descriptors (or, past the push limit, writes a set from the heap: a device
     /// call, made on this thread).
     void BindResources(const VideoCore::Backend::PipelineAllocation& pipeline,

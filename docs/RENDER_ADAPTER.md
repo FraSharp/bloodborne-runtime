@@ -4,7 +4,8 @@
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
-M2 is in progress: the command stream (passes through the recorder).
+M2 is in progress: the command stream (passes, barriers and the host dispatches through the
+recorder).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -387,6 +388,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
 - **M2, passes:** the recorder begins and ends passes (`BeginPass`, `EndPass`, `InPassWith`,
   `WillBeginPass`, `ForceNewPass`, `SetPassLabel`); the rasterizer's passes go through it.
   Measured (new build second): 4.22 µs per draw against 4.20, the frame correct.
+- **M2, barriers and host dispatches:** the recorder places barriers between uses of memory
+  (`Barrier`, `BufferBarrier`, with `MemoryUse`: compute, vertex and fragment shader reads and
+  writes, indirect arguments, transfers, the host, or any). Compute pipelines take
+  specialization constants. The tiling and detiling dispatches, the fault buffer pass, the
+  indirect-argument guard and the copy shader's compute path make their pipelines through the
+  device and record through the recorder (the copies hoisted before a pass are next, with the
+  transfers). Measured (new build second): 4.24 µs per draw against 4.27, 25.9 ms median both,
+  the frame correct; the fault buffer pass did not run (no faults).
 
 ## Decisions
 

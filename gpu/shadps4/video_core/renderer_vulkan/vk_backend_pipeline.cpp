@@ -335,6 +335,16 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,
     };
+    boost::container::small_vector<vk::SpecializationMapEntry, 16> entries;
+    for (u32 i = 0; i < desc.specialization.size(); ++i) {
+        entries.push_back({i, i * u32(sizeof(u32)), sizeof(u32)});
+    }
+    const vk::SpecializationInfo specialization = {
+        .mapEntryCount = static_cast<u32>(entries.size()),
+        .pMapEntries = entries.data(),
+        .dataSize = desc.specialization.size_bytes(),
+        .pData = desc.specialization.data(),
+    };
     const vk::ComputePipelineCreateInfo pipeline_ci = {
         .stage =
             {
@@ -344,6 +354,7 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
                 .stage = vk::ShaderStageFlagBits::eCompute,
                 .module = module,
                 .pName = "main",
+                .pSpecializationInfo = entries.empty() ? nullptr : &specialization,
             },
         .layout = *record->layout,
     };

@@ -39,13 +39,14 @@ vk::PipelineLayout HostPipeline::Layout() const noexcept {
 
 HostPipeline MakeHostCompute(BackendDevice& device, std::span<const u32> spirv,
                              std::span<const Backend::BindingSlot> slots, u32 push_constant_size,
-                             std::string_view name) {
+                             std::string_view name, std::span<const u32> specialization) {
     const auto shader = device.CreateShader(spirv, name);
     ASSERT_MSG(shader.handle, "Failed to compile the {} shader", name);
     const auto allocation = device.CreateComputePipeline(
         {.shader = shader.handle,
          .layout = {.slots = slots, .push_constant_size = push_constant_size},
-         .host_pass = true},
+         .host_pass = true,
+         .specialization = specialization},
         name);
     device.DestroyShader(shader.handle); // the pipeline holds it
     ASSERT_MSG(allocation.handle, "Failed to create the {} pipeline", name);

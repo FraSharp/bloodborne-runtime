@@ -17,7 +17,9 @@
 #include <utility>
 
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 
 namespace VideoCore {
 struct Buffer;
@@ -48,9 +50,8 @@ private:
     Scheduler& scheduler;
     std::unique_ptr<VideoCore::Buffer> checked; ///< NumSlots x 16 bytes of group counts
     std::unique_ptr<VideoCore::Buffer> skipped; ///< count and the last skipped counts (host)
-    vk::UniqueDescriptorSetLayout set_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline;
+    HostPipeline pipeline;
+    CommandRecorder recorder; ///< the render adapter's
     u32 max_count[3]{};
     u32 max_total = 0;
     std::atomic<u32> next_slot{0};

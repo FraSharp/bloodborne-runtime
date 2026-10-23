@@ -33,6 +33,68 @@ vk::Pipeline AsPipeline(u64 native) {
 // Each form captures only what it records: recorded commands live in the recording chunks, and
 // larger captures fill them sooner (an 80-byte capture per draw raised recording from ~4.2 to
 // ~5.8 us a draw).
+namespace {
+/// The stages and accesses of `uses`.
+std::pair<vk::PipelineStageFlags2, vk::AccessFlags2> StagesAndAccess(Backend::MemoryUse uses) {
+    using Use = Backend::MemoryUse;
+    using Stage = vk::PipelineStageFlagBits2;
+    using Access = vk::AccessFlagBits2;
+    vk::PipelineStageFlags2 stages{};
+    vk::AccessFlags2 access{};
+    const auto add = [&](Use use, vk::PipelineStageFlags2 stage, vk::AccessFlags2 bits) {
+        if (Backend::Has(uses, use)) {
+            stages |= stage;
+            access |= bits;
+        }
+    };
+    add(Use::ComputeRead, Stage::eComputeShader, Access::eShaderRead);
+    add(Use::ComputeWrite, Stage::eComputeShader, Access::eShaderWrite);
+    add(Use::VertexRead, Stage::eVertexShader | Stage::eVertexInput,
+        Access::eShaderRead | Access::eVertexAttributeRead | Access::eIndexRead);
+    add(Use::VertexWrite, Stage::eVertexShader, Access::eShaderWrite);
+    add(Use::FragmentRead, Stage::eFragmentShader, Access::eShaderRead);
+    add(Use::FragmentWrite, Stage::eFragmentShader, Access::eShaderWrite);
+    add(Use::IndirectRead, Stage::eDrawIndirect, Access::eIndirectCommandRead);
+    add(Use::TransferRead, Stage::eAllTransfer, Access::eTransferRead);
+    add(Use::TransferWrite, Stage::eAllTransfer, Access::eTransferWrite);
+    add(Use::HostRead, Stage::eHost, Access::eHostRead);
+    add(Use::HostWrite, Stage::eHost, Access::eHostWrite);
+    add(Use::Any, Stage::eAllCommands, Access::eMemoryRead | Access::eMemoryWrite);
+    return {stages ? stages : vk::PipelineStageFlags2{Stage::eNone}, access};
+}
+} // namespace
+
+void CommandRecorder::Barrier(Backend::MemoryUse before, Backend::MemoryUse after) {
+    const auto [src_stage, src_access] = StagesAndAccess(before);
+    const auto [dst_stage, dst_access] = StagesAndAccess(after);
+    scheduler.Record([barrier = vk::MemoryBarrier2{.srcStageMask = src_stage,
+                                                   .srcAccessMask = src_access,
+                                                   .dstStageMask = dst_stage,
+                                                   .dstAccessMask = dst_access}](
+                         vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
+    });
+}
+
+void CommandRecorder::BufferBarrier(u64 buffer, u64 offset, u64 size, Backend::MemoryUse before,
+                                    Backend::MemoryUse after) {
+    const auto [src_stage, src_access] = StagesAndAccess(before);
+    const auto [dst_stage, dst_access] = StagesAndAccess(after);
+    scheduler.Record([barrier = vk::BufferMemoryBarrier2{
+                          .srcStageMask = src_stage,
+                          .srcAccessMask = src_access,
+                          .dstStageMask = dst_stage,
+                          .dstAccessMask = dst_access,
+                          .buffer = vk::Buffer{reinterpret_cast<VkBuffer>(buffer)},
+                          .offset = offset,
+                          .size = size,
+                      }](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.dependencyFlags = vk::DependencyFlagBits::eByRegion,
+                                 .bufferMemoryBarrierCount = 1,
+                                 .pBufferMemoryBarriers = &barrier});
+    });
+}
+
 void CommandRecorder::BeginPass(const Backend::RenderState& state) {
     scheduler.BeginRendering(state);
 }

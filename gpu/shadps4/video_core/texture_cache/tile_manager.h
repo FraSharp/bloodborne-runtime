@@ -10,6 +10,8 @@
 #include "common/types.h"
 #include "video_core/amdgpu/tiling.h"
 #include "video_core/buffer_cache/buffer.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 
 namespace Vulkan {
 struct Runtime;
@@ -53,20 +55,20 @@ public:
                                               const ImageInfo& info);
 
 private:
-    void RecordTilingDispatch(vk::Pipeline pipeline, const vk::DescriptorBufferInfo& tiled,
+    void RecordTilingDispatch(const Vulkan::HostPipeline& pipeline,
+                              const vk::DescriptorBufferInfo& tiled,
                               const vk::DescriptorBufferInfo& linear,
                               const vk::DescriptorBufferInfo& params, u32 dim_x);
 
-    vk::Pipeline GetTilingPipeline(const ImageInfo& info, bool is_tiler);
+    const Vulkan::HostPipeline& GetTilingPipeline(const ImageInfo& info, bool is_tiler);
 
 private:
     const Vulkan::Instance& instance;
     Vulkan::Scheduler& scheduler;
     Vulkan::Runtime& runtime;
     StreamBuffer& stream_buffer;
-    vk::UniqueDescriptorSetLayout desc_layout;
-    vk::UniquePipelineLayout pl_layout;
-    std::unordered_map<TilingKey, vk::UniquePipeline, TilingKey::Hash> tiling_pipelines;
+    Vulkan::CommandRecorder recorder; ///< the render adapter's, for the tiling dispatches
+    std::unordered_map<TilingKey, Vulkan::HostPipeline, TilingKey::Hash> tiling_pipelines;
 };
 
 } // namespace VideoCore

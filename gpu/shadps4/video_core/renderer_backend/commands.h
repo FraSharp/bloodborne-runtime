@@ -49,6 +49,29 @@ struct VertexAttribute {
     u32 offset{};
 };
 
+/// Uses of memory a barrier separates, as bits: what came before and what comes after.
+enum class MemoryUse : u32 {
+    None = 0,
+    ComputeRead = 1u << 0,
+    ComputeWrite = 1u << 1,
+    VertexRead = 1u << 2, ///< vertex-stage shaders (and vertex and index fetch)
+    VertexWrite = 1u << 3,
+    FragmentRead = 1u << 4,
+    FragmentWrite = 1u << 5,
+    IndirectRead = 1u << 6, ///< indirect draw and dispatch arguments
+    TransferRead = 1u << 7,
+    TransferWrite = 1u << 8,
+    HostRead = 1u << 9,
+    HostWrite = 1u << 10,
+    Any = 1u << 11, ///< every stage, every access
+};
+constexpr MemoryUse operator|(MemoryUse a, MemoryUse b) noexcept {
+    return static_cast<MemoryUse>(static_cast<u32>(a) | static_cast<u32>(b));
+}
+constexpr bool Has(MemoryUse uses, MemoryUse use) noexcept {
+    return (static_cast<u32>(uses) & static_cast<u32>(use)) != 0;
+}
+
 /// A draw with its pipeline (the backend's object, NativeHandle). Direct when `args_buffer` is
 /// zero; otherwise its arguments are read from `args_buffer`, and their number from
 /// `count_buffer` (at most `max_draws`) when that is not zero.
@@ -99,6 +122,12 @@ public:
     /// Binds `buffers` from slot 0. `sizes` and `strides` empty: the pipeline's strides.
     virtual void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                                    std::span<const u64> sizes, std::span<const u64> strides) = 0;
+
+    /// Later `after` uses of all memory wait for earlier `before` uses.
+    virtual void Barrier(MemoryUse before, MemoryUse after) = 0;
+    /// The same for `size` bytes of `buffer` (NativeHandle) from `offset`.
+    virtual void BufferBarrier(u64 buffer, u64 offset, u64 size, MemoryUse before,
+                               MemoryUse after) = 0;
 
     /// The resources of the next draws or dispatches with `pipeline`: `writes` into its slots
     /// and `push_constants`. Writes may point into `images` and `buffers`, which are then copied

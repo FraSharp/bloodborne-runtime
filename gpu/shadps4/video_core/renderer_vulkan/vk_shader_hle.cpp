@@ -2,6 +2,10 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include "shader_recompiler/info.h"
+#include "video_core/renderer_vulkan/vk_state.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
@@ -42,45 +46,15 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     src_min = Common::AlignDown(src_min, align);
     dst_min = Common::AlignDown(dst_min, align);
 
-    struct Pipeline {
-        vk::UniqueDescriptorSetLayout set_layout;
-        vk::UniquePipelineLayout layout;
-        vk::UniquePipeline pipeline;
-    };
-    static Pipeline pipe = [&] {
-        const auto device = instance.GetDevice();
-        Pipeline p;
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
-        for (u32 i = 0; i < 3; ++i) {
-            bindings[i] = {.binding = i,
-                           .descriptorType = vk::DescriptorType::eStorageBuffer,
-                           .descriptorCount = 1,
-                           .stageFlags = vk::ShaderStageFlagBits::eCompute};
-        }
-        p.set_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = static_cast<u32>(bindings.size()),
-            .pBindings = bindings.data(),
-        }));
-        const vk::PushConstantRange range{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                          .offset = 0,
-                                          .size = sizeof(u32)};
-        p.layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1,
-            .pSetLayouts = &*p.set_layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &range,
-        }));
-        const auto module = CompileSPV(BUFFER_MULTI_COPY_COMP, device);
-        p.pipeline = Check(device.createComputePipelineUnique(
-            {}, vk::ComputePipelineCreateInfo{
-                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                              .module = module,
-                              .pName = "main"},
-                    .layout = *p.layout,
-                }));
-        device.destroyShaderModule(module);
-        return p;
+    namespace Backend = VideoCore::Backend;
+    // Made once and kept: the device outlives every copy, not static destructors.
+    static const HostPipeline& pipeline = *[&] {
+        constexpr Backend::BindingSlot storage{.kind = Backend::BindingKind::StorageBuffer,
+                                               .stages = Backend::ShaderStage::Compute};
+        constexpr std::array slots{storage, storage, storage};
+        return new HostPipeline{MakeHostCompute(BackendDevice::From(instance),
+                                                BUFFER_MULTI_COPY_COMP, slots, sizeof(u32),
+                                                "buffer multi copy")};
     }();
 
     // The region table goes into the stream buffer (host writes, visible at submission).
@@ -99,34 +73,33 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
     if (auto* profiler = GpuProfiler::Get()) {
         profiler->Mark(0xC0B1ull, [] { return std::string{"copy shader HLE: barrier + dispatch"}; });
     }
-    scheduler.EndRendering();
+    CommandRecorder recorder{scheduler, BackendDevice::From(instance).GetDescriptorHeap(),
+                             instance.GetDevice()};
+    recorder.EndPass();
     const u64 src_size = src_max - src_min, dst_size = dst_max - dst_min;
     if (runtime.IsBufferAccessed(src, src_min, src_size) ||
         runtime.IsBufferAccessed(dst, dst_min, dst_size, true)) {
         runtime.FlushBarriers();
     }
     const u32 count = static_cast<u32>(copies.size());
-    scheduler.RecordCrumb({.name = "HLE copy shader"}, [src = src->Handle(), dst = dst->Handle(), table = stream.Handle(), src_min,
-                      src_size, dst_min, dst_size, table_offset, table_size,
-                      count](vk::CommandBuffer cmdbuf) {
-        const std::array<vk::DescriptorBufferInfo, 3> infos{{
-            {src, src_min, src_size},
-            {dst, dst_min, dst_size},
-            {table, table_offset, table_size},
-        }};
-        std::array<vk::WriteDescriptorSet, 3> writes{};
-        for (u32 i = 0; i < 3; ++i) {
-            writes[i] = {.dstBinding = i,
-                         .descriptorCount = 1,
-                         .descriptorType = vk::DescriptorType::eStorageBuffer,
-                         .pBufferInfo = &infos[i]};
-        }
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *pipe.pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *pipe.layout, 0, writes);
-        cmdbuf.pushConstants(*pipe.layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(count),
-                             &count);
-        cmdbuf.dispatch(count, 1, 1);
-    });
+    const std::array buffers{
+        MakeBufferBinding(src->Handle(), src_min, src_size),
+        MakeBufferBinding(dst->Handle(), dst_min, dst_size),
+        MakeBufferBinding(stream.Handle(), table_offset, table_size),
+    };
+    std::array<Backend::SlotWrite, 3> writes{};
+    for (u32 i = 0; i < writes.size(); ++i) {
+        writes[i] = {.slot = i,
+                     .count = 1,
+                     .kind = Backend::BindingKind::StorageBuffer,
+                     .buffers = &buffers[i]};
+    }
+    recorder.BindResources(pipeline.Allocation(), writes,
+                           {reinterpret_cast<const u8*>(&count), sizeof(count)}, {}, buffers);
+    recorder.Dispatch({.pipeline = pipeline.Allocation().native, .groups = {count, 1, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch,
+                       .name = "HLE copy shader",
+                       .count = {count, 1, 1}});
     runtime.AccessBuffer(src, src_min, src_size, vk::PipelineStageFlagBits2::eComputeShader,
                          vk::AccessFlagBits2::eShaderRead);
     runtime.AccessBuffer(dst, dst_min, dst_size, vk::PipelineStageFlagBits2::eComputeShader,
