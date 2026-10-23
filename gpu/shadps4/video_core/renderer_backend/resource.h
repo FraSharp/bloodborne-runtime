@@ -40,8 +40,8 @@ using ShaderHandle = Handle<ShaderTag>;
 using PipelineHandle = Handle<PipelineTag>;
 using QueryPoolHandle = Handle<QueryPoolTag>;
 
-/// Occlusion queries the device made: `count` slots, each counting the samples that pass between
-/// CommandRecorder::BeginQuery and EndQuery.
+/// Queries the device made: occlusion queries (the samples that pass between
+/// CommandRecorder::BeginQuery and EndQuery) or timestamps (CommandRecorder::WriteTimestamp).
 struct QueryPoolAllocation {
     QueryPoolHandle handle;
     u64 native{}; ///< the backend's object
@@ -282,6 +282,8 @@ struct Capabilities {
     bool dynamic_vertex_input{};
     u32 color_sample_counts{1}; ///< render target sample counts, as a mask (bit n: 2^n samples)
     u32 depth_sample_counts{1};
+    u32 timestamp_valid_bits{}; ///< 0: no timestamps
+    double timestamp_period_ns{}; ///< nanoseconds per timestamp tick
 };
 
 } // namespace VideoCore::Backend

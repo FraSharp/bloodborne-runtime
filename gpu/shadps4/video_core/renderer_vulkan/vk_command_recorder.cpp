@@ -115,6 +115,14 @@ void CommandRecorder::ResetQueries(u64 pool, u32 first, u32 count) {
     });
 }
 
+void CommandRecorder::WriteTimestamp(u64 pool, u32 slot, bool end_of_pipe) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot, end_of_pipe](vk::CommandBuffer cmdbuf) {
+        cmdbuf.writeTimestamp2(end_of_pipe ? vk::PipelineStageFlagBits2::eAllCommands
+                                           : vk::PipelineStageFlagBits2::eNone,
+                               pool, slot);
+    });
+}
+
 void CommandRecorder::CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) {
     scheduler.Record([pool = NativeQueryPool(pool), first, count, buffer = NativeBuffer(buffer),
                       offset](vk::CommandBuffer cmdbuf) {

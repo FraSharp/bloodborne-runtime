@@ -85,7 +85,15 @@ public:
 
     [[nodiscard]] virtual QueryPoolAllocation CreateOcclusionQueries(u32 count,
                                                                      std::string_view name) = 0;
+    [[nodiscard]] virtual QueryPoolAllocation CreateTimestampQueries(u32 count,
+                                                                     std::string_view name) = 0;
     virtual void DestroyQueryPool(QueryPoolHandle pool) = 0;
+    /// From the CPU, for queries no submission in flight uses.
+    virtual void ResetQueries(QueryPoolHandle pool, u32 first, u32 count) = 0;
+    /// The results of `values.size()` queries from `first` (64 bits each); false when one is not
+    /// available (`wait`: until they are).
+    [[nodiscard]] virtual bool ReadQueryResults(QueryPoolHandle pool, u32 first,
+                                                std::span<u64> values, bool wait) = 0;
 
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;

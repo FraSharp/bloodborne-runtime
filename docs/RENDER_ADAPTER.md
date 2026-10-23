@@ -422,6 +422,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   them. It needs `BB_OCCLUSION_QUERIES=1` and guest memory used in place (Linux), so on the Mac
   this is built, not run. Measured (new build second): 4.13 µs per draw against 4.30, frame
   correct.
+- **M2, timestamps:** timestamp query pools are device objects too (`CreateTimestampQueries`,
+  `ResetQueries` and `ReadQueryResults` from the CPU; the timestamp bits and period are
+  capabilities), and the recorder writes timestamps. The game's GPU clock reads and the GPU
+  profile (`BB_GPU_PROFILE=1`) use them. The profile reports on MoltenVK's recording (13
+  reports in 75 s); on the Metal path it reports nothing, as before. The game took no GPU
+  clock reads in the test scene.
 
 ## Decisions
 

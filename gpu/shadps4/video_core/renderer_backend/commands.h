@@ -135,6 +135,9 @@ public:
     virtual void EndQuery(u64 pool, u32 slot) = 0;
     /// Outside passes.
     virtual void ResetQueries(u64 pool, u32 first, u32 count) = 0;
+    /// The time into a timestamp query: once every earlier command has finished (`end_of_pipe`),
+    /// or when the GPU reaches this command.
+    virtual void WriteTimestamp(u64 pool, u32 slot, bool end_of_pipe) = 0;
     /// The counts of `count` queries from `first` into `buffer` from `offset`, 64 bits each, once
     /// they are available.
     virtual void CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) = 0;

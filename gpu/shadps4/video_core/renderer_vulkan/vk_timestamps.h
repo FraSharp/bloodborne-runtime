@@ -17,7 +17,9 @@
 #include <mutex>
 
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 
 namespace VideoCore {
 class BufferCache;
@@ -57,12 +59,11 @@ private:
 
     const Instance& instance;
     Scheduler& scheduler;
+    CommandRecorder recorder; ///< the render adapter's
     VideoCore::BufferCache& buffer_cache;
-    vk::UniqueQueryPool pool;
+    VideoCore::Backend::QueryPoolAllocation pool; ///< the device's, destroyed with this
     std::unique_ptr<VideoCore::Buffer> results;
-    vk::UniqueDescriptorSetLayout set_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline;
+    HostPipeline pipeline;
     u32 valid_bits = 0;
     double period_ns = 1.0;
     bool calibrated = false;

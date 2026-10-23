@@ -39,6 +39,7 @@ public:
     void BeginQuery(u64 pool, u32 slot, bool precise) override;
     void EndQuery(u64 pool, u32 slot) override;
     void ResetQueries(u64 pool, u32 first, u32 count) override;
+    void WriteTimestamp(u64 pool, u32 slot, bool end_of_pipe) override;
     void CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) override;
     void FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) override;
     void Barrier(VideoCore::Backend::MemoryUse before, VideoCore::Backend::MemoryUse after) override;

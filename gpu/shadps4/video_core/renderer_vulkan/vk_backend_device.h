@@ -104,7 +104,12 @@ public:
 
     [[nodiscard]] VideoCore::Backend::QueryPoolAllocation CreateOcclusionQueries(
         u32 count, std::string_view name) override;
+    [[nodiscard]] VideoCore::Backend::QueryPoolAllocation CreateTimestampQueries(
+        u32 count, std::string_view name) override;
     void DestroyQueryPool(VideoCore::Backend::QueryPoolHandle pool) override;
+    void ResetQueries(VideoCore::Backend::QueryPoolHandle pool, u32 first, u32 count) override;
+    [[nodiscard]] bool ReadQueryResults(VideoCore::Backend::QueryPoolHandle pool, u32 first,
+                                        std::span<u64> values, bool wait) override;
 
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
@@ -135,6 +140,9 @@ private:
     DescriptorHeap descriptor_heap;
 
     VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
+    VideoCore::Backend::QueryPoolAllocation CreateQueries(vk::QueryType type, u32 count,
+                                                          std::string_view name);
+    [[nodiscard]] vk::QueryPool NativeQueryPool(VideoCore::Backend::QueryPoolHandle pool);
     /// The set and pipeline layouts of `layout`, in a new record.
     std::unique_ptr<PipelineRecord> MakePipelineLayout(const VideoCore::Backend::BindingLayout& layout,
                                                        vk::ShaderStageFlags push_stages,

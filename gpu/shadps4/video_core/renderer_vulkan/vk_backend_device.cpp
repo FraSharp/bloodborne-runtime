@@ -37,6 +37,12 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
     instance.SetBackendDevice(this);
     MetalResources::Init(static_cast<VkDevice>(instance.GetDevice()));
     capabilities.non_coherent_atom_size = instance.NonCoherentAtomSize();
+    const auto families = instance.GetPhysicalDevice().getQueueFamilyProperties();
+    const u32 family = instance.GetGraphicsQueueFamilyIndex();
+    capabilities.timestamp_valid_bits =
+        family < families.size() ? families[family].timestampValidBits : 0u;
+    capabilities.timestamp_period_ns =
+        instance.GetPhysicalDevice().getProperties().limits.timestampPeriod;
     VideoCore::Backend::SelectedApi();
 }
 
@@ -428,8 +434,37 @@ u64 BackendDevice::NativeHandle(Backend::ShaderHandle shader) {
 
 Backend::QueryPoolAllocation BackendDevice::CreateOcclusionQueries(u32 count,
                                                                   std::string_view name) {
+    return CreateQueries(vk::QueryType::eOcclusion, count, name);
+}
+
+Backend::QueryPoolAllocation BackendDevice::CreateTimestampQueries(u32 count,
+                                                                  std::string_view name) {
+    return CreateQueries(vk::QueryType::eTimestamp, count, name);
+}
+
+vk::QueryPool BackendDevice::NativeQueryPool(Backend::QueryPoolHandle pool) {
+    std::scoped_lock lock{objects_mutex};
+    const vk::UniqueQueryPool* entry = query_pools.Get(pool);
+    return entry ? **entry : vk::QueryPool{};
+}
+
+void BackendDevice::ResetQueries(Backend::QueryPoolHandle pool, u32 first, u32 count) {
+    instance.GetDevice().resetQueryPool(NativeQueryPool(pool), first, count);
+}
+
+bool BackendDevice::ReadQueryResults(Backend::QueryPoolHandle pool, u32 first,
+                                     std::span<u64> values, bool wait) {
+    const auto flags = vk::QueryResultFlagBits::e64 |
+                       (wait ? vk::QueryResultFlagBits::eWait : vk::QueryResultFlags{});
+    return instance.GetDevice().getQueryPoolResults(
+               NativeQueryPool(pool), first, static_cast<u32>(values.size()), values.size_bytes(),
+               values.data(), sizeof(u64), flags) == vk::Result::eSuccess;
+}
+
+Backend::QueryPoolAllocation BackendDevice::CreateQueries(vk::QueryType type, u32 count,
+                                                         std::string_view name) {
     auto pool = Check(instance.GetDevice().createQueryPoolUnique({
-        .queryType = vk::QueryType::eOcclusion,
+        .queryType = type,
         .queryCount = count,
     }));
     if (!name.empty()) {
