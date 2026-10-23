@@ -285,6 +285,31 @@ struct Capabilities {
     u32 depth_sample_counts{1};
     u32 timestamp_valid_bits{}; ///< 0: no timestamps
     double timestamp_period_ns{}; ///< nanoseconds per timestamp tick
+    u64 uniform_min_alignment{1}; ///< of uniform buffer binding offsets
+    u64 storage_min_alignment{1}; ///< of storage buffer binding offsets
+    bool integrated{};            ///< the GPU shares the CPU's memory
+    bool memory_report{};         ///< Device::ReportMemory has usage and budget (a driver query)
+    bool tessellation{};
+    bool geometry_shaders{};
+    bool list_restart{};       ///< primitive restart in list topologies
+    bool patch_list_restart{}; ///< and in patch lists
+    bool null_descriptor{};    ///< empty slots may be bound (no null resources needed)
+    bool mixed_depth_samples{}; ///< a depth target's sample count may differ from the colours'
+    bool mixed_any_samples{};
+    bool depth_range_unrestricted{};
+    bool depth_clip_control{};
+    bool buffer_markers{}; ///< labels written at the end of the pipe inside passes
+    u32 max_viewport_width{}, max_viewport_height{};
+    u32 max_framebuffer_width{}, max_framebuffer_height{};
+    u32 max_sampler_allocations{};
+};
+
+/// The device's memory as the driver reports it.
+struct MemoryReport {
+    bool available{}; ///< the driver reports usage and budget
+    u64 used{};       ///< by this process, in the heaps the budget counts
+    u64 budget{};     ///< the driver's current budget of those heaps
+    u64 total{};      ///< the total budget at startup
 };
 
 } // namespace VideoCore::Backend

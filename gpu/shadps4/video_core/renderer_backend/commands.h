@@ -172,6 +172,9 @@ public:
     /// Writes `value` (`num_bytes`: 4 or 8) to the buffer once every earlier command has
     /// finished; a 64-bit value as two 32-bit writes, the high half first.
     virtual void WriteLabel(u64 buffer, u64 offset, u64 value, u32 num_bytes) = 0;
+    /// Labels may be written inside passes (the device's buffer markers,
+    /// Capabilities::buffer_markers) instead of only between them.
+    virtual void SetBufferMarkers(bool enabled) = 0;
 
     /// Hands what was recorded to the GPU; a new submission (tick) begins.
     virtual void Submit() = 0;

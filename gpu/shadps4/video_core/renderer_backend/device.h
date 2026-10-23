@@ -34,6 +34,7 @@ public:
     /// the game or the memory model are the caller's).
     [[nodiscard]] virtual Shader::Profile ShaderProfile() const = 0;
     [[nodiscard]] virtual const Capabilities& GetCapabilities() const noexcept = 0;
+    [[nodiscard]] virtual MemoryReport ReportMemory() const = 0;
 
     /// The tick of the submission now being recorded.
     [[nodiscard]] virtual u64 CurrentTick() const noexcept = 0;

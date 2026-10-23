@@ -55,6 +55,10 @@ public:
         return instance;
     }
 
+    [[nodiscard]] VideoCore::Backend::Device& GetDevice() noexcept {
+        return device;
+    }
+
     [[nodiscard]] VideoCore::Backend::Transfers& GetRuntime() noexcept {
         return runtime;
     }
@@ -468,7 +472,8 @@ private:
     VideoCore::Backend::Device& device; ///< the render adapter's (ticks, waits)
     const Instance& instance;
     Scheduler& scheduler;
-    CommandRecorder recorder; ///< the render adapter's commands (renderer_backend/commands.h)
+    /// The device's command stream (renderer_backend/commands.h).
+    VideoCore::Backend::CommandRecorder& recorder;
     VideoCore::Backend::Transfers& runtime; ///< the backend's transfers (the Vulkan Runtime)
     VideoCore::PageManager page_manager;
     VideoCore::BufferCache buffer_cache;

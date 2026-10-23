@@ -191,7 +191,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.vs.user_clip_plane_mask = regs.clipper_control.user_clip_plane_enable;
         info.hw.vs.num_outputs = MapOutputs(info.hw.vs.outputs, regs.vs_output_control);
         info.hw.vs.emulate_depth_negative_one_to_one =
-            !instance.IsDepthClipControlSupported() &&
+            !BackendDevice::From(instance).GetCapabilities().depth_clip_control &&
             regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW;
         info.hw.vs.clip_disable = regs.IsClipDisabled();
         info.hw.vs.motion_vectors = sel.motion;
@@ -624,7 +624,7 @@ bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indi
         const char* env = std::getenv("BB_ASYNC_PIPELINES");
         return !(env && env[0] == '0');
     }();
-    if (!enabled || !instance.IsVertexInputDynamicState() || !selection.regs) {
+    if (!enabled || !BackendDevice::From(instance).GetCapabilities().dynamic_vertex_input || !selection.regs) {
         return false;
     }
     static u32 frame_seen = ~0u;
@@ -966,8 +966,8 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
     // Force all color samples to match depth samples to avoid unsupported MSAA configuration
     if (color_samples != 0) {
         const bool depth_mismatch = db_enabled && color_samples != key.depth_samples;
-        if (!all_color_samples_same && !instance.IsMixedAnySamplesSupported() ||
-            all_color_samples_same && depth_mismatch && !instance.IsMixedDepthSamplesSupported()) {
+        if (!all_color_samples_same && !BackendDevice::From(instance).GetCapabilities().mixed_any_samples ||
+            all_color_samples_same && depth_mismatch && !BackendDevice::From(instance).GetCapabilities().mixed_depth_samples) {
             key.color_samples.fill(key.depth_samples);
             key.num_samples = key.depth_samples;
         }
@@ -1026,7 +1026,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
 
     switch (regs.stage_enable.raw) {
     case AmdGpu::ShaderStageEnable::VgtStages::EsGs:
-        if (!instance.IsGeometryStageSupported()) {
+        if (!BackendDevice::From(instance).GetCapabilities().geometry_shaders) {
             NoteSkippedGeometryDraw();
             return false;
         }
@@ -1042,7 +1042,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         break;
     case AmdGpu::ShaderStageEnable::VgtStages::LsHs:
-        if (!instance.IsTessellationSupported()) {
+        if (!BackendDevice::From(instance).GetCapabilities().tessellation) {
             return false;
         }
         if (!bind_stage(HwStage::Hull, SwStage::TessellationControl)) {
@@ -1057,10 +1057,10 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         break;
     case AmdGpu::ShaderStageEnable::VgtStages::LsHsEsGs:
-        if (!instance.IsTessellationSupported()) {
+        if (!BackendDevice::From(instance).GetCapabilities().tessellation) {
             return false;
         }
-        if (!instance.IsGeometryStageSupported()) {
+        if (!BackendDevice::From(instance).GetCapabilities().geometry_shaders) {
             NoteSkippedGeometryDraw();
             return false;
         }
@@ -1211,7 +1211,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             }
         }
     }
-    if (vs_info && sel.fetch_shader && !instance.IsVertexInputDynamicState()) {
+    if (vs_info && sel.fetch_shader && !BackendDevice::From(instance).GetCapabilities().dynamic_vertex_input) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.
         u32 vertex_binding = 0;

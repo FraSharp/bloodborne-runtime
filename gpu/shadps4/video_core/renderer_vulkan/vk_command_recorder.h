@@ -71,7 +71,7 @@ public:
 
     /// Labels as AMD buffer markers (end of pipe, inside render passes too) instead of
     /// portable transfer updates, which need no render pass open.
-    void SetBufferMarkers(bool enabled) noexcept {
+    void SetBufferMarkers(bool enabled) noexcept override {
         buffer_markers = enabled;
     }
 

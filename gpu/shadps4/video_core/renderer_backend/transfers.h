@@ -29,6 +29,11 @@ public:
 
     virtual void CopyBuffer(const Buffer* src, const Buffer* dst,
                             std::span<const BufferCopy> copies) = 0;
+    /// Inside a pass whose draws so far did not touch the ranges, the copies run before the
+    /// pass began, so the pass is not split; false when they cannot be placed there (the caller
+    /// copies the usual way).
+    [[nodiscard]] virtual bool CopyBufferBeforePass(const Buffer* src, const Buffer* dst,
+                                                    std::span<const BufferCopy> copies) = 0;
     /// From the game's memory itself (`src`: a guest memory chunk's buffer, NativeHandle).
     virtual void CopyFromGuestChunk(u64 src, const Buffer* dst,
                                     std::span<const BufferCopy> copies) = 0;

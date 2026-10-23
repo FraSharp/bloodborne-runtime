@@ -123,20 +123,20 @@ TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& ins
       tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
     std::printf("Texture upload baselines: %s\n", UploadBaselinesEnabled() ? "on" : "off");
-    u32 max_samplers = instance.GetMaxSamplerAllocationCount();
+    u32 max_samplers = device.GetCapabilities().max_sampler_allocations;
     trigger_gc_samplers = max_samplers * 3 / 4;
     pressure_gc_samplers = max_samplers * 7 / 8;
     critical_gc_samplers = max_samplers * 15 / 16;
 
     // Set up garbage collection parameters.
-    if (!instance.CanReportMemoryUsage()) {
+    if (!device.GetCapabilities().memory_report) {
         trigger_gc_memory = 0;
         pressure_gc_memory = DEFAULT_PRESSURE_GC_MEMORY;
         critical_gc_memory = DEFAULT_CRITICAL_GC_MEMORY;
         return;
     }
 
-    const s64 device_local_memory = static_cast<s64>(instance.GetTotalMemoryBudget());
+    const s64 device_local_memory = static_cast<s64>(device.ReportMemory().total);
     const s64 min_spacing_expected = device_local_memory - 1_GB;
     const s64 min_spacing_critical = device_local_memory - 512_MB;
     const s64 mem_threshold = std::min<s64>(device_local_memory, TARGET_GC_THRESHOLD);
@@ -1284,8 +1284,9 @@ void TextureCache::UntrackImageTail(ImageId image_id) {
 }
 
 void TextureCache::GarbageCollectImages() {
-    if (instance.CanReportMemoryUsage()) {
-        total_used_memory = instance.GetDeviceMemoryUsage();
+    if (device.GetCapabilities().memory_report) {
+        const auto memory = device.ReportMemory();
+        total_used_memory = memory.used;
         // bbport: on integrated GPUs (Steam Deck) the usage covers system-memory heaps holding
         // much more than images (buffers backing guest memory), and the startup budget left
         // ~1 GB after its 8 GB system reserve: usage stayed above the critical mark, so the
@@ -1296,8 +1297,8 @@ void TextureCache::GarbageCollectImages() {
             const char* env = std::getenv("BB_GC_BUDGET_MB");
             return env ? std::strtoull(env, nullptr, 10) << 20 : 0;
         }();
-        if (instance.IsIntegrated() || forced_budget) {
-            const u64 budget = forced_budget ? forced_budget : instance.GetDeviceMemoryBudgetNow();
+        if (device.GetCapabilities().integrated || forced_budget) {
+            const u64 budget = forced_budget ? forced_budget : memory.budget;
             if (budget != 0) {
                 trigger_gc_memory = budget / 10 * 7;
                 pressure_gc_memory = budget / 100 * 85;
@@ -1320,8 +1321,8 @@ void TextureCache::GarbageCollectImages() {
         gc_second = second;
         // bbport: the driver's budget for our process, once a second: near it the collector evicts
         // by submissions (as before 0.5) rather than keeping textures for seconds (NoteVramShort).
-        if (instance.CanReportMemoryUsage() && !instance.IsIntegrated()) {
-            const u64 budget = instance.GetDeviceMemoryBudgetNow();
+        if (device.GetCapabilities().memory_report && !device.GetCapabilities().integrated) {
+            const u64 budget = device.ReportMemory().budget;
             if (budget != 0 && total_used_memory >= budget / 100 * 92 &&
                 vram_short_until.load(std::memory_order_relaxed) < second + 2) {
                 vram_short_until.store(second + 2, std::memory_order_relaxed);

@@ -136,6 +136,98 @@ void Runtime::CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* 
     CopyBuffer(src, dst, std::span<const vk::BufferCopy>{regions});
 }
 
+// bbport (BB_HOIST_COPIES): inside a render pass whose recorded draws did not touch the ranges
+// (no write to the source, no access to the destination since the last barrier, which a pass
+// cannot contain), the copies run before the pass began, then a barrier: the pass is not split
+// (a split stores and reloads all its attachments: the G-buffer ~24 times a frame).
+bool Runtime::CopyBufferBeforePass(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+                                   std::span<const VideoCore::Backend::BufferCopy> copies) {
+    if (!Scheduler::HoistCopies() || !scheduler.IsRendering() || copies.empty()) {
+        return false;
+    }
+    static std::atomic<u64> hoisted{0}, conflicts{0}, unplaced{0};
+    static const bool stats = std::getenv("BB_FRAME_STATS") != nullptr;
+    for (const auto& copy : copies) {
+        if (IsBufferAccessed(src, copy.src_offset, copy.size) ||
+            IsBufferAccessed(dst, copy.dst_offset, copy.size, true)) {
+            if (stats) ++conflicts;
+            return false;
+        }
+    }
+    // Copies hoisted before the same pass share one command and one barrier (each command of
+    // its own was a Metal blit pass: ~120 a frame), unless one touches what an earlier one wrote
+    // or reads: then a new batch, after the earlier one's barrier.
+    struct Batch {
+        struct Copy {
+            vk::Buffer src, dst;
+            std::vector<vk::BufferCopy> regions;
+        };
+        std::vector<Copy> copies;
+        std::vector<std::pair<u64, u64>> written, read; ///< by buffer handle: [start, end)
+    };
+    static std::shared_ptr<Batch> batch;
+    static u64 batch_generation = ~0ull;
+    const auto overlaps = [](const std::vector<std::pair<u64, u64>>& ranges, u64 start, u64 end) {
+        for (const auto& [a, b] : ranges) {
+            if (start < b && a < end) return true;
+        }
+        return false;
+    };
+    const u64 base_src = reinterpret_cast<u64>(static_cast<VkBuffer>(src->Handle())) << 40;
+    const u64 base_dst = reinterpret_cast<u64>(static_cast<VkBuffer>(dst->Handle())) << 40;
+    bool joins = batch && batch_generation == scheduler.PassAnchorGeneration();
+    for (const auto& copy : copies) {
+        if (!joins) break;
+        const u64 s0 = base_src + copy.src_offset, d0 = base_dst + copy.dst_offset;
+        joins = !overlaps(batch->written, s0, s0 + copy.size) &&
+                !overlaps(batch->written, d0, d0 + copy.size) &&
+                !overlaps(batch->read, d0, d0 + copy.size);
+    }
+    const auto note = [&](Batch& b) {
+        const auto regions = ConvertRegions<vk::BufferCopy>(copies);
+        b.copies.push_back({src->Handle(), dst->Handle(), {regions.begin(), regions.end()}});
+        for (const auto& copy : copies) {
+            b.read.emplace_back(base_src + copy.src_offset, base_src + copy.src_offset + copy.size);
+            b.written.emplace_back(base_dst + copy.dst_offset, base_dst + copy.dst_offset + copy.size);
+        }
+    };
+    bool placed = false;
+    if (joins) {
+        note(*batch);
+        placed = true;
+    } else {
+        auto fresh = std::make_shared<Batch>();
+        note(*fresh);
+        placed = scheduler.RecordBeforePass([fresh](vk::CommandBuffer cmdbuf) {
+            for (const auto& copy : fresh->copies) {
+                cmdbuf.copyBuffer(copy.src, copy.dst, copy.regions);
+            }
+            const vk::MemoryBarrier2 barrier = {
+                .srcStageMask = vk::PipelineStageFlagBits2::eCopy,
+                .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
+                .dstStageMask = vk::PipelineStageFlagBits2::eAllCommands,
+                .dstAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
+            };
+            cmdbuf.pipelineBarrier2(vk::DependencyInfo{.memoryBarrierCount = 1,
+                                                       .pMemoryBarriers = &barrier});
+        });
+        if (placed) {
+            batch = std::move(fresh);
+            batch_generation = scheduler.PassAnchorGeneration();
+        }
+    }
+    if (stats) {
+        ++(placed ? hoisted : unplaced);
+        if ((hoisted + conflicts + unplaced) % 2000 == 0) {
+            std::printf("Copy shader in passes: %llu hoisted, %llu touched by the pass's draws, %llu "
+                        "not placeable (pass chunk handed over or no room)\n",
+                        (unsigned long long)hoisted.load(), (unsigned long long)conflicts.load(),
+                        (unsigned long long)unplaced.load());
+        }
+    }
+    return placed;
+}
+
 void Runtime::CopyFromGuestChunk(vk::Buffer src, const VideoCore::Buffer* dst,
                                  std::span<const VideoCore::Backend::BufferCopy> copies) {
     const auto regions = ConvertRegions<vk::BufferCopy>(copies);

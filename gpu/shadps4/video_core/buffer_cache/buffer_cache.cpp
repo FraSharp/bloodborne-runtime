@@ -561,13 +561,13 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
       stream_buffer{device, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{device, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
-    integrated_gpu = instance.IsIntegrated();
+    integrated_gpu = device.GetCapabilities().integrated;
     // bbport (macOS, MoltenVK): no sparse buffers. The game's memory pool is imported once; its
     // mappings alias it, so every guest buffer is a range of it (UnifiedRange).
-    if (!instance.IsSparseBufferSupported()) {
+    if (!device.GetCapabilities().sparse_buffers) {
         void* pool = nullptr;
         u64 pool_size = 0;
-        ASSERT_MSG(instance.IsExternalMemoryHostSupported() &&
+        ASSERT_MSG(device.GetCapabilities().imported_host_memory &&
                        runtime_memory_pool_view(&pool, &pool_size),
                    "The GPU has no sparse buffers and cannot import the game's memory");
         // MoltenVK draws data from past 4 GiB in an imported buffer wrongly: vertex and index bytes
@@ -1272,7 +1272,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
         // guest-visible fences wait for it (Scheduler::WaitHostCopies).
         if (!stream_buffer.mapped_data.empty() &&
             !BbToggle::Disabled(BbToggle::DeferredStreamCopies)) {
-            if (const auto offset = stream_buffer.Reserve(size, instance.UniformMinAlignment())) {
+            if (const auto offset = stream_buffer.Reserve(size, device.GetCapabilities().uniform_min_alignment)) {
                 SmallGuestCopy({
                     .run = &RunGuestCopy,
                     .context = this,
@@ -1285,7 +1285,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBuffer(VAddr device_addr, u32 s
                 return {&stream_buffer, *offset};
             }
         }
-        const auto [data, offset] = stream_buffer.Map(size, instance.UniformMinAlignment());
+        const auto [data, offset] = stream_buffer.Map(size, device.GetCapabilities().uniform_min_alignment);
         memory->CopySparseMemory(device_addr, data, size);
         stream_buffer.Commit();
         TraceBinding(device_addr, size, false, 3);
@@ -1437,7 +1437,7 @@ std::pair<const Buffer*, u64> BufferCache::ObtainBufferForImage(VAddr device_add
     }
     TraceBinding(device_addr, size, false, 9);
     const auto staging = staging_pool.Request(size, VideoCore::MemoryType::HostUncached,
-                                              instance.StorageMinAlignment());
+                                              device.GetCapabilities().storage_min_alignment);
     if (!BbToggle::Disabled(BbToggle::DeferredUploads)) {
         // bbport: texture data is copied on the copy threads (streaming: 100+ MB per frame);
         // the upload reads the staging only after submission, which waits for the copies.
@@ -2624,7 +2624,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         shadow_buffer = std::make_unique<StreamBuffer>(device, scheduler, MemoryType::DeviceLocal,
                                                        ShadowRing);
     }
-    const auto offset = shadow_buffer->Reserve(size, instance.StorageMinAlignment());
+    const auto offset = shadow_buffer->Reserve(size, device.GetCapabilities().storage_min_alignment);
     if (!offset) {
         return std::nullopt;
     }
@@ -3720,7 +3720,7 @@ std::pair<const Buffer*, u64> BufferCache::UnifiedCopy(VAddr addr, u64 size, boo
                     is_written ? "read-only (GPU writes lost)" : "read-only");
     }
     const auto staging =
-        staging_pool.Request(size, MemoryType::HostUncached, instance.StorageMinAlignment());
+        staging_pool.Request(size, MemoryType::HostUncached, device.GetCapabilities().storage_min_alignment);
     memory->CopySparseMemory(addr, staging.mapped, size);
     staging.Flush();
     return {staging.buffer, staging.offset};
@@ -3846,7 +3846,7 @@ bool BufferCache::VramPromotionsPaused() {
     // VRAM nearly full (past BB_VRAM_PROMOTE_PERCENT of the driver's budget, default 90): no new
     // copies; the candidates wait, read in place meanwhile (#32: a card with 8 GB). Checked at
     // most once a second (the query goes to the driver).
-    if (!instance.CanReportMemoryUsage()) {
+    if (!device.GetCapabilities().memory_report) {
         return false;
     }
     static const u64 percent = [] {
@@ -3858,8 +3858,9 @@ bool BufferCache::VramPromotionsPaused() {
     const s64 second = BbStats::coarse_second.load(std::memory_order_relaxed);
     if (second != checked_second) {
         checked_second = second;
-        const u64 usage = instance.GetDeviceMemoryUsage();
-        const u64 budget = instance.GetDeviceMemoryBudgetNow();
+        const auto memory = device.ReportMemory();
+        const u64 usage = memory.used;
+        const u64 budget = memory.budget;
         // Also short of the texture collector's critical mark: the collector compares all of our
         // VRAM and can only free images, so copies past it had it evict textures in use (6 GB
         // GTX 1660 Ti: mark 3927 MiB, 1.8 GiB of copies, 200-1250 images evicted per 5 s).

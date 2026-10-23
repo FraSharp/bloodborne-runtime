@@ -46,6 +46,25 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
         family < families.size() ? families[family].timestampValidBits : 0u;
     capabilities.timestamp_period_ns =
         instance.GetPhysicalDevice().getProperties().limits.timestampPeriod;
+    capabilities.uniform_min_alignment = instance.UniformMinAlignment();
+    capabilities.storage_min_alignment = instance.StorageMinAlignment();
+    capabilities.integrated = instance.IsIntegrated();
+    capabilities.memory_report = instance.CanReportMemoryUsage();
+    capabilities.tessellation = instance.IsTessellationSupported();
+    capabilities.geometry_shaders = instance.IsGeometryStageSupported();
+    capabilities.list_restart = instance.IsListRestartSupported();
+    capabilities.patch_list_restart = instance.IsPatchListRestartSupported();
+    capabilities.null_descriptor = instance.IsNullDescriptorSupported();
+    capabilities.mixed_depth_samples = instance.IsMixedDepthSamplesSupported();
+    capabilities.mixed_any_samples = instance.IsMixedAnySamplesSupported();
+    capabilities.depth_range_unrestricted = instance.IsDepthRangeUnrestrictedSupported();
+    capabilities.depth_clip_control = instance.IsDepthClipControlSupported();
+    capabilities.buffer_markers = instance.IsBufferMarkerSupported();
+    capabilities.max_viewport_width = instance.GetMaxViewportWidth();
+    capabilities.max_viewport_height = instance.GetMaxViewportHeight();
+    capabilities.max_framebuffer_width = instance.GetMaxFramebufferWidth();
+    capabilities.max_framebuffer_height = instance.GetMaxFramebufferHeight();
+    capabilities.max_sampler_allocations = instance.GetMaxSamplerAllocationCount();
     VideoCore::Backend::SelectedApi();
 }
 
@@ -642,6 +661,19 @@ Shader::Profile BackendDevice::ShaderProfile() const {
         .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
         .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
         .supports_shader_stencil_export = instance.IsShaderStencilExportSupported(),
+    };
+}
+
+Backend::MemoryReport BackendDevice::ReportMemory() const {
+    if (!instance.CanReportMemoryUsage()) {
+        return {.total = instance.GetTotalMemoryBudget()};
+    }
+    const auto [used, budget] = instance.GetDeviceMemoryUsageAndBudget();
+    return {
+        .available = true,
+        .used = used,
+        .budget = budget,
+        .total = instance.GetTotalMemoryBudget(),
     };
 }
 

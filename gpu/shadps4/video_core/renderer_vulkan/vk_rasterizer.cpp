@@ -110,7 +110,7 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
 
 Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& instance_,
                        Scheduler& scheduler_, Runtime& runtime_, AmdGpu::Liverpool* liverpool_)
-    : device{device}, instance{instance_}, scheduler{scheduler_}, recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(), instance_.GetDevice()}, runtime{runtime_}, page_manager{this},
+    : device{device}, instance{instance_}, scheduler{scheduler_}, recorder{device.Recorder()}, runtime{runtime_}, page_manager{this},
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
       texture_cache{device, instance, scheduler, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
@@ -136,7 +136,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     camera_motion->SetObjectMotion(object_motion.get());
     upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime_,
                                                   *camera_motion, *scene_targets);
-    if (!instance.IsNullDescriptorSupported()) {
+    if (!device.GetCapabilities().null_descriptor) {
         null_resources = std::make_unique<NullResources>(instance, scheduler);
     }
     if (!EmulatorSettings.IsNullGPU()) {
@@ -403,7 +403,7 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
         const char* env = std::getenv("BB_GPU_LABELS_PORTABLE");
         return env && env[0] != '0';
     }();
-    const bool marker = instance.IsBufferMarkerSupported() && !force_portable;
+    const bool marker = device.GetCapabilities().buffer_markers && !force_portable;
     static const bool announced = [&] {
         std::printf("GPU: end-of-pipe labels are written by the GPU (%s; "
                     "BB_GPU_LABELS=0: by a CPU thread after the GPU)\n",
@@ -1024,8 +1024,8 @@ void Rasterizer::CollectRingBindings(const Shader::Info& stage, const PreparedDr
             }
         }
     }
-    const u64 alignment = std::max<u64>(instance.StorageMinAlignment(),
-                                        instance.UniformMinAlignment());
+    const u64 alignment = std::max<u64>(device.GetCapabilities().storage_min_alignment,
+                                        device.GetCapabilities().uniform_min_alignment);
     const auto copy = [&](u32 index, const void* source, VAddr address, u64 size) {
         const auto offset = constant_ring->Allocate(size, alignment);
         if (!offset) {
@@ -2805,7 +2805,7 @@ void Rasterizer::EmitVertexBuffers() {
     // bbport: only the used entries go into the recording chunk (the static vectors hold 32 of
     // each: ~3 KiB copied per draw).
     auto& v = vertex_binds;
-    const bool dynamic_input = instance.IsVertexInputDynamicState();
+    const bool dynamic_input = device.GetCapabilities().dynamic_vertex_input;
     const u32 num_buffers = v.num_buffers;
     if (dynamic_input) {
         recorder.SetVertexInput({v.bindings.data(), v.bindings.size()},
@@ -2842,7 +2842,7 @@ void Rasterizer::ResolveVertexBuffers(const GraphicsPipeline* pipeline,
     // Inputs a draw-preparation worker read from the same registers and (verified) user data.
     const auto& fetch = pipeline->GetFetchShader();
     const PreparedVertexInputs* ready =
-        prepared && prepared->vertex.valid && instance.IsVertexInputDynamicState() && fetch &&
+        prepared && prepared->vertex.valid && device.GetCapabilities().dynamic_vertex_input && fetch &&
                 fetch->attributes.size() == prepared->vertex.count && !FrameCapture::Active() &&
                 !BbToggle::Disabled(BbToggle::PreparedResources)
             ? &prepared->vertex
@@ -3625,7 +3625,7 @@ void Rasterizer::BindBuffers(const Shader::Info& stage, const PreparedStage* pre
                              Shader::Backend::Bindings& binding,
                              Shader::PushData& push_data, u32& write_index) {
     BB_SECTION(BindBuffers);
-    const u64 alignment = instance.StorageMinAlignment();
+    const u64 alignment = device.GetCapabilities().storage_min_alignment;
     for (u32 buffer_index = 0; buffer_index < stage.buffers.size(); ++buffer_index) {
         const auto& desc = stage.buffers[buffer_index];
         const RingBinding* ring = num_ring_stages ? FindRingBinding(stage, buffer_index) : nullptr;
@@ -4422,8 +4422,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         BbStats::scene_draws.fetch_add(scene_started, std::memory_order_relaxed);
     }
     RenderState state;
-    state.width = instance.GetMaxFramebufferWidth();
-    state.height = instance.GetMaxFramebufferHeight();
+    state.width = device.GetCapabilities().max_framebuffer_width;
+    state.height = device.GetCapabilities().max_framebuffer_height;
     state.num_layers = std::numeric_limits<u16>::max();
     state.num_color_attachments = std::bit_width(key.mrt_mask);
     for (auto cb = 0u; cb < state.num_color_attachments; ++cb) {
@@ -4700,8 +4700,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     // bbport: a pass without attachments keeps the maximum framebuffer size (16384x16384). A
     // tile-based GPU (Apple, through MoltenVK) bins the whole area every pass, empty or not: it is
     // clamped to the screen scissor, outside which nothing is drawn anyway.
-    if (state.width == instance.GetMaxFramebufferWidth() &&
-        state.height == instance.GetMaxFramebufferHeight()) {
+    if (state.width == device.GetCapabilities().max_framebuffer_width &&
+        state.height == device.GetCapabilities().max_framebuffer_height) {
         const u32 width = AmdGpu::Scissor::Clamp(regs.screen_scissor.bottom_right_x);
         const u32 height = AmdGpu::Scissor::Clamp(regs.screen_scissor.bottom_right_y);
         if (width != 0 && height != 0) {
@@ -5072,7 +5072,7 @@ void Rasterizer::UpdateViewportScissorState() const {
             viewport.max_depth = zoffset + zscale;
         }
 
-        if (!instance.IsDepthRangeUnrestrictedSupported()) {
+        if (!device.GetCapabilities().depth_range_unrestricted) {
             // Unrestricted depth range not supported by device. Restrict to valid range.
             viewport.min_depth = std::max(viewport.min_depth, 0.f);
             viewport.max_depth = std::min(viewport.max_depth, 1.f);
@@ -5084,8 +5084,8 @@ void Rasterizer::UpdateViewportScissorState() const {
             // window range [0..16383, 0..16383] and setting the viewport to its size.
             viewport.x = 0.f;
             viewport.y = 0.f;
-            viewport.width = float(std::min<u32>(instance.GetMaxViewportWidth(), 16_KB));
-            viewport.height = float(std::min<u32>(instance.GetMaxViewportHeight(), 16_KB));
+            viewport.width = float(std::min<u32>(device.GetCapabilities().max_viewport_width, 16_KB));
+            viewport.height = float(std::min<u32>(device.GetCapabilities().max_viewport_height, 16_KB));
         } else {
             const auto xoffset = vp_ctl.xoffset_enable ? vp.xoffset : 0.f;
             const auto xscale = vp_ctl.xscale_enable ? vp.xscale : 1.f;
@@ -5258,8 +5258,8 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
 
     const auto prim_restart =
         (regs.enable_primitive_restart & 1) != 0 &&
-        (instance.IsListRestartSupported() || !is_list_topology(primitive)) &&
-        (instance.IsPatchListRestartSupported() || !is_patch_list_topology(primitive));
+        (device.GetCapabilities().list_restart || !is_list_topology(primitive)) &&
+        (device.GetCapabilities().patch_list_restart || !is_patch_list_topology(primitive));
     ASSERT_MSG(!is_indexed || !prim_restart || regs.primitive_restart_index == 0xFFFF ||
                    regs.primitive_restart_index == 0xFFFFFFFF,
                "Primitive restart index other than -1 is not supported yet");

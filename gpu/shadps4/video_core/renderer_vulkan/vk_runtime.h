@@ -47,6 +47,9 @@ public:
     // The render adapter's regions (docs/RENDER_ADAPTER.md, A3), converted where recorded.
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
                     std::span<const VideoCore::Backend::BufferCopy> copies) override;
+    [[nodiscard]] bool CopyBufferBeforePass(
+        const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
+        std::span<const VideoCore::Backend::BufferCopy> copies) override;
     void CopyFromGuestChunk(u64 src, const VideoCore::Buffer* dst,
                             std::span<const VideoCore::Backend::BufferCopy> copies) override {
         CopyFromGuestChunk(vk::Buffer{reinterpret_cast<VkBuffer>(src)}, dst, copies);

@@ -41,6 +41,7 @@ public:
         return VideoCore::Backend::Api::Vulkan;
     }
     [[nodiscard]] Shader::Profile ShaderProfile() const override;
+    [[nodiscard]] VideoCore::Backend::MemoryReport ReportMemory() const override;
     [[nodiscard]] const VideoCore::Backend::Capabilities& GetCapabilities() const noexcept override {
         return capabilities;
     }

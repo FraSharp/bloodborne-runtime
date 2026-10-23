@@ -5,6 +5,7 @@
 
 #include <span>
 #include <unordered_map>
+#include <utility>
 
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -550,6 +551,8 @@ public:
     /// bbport: the driver's current budget of the heaps GetDeviceMemoryUsage counts
     /// (VK_EXT_memory_budget: what this process can use now, other processes included).
     [[nodiscard]] u64 GetDeviceMemoryBudgetNow() const;
+    /// Both from one driver query.
+    [[nodiscard]] std::pair<u64, u64> GetDeviceMemoryUsageAndBudget() const;
 
     /// Returns the total memory budget available to the device.
     [[nodiscard]] u64 GetTotalMemoryBudget() const {

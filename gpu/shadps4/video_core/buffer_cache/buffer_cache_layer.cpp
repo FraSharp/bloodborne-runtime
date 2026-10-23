@@ -896,7 +896,7 @@ void BufferCache::LayerYieldToImages(u32 now) {
     // re-uploaded at once (stutters), and mirrors are what it cannot free. Meanwhile the copies of
     // where the player is now wait for their room, read over the bus (10 FPS less after a lamp
     // travel on a 6 GB card), so room is made for them.
-    if (!instance.CanReportMemoryUsage() || layer_mirrors.empty()) {
+    if (!device.GetCapabilities().memory_report || layer_mirrors.empty()) {
         return;
     }
     const u64 critical = BbStats::gc_critical_bytes.load(std::memory_order_relaxed);
@@ -1190,7 +1190,7 @@ std::pair<const Buffer*, u64> BufferCache::LayerPagedRecord(VAddr address, u64 s
                            static_cast<u32>(bda_pagetable_buffer->SizeBytes() /
                                             (2 * sizeof(u64))),
                            0};
-    const u64 offset = stream_buffer.Copy(record, sizeof(record), instance.StorageMinAlignment());
+    const u64 offset = stream_buffer.Copy(record, sizeof(record), device.GetCapabilities().storage_min_alignment);
     BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
     return {&stream_buffer, offset};
 }
