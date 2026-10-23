@@ -436,6 +436,18 @@ bool Runtime::Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess a
                        has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
                                    : vk::ImageLayout::eDepthReadOnlyOptimal,
                        depth_tests, depth_target, subres_range);
+    case ImageAccess::ComputeRead:
+        return Transit(image, vk::ImageLayout::eGeneral, Stage::eComputeShader, Access::eShaderRead,
+                       subres_range);
+    case ImageAccess::ComputeReadWrite:
+        return Transit(image, vk::ImageLayout::eGeneral, Stage::eComputeShader,
+                       Access::eShaderRead | Access::eShaderWrite, subres_range);
+    case ImageAccess::TransferSource:
+        return Transit(image, vk::ImageLayout::eTransferSrcOptimal, Stage::eTransfer,
+                       Access::eTransferRead, subres_range);
+    case ImageAccess::TransferDestination:
+        return Transit(image, vk::ImageLayout::eTransferDstOptimal, Stage::eTransfer,
+                       Access::eTransferWrite, subres_range);
     }
     UNREACHABLE();
 }

@@ -189,10 +189,9 @@ void SceneTargets::Copy(Entry& e, VideoCore::Image& original, bool to_native) {
         return;
     }
     const VideoCore::SubresourceRange level_range{.base = {e.level, 0}, .extent = {1, 1}};
-    runtime.Transit(&original, to_native ? vk::ImageLayout::eTransferDstOptimal
-                                       : vk::ImageLayout::eTransferSrcOptimal,
-                    vk::PipelineStageFlagBits2::eTransfer,
-                    to_native ? vk::AccessFlagBits2::eTransferWrite : vk::AccessFlagBits2::eTransferRead,
+    runtime.Transit(&original,
+                    to_native ? VideoCore::Backend::ImageAccess::TransferDestination
+                              : VideoCore::Backend::ImageAccess::TransferSource,
                     level_range);
     runtime.FlushBarriers();
     Transition(e, original.aspect_mask,

@@ -369,10 +369,8 @@ void CameraMotion::Overlay(VideoCore::ImageId frame) {
     }));
 
     scheduler.EndRendering();
-    runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+    runtime.Transit(&depth, VideoCore::Backend::ImageAccess::ComputeRead);
+    runtime.Transit(&color, VideoCore::Backend::ImageAccess::ComputeReadWrite);
     runtime.FlushBarriers();
 
     const PushConstants push{

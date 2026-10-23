@@ -199,12 +199,10 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
     // bbport: the source may be the arena (BB_PREUPLOAD), which later uploads write: a copy into
     // it must wait for this read.
     runtime.AccessBuffer(in_buffer, in_offset, info.guest_size,
-                         vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderRead);
+                         VideoCore::Backend::BufferAccess::ComputeRead);
 
     runtime.AccessBuffer(staging.buffer, staging.offset, info.guest_size,
-                         vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderWrite);
+                         VideoCore::Backend::BufferAccess::ComputeReadWrite);
 
     return {staging.buffer, staging.offset};
 }
@@ -263,8 +261,7 @@ void TileManager::TileImage(Image& in_image, std::span<vk::BufferImageCopy> buff
                          params_buffer_info, dim_x);
 
     runtime.AccessBuffer(out_buffer, out_offset, info.guest_size,
-                         vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderWrite);
+                         VideoCore::Backend::BufferAccess::ComputeReadWrite);
 }
 
 } // namespace VideoCore

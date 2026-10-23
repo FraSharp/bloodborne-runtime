@@ -943,8 +943,7 @@ void TemporalUpscaler::OnBlendedSceneDraw() {
                                     vk::AccessFlagBits2::eTransferRead).image;
         source_layout = vk::ImageLayout::eGeneral;
     } else {
-        runtime.Transit(&color, vk::ImageLayout::eTransferSrcOptimal,
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        runtime.Transit(&color, VideoCore::Backend::ImageAccess::TransferSource);
         runtime.FlushBarriers();
     }
     const vk::Image opaque = vk::Image(opaque_image);
@@ -1010,8 +1009,7 @@ void TemporalUpscaler::OnSceneComposite() {
         .format = vk::Format::eR16G16B16A16Sfloat,
         .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
     }));
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
+    runtime.Transit(&color, VideoCore::Backend::ImageAccess::ComputeRead);
     runtime.FlushBarriers();
     mask_ready = RecordReactive(color_view);
     scheduler.DeferOperation([device, color_view] { device.destroyImageView(color_view); });
@@ -1113,10 +1111,8 @@ void TemporalUpscaler::Run() {
         CachedView(color, vk::Format::eR16G16B16A16Sfloat, vk::ImageAspectFlagBits::eColor);
 
     scheduler.EndRendering();
-    runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
-    runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                    vk::AccessFlagBits2::eShaderRead);
+    runtime.Transit(&depth, VideoCore::Backend::ImageAccess::ComputeRead);
+    runtime.Transit(&color, VideoCore::Backend::ImageAccess::ComputeRead);
     runtime.FlushBarriers();
     vk::Image input_color = color.GetImage(), input_depth = depth.GetImage();
     vk::ImageView input_color_view = color_view, input_depth_view = depth_view;
@@ -1311,8 +1307,7 @@ void TemporalUpscaler::Run() {
         own_barrier(vk::Image(output_image), vk::ImageLayout::eGeneral, all, rw,
                     vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
                     vk::AccessFlagBits2::eShaderRead);
-        runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                        vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite);
+        runtime.Transit(&color, VideoCore::Backend::ImageAccess::ComputeReadWrite);
         runtime.FlushBarriers();
         const vk::DescriptorImageInfo out_info{.imageView = *output_view,
                                                .imageLayout = vk::ImageLayout::eGeneral};
@@ -1570,8 +1565,7 @@ void TemporalUpscaler::PrepareUiDepth(VideoCore::ImageId depth_id) {
     const bool copy = depth_id && depth_blit &&
         ToVk(texture_cache.GetImage(depth_id).info.pixel_format) == ui_depth_format;
     if (copy) {
-        runtime.Transit(&texture_cache.GetImage(depth_id), vk::ImageLayout::eTransferSrcOptimal,
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        runtime.Transit(&texture_cache.GetImage(depth_id), VideoCore::Backend::ImageAccess::TransferSource);
         runtime.FlushBarriers();
     }
     const vk::ImageSubresourceRange range{aspect, 0, 1, 0, 1};
@@ -1655,8 +1649,7 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
         source_width = render_width;
         source_height = render_height;
     } else {
-        runtime.Transit(&texture_cache.GetImage(color_id), vk::ImageLayout::eTransferSrcOptimal,
-                        vk::PipelineStageFlagBits2::eTransfer, vk::AccessFlagBits2::eTransferRead);
+        runtime.Transit(&texture_cache.GetImage(color_id), VideoCore::Backend::ImageAccess::TransferSource);
         runtime.FlushBarriers();
     }
     const vk::ImageBlit region{
@@ -1741,10 +1734,8 @@ void TemporalUpscaler::RunScaled() {
     } else {
         depth_view = CachedView(depth, depth_format, vk::ImageAspectFlagBits::eDepth);
         color_view = CachedView(color, ToVk(color.info.pixel_format), vk::ImageAspectFlagBits::eColor);
-        runtime.Transit(&depth, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                        vk::AccessFlagBits2::eShaderRead);
-        runtime.Transit(&color, vk::ImageLayout::eGeneral, vk::PipelineStageFlagBits2::eComputeShader,
-                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&depth, VideoCore::Backend::ImageAccess::ComputeRead);
+        runtime.Transit(&color, VideoCore::Backend::ImageAccess::ComputeRead);
         runtime.FlushBarriers();
     }
 

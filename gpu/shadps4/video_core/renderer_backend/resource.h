@@ -187,6 +187,10 @@ enum class ImageAccess : u8 {
     DepthAttachment,           ///< depth (and stencil) tested and written
     DepthReadOnlyStencilWrite, ///< depth tested only, stencil written
     DepthReadOnly,             ///< depth (and stencil) tested only
+    ComputeRead,               ///< read by compute shaders (the renderer's own passes)
+    ComputeReadWrite,          ///< read and written by compute shaders
+    TransferSource,            ///< copied from
+    TransferDestination,       ///< copied into
 };
 
 /// How a draw or dispatch uses a range of a buffer.

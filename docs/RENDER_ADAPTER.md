@@ -396,6 +396,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   device and record through the recorder (the copies hoisted before a pass are next, with the
   transfers). Measured (new build second): 4.24 µs per draw against 4.27, 25.9 ms median both,
   the frame correct; the fault buffer pass did not run (no faults).
+- **M2, image accesses:** `ImageAccess` names the renderer's own uses too (`ComputeRead`,
+  `ComputeReadWrite`, `TransferSource`, `TransferDestination`); camera motion, the upscalers,
+  scene resolution, the tiling dispatches, the copy shader and the presenter declare their
+  accesses in those terms instead of Vulkan layouts and stages (the present-frame dumps, a
+  diagnostic, still name theirs). Measured: MetalFX 30.1 ms median, TAA 31.7, FSR 3.1 35.7
+  (29.9–30.1, 31.5 and 35.2–35.6 before), no faults, frames correct.
 
 ## Decisions
 

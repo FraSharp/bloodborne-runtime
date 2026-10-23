@@ -363,9 +363,7 @@ Frame* Presenter::PrepareFrame(const Libraries::VideoOut::BufferAttributeGroup& 
             upscaler.DumpPresented(image.GetImage(), image_size.width, image_size.height,
                                    ToVk(view_info.format));
         }
-        runtime.Transit(&image, vk::ImageLayout::eShaderReadOnlyOptimal,
-                        vk::PipelineStageFlagBits2::eFragmentShader,
-                        vk::AccessFlagBits2::eShaderRead);
+        runtime.Transit(&image, VideoCore::Backend::ImageAccess::Sampled);
         runtime.FlushBarriers();
     }
     expected_ratio = static_cast<float>(image_size.width) / static_cast<float>(image_size.height);

@@ -100,10 +100,8 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
                       {.kind = Backend::CrumbKind::Dispatch,
                        .name = "HLE copy shader",
                        .count = {count, 1, 1}});
-    runtime.AccessBuffer(src, src_min, src_size, vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderRead);
-    runtime.AccessBuffer(dst, dst_min, dst_size, vk::PipelineStageFlagBits2::eComputeShader,
-                         vk::AccessFlagBits2::eShaderWrite);
+    runtime.AccessBuffer(src, src_min, src_size, VideoCore::Backend::BufferAccess::ComputeRead);
+    runtime.AccessBuffer(dst, dst_min, dst_size, VideoCore::Backend::BufferAccess::ComputeReadWrite);
     return true;
 }
 
