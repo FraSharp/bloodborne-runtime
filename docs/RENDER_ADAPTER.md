@@ -2,9 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A5 are done; A6 is in progress (resource binding through the
-recorder, the host passes' objects, frames, the swapchain interface; the upscalers'
-images and the overlay next).
+**State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
+backend); next: M1, the Metal backend's device and resources.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -146,7 +145,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A3 ✓ | `vk_runtime`'s copies, clears and uploads as commands with access declarations; barriers inside the backend | Same images and frame time; no validation errors |
 | A4 ✓ | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
 | A5 ✓ | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
-| A6 | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
+| A6 ✓ | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
 | M3 | MetalFX without input and output copies; FSR 3.1 on Metal or left out on that backend (decision) | Upscalers measured against today |
@@ -344,6 +343,13 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   mutable, the upscaler images cost MetalFX about 2.5% (30.9 against 30.1 ms median); kept as
   they were, 30.1 against 29.9. Measured: no faults with FSR 3.1 (35.6 ms median against
   35.2–35.4), TAA (with Metal API validation, no new messages) and MetalFX, frames correct.
+
+  A6 is done: every upscaler this Mac offers renders (off, FSR 3.1, TAA, MetalFX; FSR 4 and DLSS
+  need AMD and NVIDIA GPUs, FSR 4.1.1 AMD's initializers). Still recorded in Vulkan outside the
+  backend, for the Metal backend's presenter (M2) to replace: the presenter's barriers, blits,
+  clears, fences and semaphores; the upscalers' and host passes' own recording (their per-frame
+  views included); MetalFX's shared buffer and semaphore; the overlay's ImGui renderer, which
+  stays native interop.
 
 ## Decisions
 
