@@ -143,7 +143,7 @@ Presenter::Presenter(Frontend::WindowSDL& window_, AmdGpu::Liverpool* liverpool_
       rasterizer{std::make_unique<Rasterizer>(backend_device, instance, draw_scheduler, runtime,
                                               liverpool)},
       texture_cache{rasterizer->GetTextureCache()} {
-    const u32 num_images = swapchain.GetImageCount();
+    const u32 num_images = swapchain.ImageCount();
     const vk::Device device = instance.GetDevice();
 
     // Create presentation frames.
@@ -196,7 +196,7 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
     backend_device.DestroyImageView(frame->view_alloc.handle);
     backend_device.DestroyImage(frame->image_alloc.handle);
 
-    const auto format = FromVk(swapchain.GetSurfaceFormat().format);
+    const auto format = swapchain.ImageFormat();
     frame->image_alloc = backend_device.CreateImage(
         {
             .format = format,
@@ -638,18 +638,18 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         return;
     }
     // Recreate the swapchain if the window was resized (or was minimised at the last try).
-    if (window.GetWidth() != swapchain.GetWidth() || window.GetHeight() != swapchain.GetHeight() ||
+    if (window.GetWidth() != swapchain.Width() || window.GetHeight() != swapchain.Height() ||
         !swapchain.IsPresentable()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
+        swapchain.Resize(window.GetWidth(), window.GetHeight());
         if (!swapchain.IsPresentable()) {
             free_frame();
             return;
         }
     }
 
-    if (!swapchain.AcquireNextImage()) {
-        swapchain.Recreate(window.GetWidth(), window.GetHeight());
-        if (!swapchain.AcquireNextImage()) {
+    if (!swapchain.Acquire()) {
+        swapchain.Resize(window.GetWidth(), window.GetHeight());
+        if (!swapchain.Acquire()) {
             // User resizes the window too fast and GPU can't keep up. Skip this frame.
             LOG_WARNING(Render_Vulkan, "Skipping frame!");
             free_frame();
@@ -803,7 +803,7 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     {
         std::scoped_lock submit_lock{Scheduler::submit_mutex};
         if (!swapchain.Present()) {
-            swapchain.Recreate(window.GetWidth(), window.GetHeight());
+            swapchain.Resize(window.GetWidth(), window.GetHeight());
         }
     }
 

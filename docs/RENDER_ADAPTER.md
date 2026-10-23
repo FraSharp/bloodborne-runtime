@@ -3,7 +3,8 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A5 are done; A6 is in progress (resource binding through the
-recorder, the host passes' objects through the device; their recording next).
+recorder, the host passes' objects, frames, the swapchain interface; the upscalers'
+images and the overlay next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -329,6 +330,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   upscaler keeps it with the image (Metal API validation had reported it destroyed while a Metal
   path command buffer still needed it, 225–463 times in 75 s below native render size; now 0).
   Measured: 38.6 FPS and 4.15 µs per draw, the frames correct.
+
+- **A6, swapchain:** `renderer_backend/swapchain.h` is the adapter's swapchain (resize, acquire,
+  present, presentable, image format, size and count, the acquired image as native handles,
+  HDR); the present mode comes from the settings when it is made. The Vulkan swapchain
+  implements it, keeping its semaphores for the presenter's submissions, and the presenter
+  calls it through those names. Measured: 38.5 FPS, 4.15 µs per draw, the frame correct.
 
 ## Decisions
 
