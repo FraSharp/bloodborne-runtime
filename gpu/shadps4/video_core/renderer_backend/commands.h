@@ -4,10 +4,12 @@
 #pragma once
 
 #include <span>
+#include <string>
 
 #include "common/types.h"
 #include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/format.h"
+#include "video_core/renderer_backend/pass.h"
 
 namespace VideoCore::Backend {
 
@@ -75,6 +77,21 @@ struct DispatchCommand {
 class CommandRecorder {
 public:
     virtual ~CommandRecorder() = default;
+
+    /// Draws go into a pass with `state`'s targets; a pass with the same targets stays open (and
+    /// one whose targets were cleared on load continues for a draw that loads them).
+    virtual void BeginPass(const RenderState& state) = 0;
+    /// Ends the open pass, if any.
+    virtual void EndPass() = 0;
+    [[nodiscard]] virtual bool InPass() const = 0;
+    /// A pass with `state`'s targets is open (BeginPass would continue it).
+    [[nodiscard]] virtual bool InPassWith(const RenderState& state) const = 0;
+    /// BeginPass(state) would start a new pass.
+    [[nodiscard]] virtual bool WillBeginPass(const RenderState& state) const = 0;
+    /// The next BeginPass starts a new pass (a deferred clear taken as its load action).
+    virtual void ForceNewPass() = 0;
+    /// BB_PASS_LABELS=1: the next pass is recorded inside a debug label with this name.
+    virtual void SetPassLabel(std::string label) = 0;
 
     virtual void Draw(const DrawCommand& draw, const Crumb& crumb) = 0;
     virtual void Dispatch(const DispatchCommand& dispatch, const Crumb& crumb) = 0;

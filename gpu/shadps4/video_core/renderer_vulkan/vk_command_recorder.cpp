@@ -33,6 +33,34 @@ vk::Pipeline AsPipeline(u64 native) {
 // Each form captures only what it records: recorded commands live in the recording chunks, and
 // larger captures fill them sooner (an 80-byte capture per draw raised recording from ~4.2 to
 // ~5.8 us a draw).
+void CommandRecorder::BeginPass(const Backend::RenderState& state) {
+    scheduler.BeginRendering(state);
+}
+
+void CommandRecorder::EndPass() {
+    scheduler.EndRendering();
+}
+
+bool CommandRecorder::InPass() const {
+    return scheduler.IsRendering();
+}
+
+bool CommandRecorder::InPassWith(const Backend::RenderState& state) const {
+    return scheduler.IsRenderingWith(state);
+}
+
+bool CommandRecorder::WillBeginPass(const Backend::RenderState& state) const {
+    return scheduler.WillBeginRendering(state);
+}
+
+void CommandRecorder::ForceNewPass() {
+    scheduler.ForceNewPass();
+}
+
+void CommandRecorder::SetPassLabel(std::string label) {
+    scheduler.SetPassLabel(std::move(label));
+}
+
 void CommandRecorder::Draw(const Backend::DrawCommand& d, const Backend::Crumb& crumb) {
     const vk::Pipeline pipeline = AsPipeline(d.pipeline);
     if (!d.args_buffer) {

@@ -4,7 +4,7 @@
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
-Next: M2, the Metal backend's recording.
+M2 is in progress: the command stream (passes through the recorder).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -377,6 +377,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   M1 is done: the game loads a save and plays with `BB_GFX_BACKEND=metal`. Two parts of its
   plan move to M2, which records in Metal: transfers in Metal (MoltenVK records the copies
   until then) and heaps (nothing measured needs them before Metal manages its own memory).
+
+- **M2, the plan:** (1) the command stream: what the scheduler and runtime record today
+  (passes, draw state, access declarations, copies and clears, submissions) goes through the
+  adapter's `CommandRecorder`, and code outside the backend stops recording Vulkan itself;
+  (2) a Metal command stream from `mtl_frame`'s encoders; (3) Metal pipelines and shaders from
+  `mtl_pso_cache` and `mtl_shader`, holding their shaders; (4) the presenter and upscalers on
+  Metal; (5) the acceptance run. `BB_METAL_FRAME=1` keeps working until then.
+- **M2, passes:** the recorder begins and ends passes (`BeginPass`, `EndPass`, `InPassWith`,
+  `WillBeginPass`, `ForceNewPass`, `SetPassLabel`); the rasterizer's passes go through it.
+  Measured (new build second): 4.22 µs per draw against 4.20, the frame correct.
 
 ## Decisions
 

@@ -408,7 +408,7 @@ bool Rasterizer::WriteLabelOnGpu(VAddr address, u64 value, u32 num_bytes) {
     if (!marker) {
         // Core Vulkan transfer commands are forbidden inside a render pass. Preserve command
         // order by ending it here, then restart rendering normally at the next draw.
-        scheduler.EndRendering();
+        recorder.EndPass();
         runtime.FlushBarriers();
     }
     // The 64-bit label as two 32-bit end-of-pipe writes, the high half first: whoever sees the
@@ -1995,7 +1995,7 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     UpdateDynamicState(pipeline, is_indexed && !fixed_quad);
     CommitTakenClears();
     MarkPass(pipeline, state);
-    scheduler.BeginRendering(state);
+    recorder.BeginPass(state);
     // Push constants after the pass begins: beginning it may record the occlusion results'
     // compute dispatch (OcclusionQueries::Suspend -> Resolve), and the command buffer keeps one
     // set of push constants for compute and graphics. Bound before, its 8 bytes over
@@ -2152,7 +2152,7 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     UpdateDynamicState(pipeline, is_indexed);
     CommitTakenClears();
     MarkPass(pipeline, state);
-    scheduler.BeginRendering(state);
+    recorder.BeginPass(state);
     // Push constants after the pass begins (see DrawRecord).
     recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
                            {image_infos.data(), image_infos.size()},
@@ -2270,7 +2270,7 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
         runtime.FlushBarriers();
     }
 
-    scheduler.EndRendering();
+    recorder.EndPass();
     mark();
     recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
                            {image_infos.data(), image_infos.size()},
@@ -2334,7 +2334,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         runtime.FlushBarriers();
     }
 
-    scheduler.EndRendering();
+    recorder.EndPass();
     // Group counts checked on the GPU first (vk_indirect_guard.h); recorded before the
     // pipeline's bindings, which the check's own pipeline would disturb.
     vk::Buffer args = buffer->Handle();
@@ -2520,7 +2520,7 @@ void Rasterizer::RunTextureTask(void* context) {
 
 void Rasterizer::CommitTakenClears() {
     if (!taken_clears.empty()) {
-        scheduler.ForceNewPass();
+        recorder.ForceNewPass();
         taken_clears.clear();
     }
 }
@@ -4315,7 +4315,7 @@ RenderState Rasterizer::BeginRendering(const GraphicsPipeline* pipeline) {
     if (memo_on) {
         signature = MakeBeginSignature(pipeline);
         const auto& regs = Regs();
-        bool usable = begin_memo.valid && scheduler.IsRenderingWith(begin_memo.state) &&
+        bool usable = begin_memo.valid && recorder.InPassWith(begin_memo.state) &&
                       !regs.depth_render_control.depth_clear_enable &&
                       !regs.depth_render_control.stencil_clear_enable &&
                       signature == begin_memo.signature;
@@ -5362,9 +5362,9 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
         return env && env[0] == '1';
     }();
     if (draw_labels && label) {
-        scheduler.EndRendering();
+        recorder.EndPass();
     }
-    if ((!profiler && !label) || !scheduler.WillBeginRendering(state)) {
+    if ((!profiler && !label) || !recorder.WillBeginPass(state)) {
         return;
     }
     const auto& vs = pipeline->GetStage(Shader::SwStage::Vertex);
@@ -5396,7 +5396,7 @@ void Rasterizer::MarkPass(const GraphicsPipeline* pipeline, const RenderState& s
                            vs.pgm_hash, ps ? ps->pgm_hash : 0);
     };
     if (label) {
-        scheduler.SetPassLabel(describe());
+        recorder.SetPassLabel(describe());
     }
     if (profiler) {
         profiler->Mark(key, describe);

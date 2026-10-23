@@ -18,6 +18,14 @@ public:
     CommandRecorder(Scheduler& scheduler, DescriptorHeap& descriptor_heap, vk::Device device)
         : scheduler{scheduler}, descriptor_heap{descriptor_heap}, device{device} {}
 
+    void BeginPass(const VideoCore::Backend::RenderState& state) override;
+    void EndPass() override;
+    [[nodiscard]] bool InPass() const override;
+    [[nodiscard]] bool InPassWith(const VideoCore::Backend::RenderState& state) const override;
+    [[nodiscard]] bool WillBeginPass(const VideoCore::Backend::RenderState& state) const override;
+    void ForceNewPass() override;
+    void SetPassLabel(std::string label) override;
+
     void Draw(const VideoCore::Backend::DrawCommand& draw,
               const VideoCore::Backend::Crumb& crumb) override;
     void Dispatch(const VideoCore::Backend::DispatchCommand& dispatch,
