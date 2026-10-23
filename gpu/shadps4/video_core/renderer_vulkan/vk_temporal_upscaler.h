@@ -129,8 +129,9 @@ public:
         vk::Image image;
         vk::Format format;
         u32 width, height;
+        vk::ImageView view; ///< in the requested format, alpha read as one; kept with the image
     };
-    bool DisplayOverride(VAddr address, Display& display);
+    bool DisplayOverride(VAddr address, Display& display, vk::Format view_format);
     /// BB_PRESENT_DUMP_TRIGGER: whether this presented frame is to be saved (consumes the trigger).
     bool PresentDumpDue();
     /// Saves `image` (General layout, 4 bytes a pixel) as present_<w>x<h> in BB_DUMP_DIR.

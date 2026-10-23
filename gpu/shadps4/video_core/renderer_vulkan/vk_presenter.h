@@ -31,7 +31,9 @@ namespace Vulkan {
 struct Frame {
     u32 width;
     u32 height;
-    VmaAllocation allocation;
+    /// Made by the render adapter's device; `image` and `image_view` are their Vulkan objects.
+    VideoCore::Backend::ImageAllocation image_alloc;
+    VideoCore::Backend::ImageViewAllocation view_alloc;
     vk::Image image;
     vk::ImageView image_view;
     vk::Fence present_done;

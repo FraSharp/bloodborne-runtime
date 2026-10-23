@@ -324,6 +324,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   (Metal), frames correct; frame times as the base build (FSR 3.1 35.4 against 35.2 ms median,
   TAA 31.5 both, MetalFX 29.9 both); Metal API validation (upscaler off) without new messages.
 
+- **A6, frames:** the presenter's frame images and their views are made and freed through the
+  device. The view of the upscaler's display image is no longer made and freed every frame: the
+  upscaler keeps it with the image (Metal API validation had reported it destroyed while a Metal
+  path command buffer still needed it, 225–463 times in 75 s below native render size; now 0).
+  Measured: 38.6 FPS and 4.15 µs per draw, the frames correct.
+
 ## Decisions
 
 Taken by the maintainer on 2026-10-22:

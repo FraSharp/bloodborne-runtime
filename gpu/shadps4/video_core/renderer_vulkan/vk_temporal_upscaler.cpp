@@ -2187,13 +2187,21 @@ bool TemporalUpscaler::RedirectSampled(VideoCore::ImageId image,
     return true;
 }
 
-bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display) {
+bool TemporalUpscaler::DisplayOverride(VAddr address, Display& display, vk::Format view_format) {
     std::scoped_lock lock{display_mutex};
     const auto it = displays.find(address);
     if (it == displays.end() || !it->second.valid) {
         return false;
     }
-    display = {vk::Image(it->second.image), it->second.format, it->second.width, it->second.height};
+    auto& entry = it->second;
+    const vk::Image image(entry.image);
+    // bbport: the presenter's view lives with the image (Mirror's cache) instead of being made and
+    // freed every frame: the Metal path's command buffer presenting a frame outlived it.
+    const vk::ImageView view =
+        Mirror(image, entry.views, view_format,
+               {vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eIdentity,
+                vk::ComponentSwizzle::eIdentity, vk::ComponentSwizzle::eOne});
+    display = {image, entry.format, entry.width, entry.height, view};
     return true;
 }
 

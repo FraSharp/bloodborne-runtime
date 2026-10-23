@@ -24,6 +24,7 @@ these were investigated. Run-by-run logs of the investigations are in this file'
 | GX worker null access during a copied-save load, on Metal and MoltenVK | A live setting turned dynamic shadows back on in a secondary render context without a shadow target | Keep the game's disabled shadow state for that context while retaining the live setting elsewhere | 0.8.1 |
 | Shader cache rebuilt at every launch after a rejected tessellation pipeline | The generated shader assigned one output location twice, and the rejected pipeline key was still saved; preload treated the driver rejection as a damaged cache entry | Emit each location once, rebuild old shader binaries once, and save only successful pipeline keys | 0.8.1 |
 | Character clothing lost its lighting above about 3.5 million scene pixels on Metal and MoltenVK | The larger scene crossed the texture collector's cleanup mark sooner. It evicted small GPU-written images marked possibly CPU dirty without preserving their GPU contents | Keep GPU-written images whose contents cannot safely be downloaded until a definite CPU write supersedes them; normal collection of other images continues. Over the critical memory mark they are freed again (memory before lighting): a forced 10 GB budget at native 1440p darkened the clothing without a fault. Unforced native 1440p on the 18 GB M3 Pro stays about 2.4 GB below that mark | 0.8.2 |
+| Metal API validation: the presented frame's view destroyed while a Metal path command buffer still needed it, below native render size with `BB_METAL_FRAME=1` (225–463 times in 75 s); no visible fault seen | The presenter made a view of the upscaler's display image every frame and freed it after the draw submission; the Metal path presents later | The view is cached with the display image and freed with it, after the GPU is idle (0 reports) | main |
 
 ## Open
 
@@ -36,13 +37,6 @@ these were investigated. Run-by-run logs of the investigations are in this file'
   nearby save and repeat steps are needed.
 - **Pale blood after a save reload.** Blood on enemies already killed when the save is reloaded
   can appear pale with bright edges instead of dark red. The cause has not been isolated.
-- **A presented frame's view freed early on the Metal path.** With a render size below the
-  output (`BB_RENDER_RES`) and `BB_METAL_FRAME=1`, Metal API validation reports a 1920×1080
-  BGRA8 sRGB texture destroyed while a "bbport Metal path" command buffer still needs it (225
-  and 249 times in 75-second runs). It is the view the presenter makes of the display image
-  each frame and frees after the draw submission; the Metal path's command buffer outlives it.
-  No visible fault so far. Render adapter A6 makes it through the device, whose release waits
-  past the next submission.
 - **Missing objects or character parts after death reloads** on the translator, not under
   Rosetta 2 (2026-10-15): a candidate bbcpu translation bug; not seen since the pool fix, not
   retested separately.
