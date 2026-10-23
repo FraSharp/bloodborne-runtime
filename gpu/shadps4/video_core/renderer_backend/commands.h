@@ -130,6 +130,17 @@ public:
     virtual void TransitImage(const ImageAllocation& image, ImageAspect aspect, ImageAccess access,
                               bool discard = false) = 0;
 
+    /// Occlusion queries (`pool`: QueryPoolAllocation::native). `precise`: exact sample counts.
+    virtual void BeginQuery(u64 pool, u32 slot, bool precise) = 0;
+    virtual void EndQuery(u64 pool, u32 slot) = 0;
+    /// Outside passes.
+    virtual void ResetQueries(u64 pool, u32 first, u32 count) = 0;
+    /// The counts of `count` queries from `first` into `buffer` from `offset`, 64 bits each, once
+    /// they are available.
+    virtual void CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) = 0;
+    /// `size` bytes of `buffer` from `offset` set to repetitions of `value`.
+    virtual void FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) = 0;
+
     /// Later `after` uses of all memory wait for earlier `before` uses.
     virtual void Barrier(MemoryUse before, MemoryUse after) = 0;
     /// The same for `size` bytes of `buffer` (NativeHandle) from `offset`.

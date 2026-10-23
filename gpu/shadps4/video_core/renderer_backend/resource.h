@@ -31,12 +31,21 @@ struct ImageViewTag;
 struct SamplerTag;
 struct ShaderTag;
 struct PipelineTag;
+struct QueryPoolTag;
 using BufferHandle = Handle<BufferTag>;
 using ImageHandle = Handle<ImageTag>;
 using ImageViewHandle = Handle<ImageViewTag>;
 using SamplerHandle = Handle<SamplerTag>;
 using ShaderHandle = Handle<ShaderTag>;
 using PipelineHandle = Handle<PipelineTag>;
+using QueryPoolHandle = Handle<QueryPoolTag>;
+
+/// Occlusion queries the device made: `count` slots, each counting the samples that pass between
+/// CommandRecorder::BeginQuery and EndQuery.
+struct QueryPoolAllocation {
+    QueryPoolHandle handle;
+    u64 native{}; ///< the backend's object
+};
 
 enum class MemoryClass : u8 {
     DeviceLocal,

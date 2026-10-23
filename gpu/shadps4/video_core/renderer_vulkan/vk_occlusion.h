@@ -24,7 +24,9 @@
 #include <vector>
 
 #include "common/types.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_common.h"
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace VideoCore {
@@ -96,14 +98,13 @@ private:
 
     const Instance& instance;
     Scheduler& scheduler;
+    CommandRecorder recorder; ///< the render adapter's
     VideoCore::BufferCache& buffer_cache;
     std::recursive_mutex mutex;
-    vk::UniqueQueryPool pool;
+    VideoCore::Backend::QueryPoolAllocation pool; ///< the device's, destroyed with this
     std::unique_ptr<VideoCore::Buffer> results; ///< segment results copied for the resolve
     std::unique_ptr<VideoCore::Buffer> total;   ///< the running sample count (64-bit)
-    vk::UniqueDescriptorSetLayout set_layout;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniquePipeline pipeline;
+    HostPipeline pipeline;
     std::vector<Pending> pending;
     u64 begun = 0;       ///< segments begun (the next one uses slot begun % NumSlots)
     u64 resolved = 0;    ///< segments added to the total

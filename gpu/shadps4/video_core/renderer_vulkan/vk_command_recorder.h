@@ -36,6 +36,11 @@ public:
     void TransitImage(const VideoCore::Backend::ImageAllocation& image,
                       VideoCore::Backend::ImageAspect aspect, VideoCore::Backend::ImageAccess access,
                       bool discard = false) override;
+    void BeginQuery(u64 pool, u32 slot, bool precise) override;
+    void EndQuery(u64 pool, u32 slot) override;
+    void ResetQueries(u64 pool, u32 first, u32 count) override;
+    void CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) override;
+    void FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) override;
     void Barrier(VideoCore::Backend::MemoryUse before, VideoCore::Backend::MemoryUse after) override;
     void BufferBarrier(u64 buffer, u64 offset, u64 size, VideoCore::Backend::MemoryUse before,
                        VideoCore::Backend::MemoryUse after) override;

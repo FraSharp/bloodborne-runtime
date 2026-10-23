@@ -102,6 +102,10 @@ public:
     /// Valid until the pipeline is destroyed; null for a stale handle.
     [[nodiscard]] const PipelineRecord* GetPipelineRecord(VideoCore::Backend::PipelineHandle pipeline);
 
+    [[nodiscard]] VideoCore::Backend::QueryPoolAllocation CreateOcclusionQueries(
+        u32 count, std::string_view name) override;
+    void DestroyQueryPool(VideoCore::Backend::QueryPoolHandle pool) override;
+
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
     void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
@@ -156,6 +160,8 @@ private:
         images;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::QueryPoolTag, vk::UniqueQueryPool>
+        query_pools;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ShaderTag, ShaderRecord> shaders;
     VideoCore::Backend::HandleTable<VideoCore::Backend::PipelineTag, std::unique_ptr<PipelineRecord>>
         pipelines;

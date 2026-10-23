@@ -83,6 +83,10 @@ public:
         const ComputePipelineDesc& desc, std::string_view name) = 0;
     virtual void DestroyPipeline(PipelineHandle pipeline) = 0;
 
+    [[nodiscard]] virtual QueryPoolAllocation CreateOcclusionQueries(u32 count,
+                                                                     std::string_view name) = 0;
+    virtual void DestroyQueryPool(QueryPoolHandle pool) = 0;
+
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
 

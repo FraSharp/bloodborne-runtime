@@ -416,6 +416,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   access (`TransitImage`, from the barrier state the backend keeps for each image); the access
   mapping is shared with the runtime's. Object motion's target uses it. Measured: MetalFX 30.1
   ms median, FSR 3.1 35.7, object motion active, frames correct.
+- **M2, queries and fills:** occlusion query pools are device objects
+  (`CreateOcclusionQueries`); the recorder begins, ends and resets queries, copies their
+  counts into buffers and fills buffers. The translation of the game's occlusion queries uses
+  them. It needs `BB_OCCLUSION_QUERIES=1` and guest memory used in place (Linux), so on the Mac
+  this is built, not run. Measured (new build second): 4.13 µs per draw against 4.30, frame
+  correct.
 
 ## Decisions
 

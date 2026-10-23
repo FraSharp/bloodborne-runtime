@@ -426,6 +426,40 @@ u64 BackendDevice::NativeHandle(Backend::ShaderHandle shader) {
     return entry ? reinterpret_cast<u64>(static_cast<VkShaderModule>(*entry->module)) : 0;
 }
 
+Backend::QueryPoolAllocation BackendDevice::CreateOcclusionQueries(u32 count,
+                                                                  std::string_view name) {
+    auto pool = Check(instance.GetDevice().createQueryPoolUnique({
+        .queryType = vk::QueryType::eOcclusion,
+        .queryCount = count,
+    }));
+    if (!name.empty()) {
+        SetObjectName(instance.GetDevice(), *pool, name);
+    }
+    Backend::QueryPoolAllocation allocation{
+        .native = reinterpret_cast<u64>(static_cast<VkQueryPool>(*pool)),
+    };
+    std::scoped_lock lock{objects_mutex};
+    allocation.handle = query_pools.Insert(std::move(pool));
+    return allocation;
+}
+
+void BackendDevice::DestroyQueryPool(Backend::QueryPoolHandle pool) {
+    if (!pool) {
+        return;
+    }
+    vk::UniqueQueryPool object;
+    {
+        std::scoped_lock lock{objects_mutex};
+        vk::UniqueQueryPool* entry = query_pools.Get(pool);
+        if (!entry) {
+            return;
+        }
+        object = std::move(*entry);
+        query_pools.Erase(pool);
+    }
+    DeferRelease([object = std::move(object)] {});
+}
+
 Backend::SamplerHandle BackendDevice::CreateSampler(const Backend::SamplerDesc& desc) {
     const bool custom = desc.border_color == Backend::BorderColor::FloatCustom;
     const vk::SamplerCustomBorderColorCreateInfoEXT custom_color{

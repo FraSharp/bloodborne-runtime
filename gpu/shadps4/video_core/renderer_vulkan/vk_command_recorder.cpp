@@ -87,6 +87,48 @@ void CommandRecorder::TransitImage(const Backend::ImageAllocation& image, Backen
     });
 }
 
+namespace {
+vk::QueryPool NativeQueryPool(u64 pool) {
+    return vk::QueryPool{reinterpret_cast<VkQueryPool>(pool)};
+}
+vk::Buffer NativeBuffer(u64 buffer) {
+    return vk::Buffer{reinterpret_cast<VkBuffer>(buffer)};
+}
+} // namespace
+
+void CommandRecorder::BeginQuery(u64 pool, u32 slot, bool precise) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot, precise](vk::CommandBuffer cmdbuf) {
+        cmdbuf.beginQuery(pool, slot,
+                          precise ? vk::QueryControlFlagBits::ePrecise : vk::QueryControlFlags{});
+    });
+}
+
+void CommandRecorder::EndQuery(u64 pool, u32 slot) {
+    scheduler.Record([pool = NativeQueryPool(pool), slot](vk::CommandBuffer cmdbuf) {
+        cmdbuf.endQuery(pool, slot);
+    });
+}
+
+void CommandRecorder::ResetQueries(u64 pool, u32 first, u32 count) {
+    scheduler.Record([pool = NativeQueryPool(pool), first, count](vk::CommandBuffer cmdbuf) {
+        cmdbuf.resetQueryPool(pool, first, count);
+    });
+}
+
+void CommandRecorder::CopyQueryResults(u64 pool, u32 first, u32 count, u64 buffer, u64 offset) {
+    scheduler.Record([pool = NativeQueryPool(pool), first, count, buffer = NativeBuffer(buffer),
+                      offset](vk::CommandBuffer cmdbuf) {
+        cmdbuf.copyQueryPoolResults(pool, first, count, buffer, offset, sizeof(u64),
+                                    vk::QueryResultFlagBits::e64 | vk::QueryResultFlagBits::eWait);
+    });
+}
+
+void CommandRecorder::FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) {
+    scheduler.Record([buffer = NativeBuffer(buffer), offset, size, value](vk::CommandBuffer cmdbuf) {
+        cmdbuf.fillBuffer(buffer, offset, size, value);
+    });
+}
+
 void CommandRecorder::Barrier(Backend::MemoryUse before, Backend::MemoryUse after) {
     const auto [src_stage, src_access] = StagesAndAccess(before);
     const auto [dst_stage, dst_access] = StagesAndAccess(after);
