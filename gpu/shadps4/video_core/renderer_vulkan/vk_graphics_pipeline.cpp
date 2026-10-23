@@ -480,6 +480,38 @@ GraphicsPipeline::GraphicsPipeline(
 
 GraphicsPipeline::~GraphicsPipeline() = default;
 
+namespace {
+// The vertex input as Vulkan's descriptions (pipeline creation, dynamic state) or the render
+// adapter's (the rasterizer's draws, renderer_backend/commands.h).
+template <typename Attribute>
+Attribute MakeAttribute(u32 location, VideoCore::Backend::Format format) {
+    if constexpr (std::is_same_v<Attribute, VideoCore::Backend::VertexAttribute>) {
+        return {.location = location, .binding = location, .format = format, .offset = 0};
+    } else {
+        return {.location = location, .binding = location, .format = ToVk(format), .offset = 0};
+    }
+}
+template <typename Binding>
+Binding MakeBinding(u32 binding, u32 stride, bool per_instance, u32 divisor) {
+    if constexpr (std::is_same_v<Binding, VideoCore::Backend::VertexBinding>) {
+        return {.binding = binding,
+                .stride = stride,
+                .input_rate = per_instance ? VideoCore::Backend::VertexInputRate::Instance
+                                           : VideoCore::Backend::VertexInputRate::Vertex,
+                .divisor = divisor};
+    } else {
+        Binding b{.binding = binding,
+                  .stride = stride,
+                  .inputRate = per_instance ? vk::VertexInputRate::eInstance
+                                            : vk::VertexInputRate::eVertex};
+        if constexpr (std::is_same_v<Binding, vk::VertexInputBindingDescription2EXT>) {
+            b.divisor = divisor;
+        }
+        return b;
+    }
+}
+} // namespace
+
 template <typename Attribute, typename Binding>
 void GraphicsPipeline::GetVertexInputs(
     VertexInputs<Attribute>& attributes, VertexInputs<Binding>& bindings,
@@ -491,22 +523,10 @@ void GraphicsPipeline::GetVertexInputs(
         const u32 count = stages[u32(Shader::SwStage::Vertex)]->fixed_quad_output_count;
         for (u32 location = 0; location <= count; ++location) {
             const bool coord = location == count;
-            attributes.push_back(Attribute{
-                .location = location,
-                .binding = location,
-                .format = coord ? vk::Format::eR32G32Sfloat
-                                : vk::Format::eR32G32B32A32Sfloat,
-                .offset = 0,
-            });
-            bindings.push_back(Binding{
-                .binding = location,
-                .stride = coord ? 8u : 16u,
-                .inputRate = coord ? vk::VertexInputRate::eVertex
-                                   : vk::VertexInputRate::eInstance,
-            });
-            if constexpr (std::is_same_v<Binding, vk::VertexInputBindingDescription2EXT>) {
-                bindings.back().divisor = 1;
-            }
+            attributes.push_back(MakeAttribute<Attribute>(
+                location, coord ? VideoCore::Backend::Format::R32G32Sfloat
+                                : VideoCore::Backend::Format::R32G32B32A32Sfloat));
+            bindings.push_back(MakeBinding<Binding>(location, coord ? 8u : 16u, !coord, 1));
             guest_buffers.emplace_back();
         }
         return;
@@ -520,24 +540,19 @@ void GraphicsPipeline::GetVertexInputs(
         const auto step_rate = attrib.GetStepRate();
         const auto buffer = given ? sharps[index] : attrib.GetSharp(vs_info);
         ++index;
-        attributes.push_back(Attribute{
-            .location = attrib.semantic,
-            .binding = attrib.semantic,
-            .format = ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())),
-            .offset = 0,
-        });
-        bindings.push_back(Binding{
-            .binding = attrib.semantic,
-            .stride = buffer.GetStride(),
-            .inputRate = step_rate == InstanceIdType::None ? vk::VertexInputRate::eVertex
-                                                           : vk::VertexInputRate::eInstance,
-        });
+        attributes.push_back(MakeAttribute<Attribute>(
+            attrib.semantic,
+            LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())));
         const u32 divisor = step_rate == InstanceIdType::OverStepRate0
                                 ? step_rate_0
                                 : (step_rate == InstanceIdType::OverStepRate1 ? step_rate_1 : 1);
-        if constexpr (std::is_same_v<Binding, vk::VertexInputBindingDescription2EXT>) {
-            bindings.back().divisor = divisor;
-        } else if (step_rate != InstanceIdType::None) {
+        bindings.push_back(MakeBinding<Binding>(attrib.semantic, buffer.GetStride(),
+                                                step_rate != InstanceIdType::None, divisor));
+        if constexpr (std::is_same_v<Binding, vk::VertexInputBindingDescription>) {
+            if (step_rate == InstanceIdType::None) {
+                guest_buffers.emplace_back(buffer);
+                continue;
+            }
             divisors.push_back(vk::VertexInputBindingDivisorDescriptionEXT{
                 .binding = attrib.semantic,
                 .divisor = divisor,
@@ -555,8 +570,8 @@ template void GraphicsPipeline::GetVertexInputs(
     VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0, u32 step_rate_1,
     std::span<const AmdGpu::Buffer> sharps) const;
 template void GraphicsPipeline::GetVertexInputs(
-    VertexInputs<vk::VertexInputAttributeDescription2EXT>& attributes,
-    VertexInputs<vk::VertexInputBindingDescription2EXT>& bindings,
+    VertexInputs<VideoCore::Backend::VertexAttribute>& attributes,
+    VertexInputs<VideoCore::Backend::VertexBinding>& bindings,
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT>& divisors,
     VertexInputs<AmdGpu::Buffer>& guest_buffers, u32 step_rate_0, u32 step_rate_1,
     std::span<const AmdGpu::Buffer> sharps) const;

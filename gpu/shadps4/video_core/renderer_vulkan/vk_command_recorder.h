@@ -22,6 +22,8 @@ public:
     void BindIndexBuffer(u64 buffer, u64 offset, VideoCore::Backend::IndexType type) override;
     void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                            std::span<const u64> sizes, std::span<const u64> strides) override;
+    void SetVertexInput(std::span<const VideoCore::Backend::VertexBinding> bindings,
+                        std::span<const VideoCore::Backend::VertexAttribute> attributes) override;
     void WriteLabel(u64 buffer, u64 offset, u64 value, u32 num_bytes) override;
     void BeginLabel(const char* name) override;
     void EndLabel() override;

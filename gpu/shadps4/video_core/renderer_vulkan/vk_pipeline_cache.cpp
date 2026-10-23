@@ -811,7 +811,7 @@ static bool RectPassthrough(const PipelineSelection& sel) {
         }
         const auto buffer = attrib.GetSharp(*vs);
         const u32 components = RectAttributeComponents(
-            ToVk(LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt())));
+            LiverpoolToVK::SurfaceFormat(buffer.GetDataFmt(), buffer.GetNumberFmt()));
         if (components == 0) {
             return false;
         }
@@ -823,15 +823,16 @@ static bool RectPassthrough(const PipelineSelection& sel) {
     return position;
 }
 
-u32 RectAttributeComponents(vk::Format format) {
+u32 RectAttributeComponents(VideoCore::Backend::Format format) {
+    using VideoCore::Backend::Format;
     switch (format) {
-    case vk::Format::eR32Sfloat:
+    case Format::R32Sfloat:
         return 1;
-    case vk::Format::eR32G32Sfloat:
+    case Format::R32G32Sfloat:
         return 2;
-    case vk::Format::eR32G32B32Sfloat:
+    case Format::R32G32B32Sfloat:
         return 3;
-    case vk::Format::eR32G32B32A32Sfloat:
+    case Format::R32G32B32A32Sfloat:
         return 4;
     default:
         return 0;

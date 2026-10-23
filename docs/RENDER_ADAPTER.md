@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders through the adapter;
-pipelines from their keys next).
+**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders and vertex input
+through the adapter; pipelines from their keys next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -270,6 +270,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   with the Metal path itself. The pipeline cache keeps each module's handle (the probe module
   and `ReplaceShader` free through it). One Metal run: every Metal pipeline built (0 failed, no
   SPIR-V missing), the Vulkan cache warm, 38.5 FPS and 4.2 µs per draw, the frame correct.
+
+- **A5, vertex input:** the vertex input state is described in the adapter's terms
+  (`VertexBinding`, `VertexAttribute` in `renderer_backend/commands.h`: slot, stride, per vertex
+  or per instance with a divisor; location, slot, format, offset) from the pipeline's guest
+  attributes through draw preparation, and set through `CommandRecorder::SetVertexInput`, which
+  the Vulkan backend converts straight into the recording chunk. The rasterizer records no
+  Vulkan call of its own now. Measured: 38.9 FPS against 38.8, 4.05 µs per draw against 4.1,
+  the frame correct.
 
 ## Decisions
 

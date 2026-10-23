@@ -2796,16 +2796,9 @@ void Rasterizer::EmitVertexBuffers() {
     auto& v = vertex_binds;
     const bool dynamic_input = instance.IsVertexInputDynamicState();
     const u32 num_buffers = v.num_buffers;
-    scheduler.ReserveRecordData(
-        v.bindings.size() * sizeof(v.bindings[0]) + v.attributes.size() * sizeof(v.attributes[0]) +
-        num_buffers * (sizeof(vk::Buffer) + 3 * sizeof(vk::DeviceSize)) + 128);
     if (dynamic_input) {
-        scheduler.Record([bindings = scheduler.RecordData(std::span<const vk::VertexInputBindingDescription2EXT>{v.bindings.data(), v.bindings.size()}),
-                          attributes = scheduler.RecordData(std::span<const vk::VertexInputAttributeDescription2EXT>{
-                              v.attributes.data(), v.attributes.size()})](
-                             vk::CommandBuffer cmdbuf) {
-            cmdbuf.setVertexInputEXT(bindings, attributes);
-        });
+        recorder.SetVertexInput({v.bindings.data(), v.bindings.size()},
+                                {v.attributes.data(), v.attributes.size()});
     }
     if (num_buffers == 0) {
         return;
@@ -3170,8 +3163,8 @@ u32 Rasterizer::ExpandRects(const GraphicsPipeline* pipeline, bool is_indexed, u
     }
     const u32 max_id = *std::ranges::max_element(ids);
 
-    VertexInputs<vk::VertexInputAttributeDescription2EXT> attributes;
-    VertexInputs<vk::VertexInputBindingDescription2EXT> bindings;
+    VertexInputs<VideoCore::Backend::VertexAttribute> attributes;
+    VertexInputs<VideoCore::Backend::VertexBinding> bindings;
     VertexInputs<vk::VertexInputBindingDivisorDescriptionEXT> divisors;
     VertexInputs<AmdGpu::Buffer> guest_buffers;
     pipeline->GetVertexInputs(attributes, bindings, divisors, guest_buffers,
@@ -3192,7 +3185,7 @@ u32 Rasterizer::ExpandRects(const GraphicsPipeline* pipeline, bool is_indexed, u
     u32 position_stride = 0;
     u64 total = 0;
     for (u32 i = 0; i < guest_buffers.size(); ++i) {
-        if (bindings[i].inputRate != vk::VertexInputRate::eVertex) {
+        if (bindings[i].input_rate != VideoCore::Backend::VertexInputRate::Vertex) {
             continue;
         }
         const auto& buffer = guest_buffers[i];

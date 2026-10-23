@@ -575,8 +575,8 @@ private:
     }
     boost::container::static_vector<ImageBindingInfo, Shader::NUM_IMAGES> image_bindings;
     struct VertexBinds {
-        VertexInputs<vk::VertexInputAttributeDescription2EXT> attributes;
-        VertexInputs<vk::VertexInputBindingDescription2EXT> bindings;
+        VertexInputs<VideoCore::Backend::VertexAttribute> attributes; ///< the render adapter's
+        VertexInputs<VideoCore::Backend::VertexBinding> bindings;
         VertexInputs<vk::Buffer> host_buffers;
         VertexInputs<vk::DeviceSize> host_offsets;
         VertexInputs<vk::DeviceSize> host_sizes;

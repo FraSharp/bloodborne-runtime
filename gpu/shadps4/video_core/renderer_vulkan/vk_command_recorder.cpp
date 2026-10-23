@@ -4,6 +4,9 @@
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_gpu_labels.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_vulkan/vk_state.h"
+
+#include <memory>
 
 namespace Vulkan {
 
@@ -11,6 +14,8 @@ namespace Backend = VideoCore::Backend;
 
 static_assert(s32(vk::IndexType::eUint16) == s32(Backend::IndexType::UInt16) &&
               s32(vk::IndexType::eUint32) == s32(Backend::IndexType::UInt32));
+static_assert(s32(vk::VertexInputRate::eVertex) == s32(Backend::VertexInputRate::Vertex) &&
+              s32(vk::VertexInputRate::eInstance) == s32(Backend::VertexInputRate::Instance));
 
 namespace {
 vk::Buffer AsBuffer(u64 native) {
@@ -104,6 +109,42 @@ void CommandRecorder::BindVertexBuffers(std::span<const u64> buffers, std::span<
     scheduler.Record([count, vk_buffers, vk_offsets, vk_sizes, vk_strides](vk::CommandBuffer cmdbuf) {
         cmdbuf.bindVertexBuffers2(0, count, vk_buffers.data(), vk_offsets.data(), vk_sizes.data(),
                                   vk_strides.data());
+    });
+}
+
+void CommandRecorder::SetVertexInput(std::span<const Backend::VertexBinding> bindings,
+                                     std::span<const Backend::VertexAttribute> attributes) {
+    // Converted straight into the recording chunk (as the descriptor writes).
+    const size_t num_bindings = bindings.size();
+    const size_t num_attributes = attributes.size();
+    scheduler.ReserveRecordData(num_bindings * sizeof(vk::VertexInputBindingDescription2EXT) +
+                                num_attributes * sizeof(vk::VertexInputAttributeDescription2EXT) +
+                                64);
+    auto* vk_bindings =
+        scheduler.AllocateRecordData<vk::VertexInputBindingDescription2EXT>(num_bindings);
+    for (size_t i = 0; i < num_bindings; ++i) {
+        const auto& b = bindings[i];
+        std::construct_at(&vk_bindings[i], vk::VertexInputBindingDescription2EXT{
+                                               .binding = b.binding,
+                                               .stride = b.stride,
+                                               .inputRate = static_cast<vk::VertexInputRate>(b.input_rate),
+                                               .divisor = b.divisor,
+                                           });
+    }
+    auto* vk_attributes =
+        scheduler.AllocateRecordData<vk::VertexInputAttributeDescription2EXT>(num_attributes);
+    for (size_t i = 0; i < num_attributes; ++i) {
+        const auto& a = attributes[i];
+        std::construct_at(&vk_attributes[i], vk::VertexInputAttributeDescription2EXT{
+                                                 .location = a.location,
+                                                 .binding = a.binding,
+                                                 .format = ToVk(a.format),
+                                                 .offset = a.offset,
+                                             });
+    }
+    scheduler.Record([b = std::span{vk_bindings, num_bindings},
+                      a = std::span{vk_attributes, num_attributes}](vk::CommandBuffer cmdbuf) {
+        cmdbuf.setVertexInputEXT(b, a);
     });
 }
 

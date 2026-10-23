@@ -6,6 +6,7 @@
 #include <span>
 
 #include "common/types.h"
+#include "video_core/renderer_backend/format.h"
 
 namespace VideoCore::Backend {
 
@@ -24,6 +25,24 @@ struct Crumb {
 
 /// Values as Vulkan's (checked in renderer_vulkan/vk_state.h).
 enum class IndexType : s32 { UInt16 = 0, UInt32 = 1 };
+enum class VertexInputRate : s32 { Vertex = 0, Instance = 1 };
+
+/// A vertex buffer slot of the vertex input state: its stride, and whether it advances per vertex
+/// or per instance (every `divisor` instances).
+struct VertexBinding {
+    u32 binding{};
+    u32 stride{};
+    VertexInputRate input_rate{VertexInputRate::Vertex};
+    u32 divisor{1};
+};
+
+/// A vertex attribute: its shader location, the slot it reads and its format.
+struct VertexAttribute {
+    u32 location{};
+    u32 binding{};
+    Format format{Format::Undefined};
+    u32 offset{};
+};
 
 /// A draw with its pipeline (the backend's object, NativeHandle). Direct when `args_buffer` is
 /// zero; otherwise its arguments are read from `args_buffer`, and their number from
@@ -60,6 +79,10 @@ public:
     /// Binds `buffers` from slot 0. `sizes` and `strides` empty: the pipeline's strides.
     virtual void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                                    std::span<const u64> sizes, std::span<const u64> strides) = 0;
+
+    /// The vertex input state of the next draws (pipelines built with dynamic vertex input).
+    virtual void SetVertexInput(std::span<const VertexBinding> bindings,
+                                std::span<const VertexAttribute> attributes) = 0;
 
     /// Writes `value` (`num_bytes`: 4 or 8) to the buffer once every earlier command has
     /// finished; a 64-bit value as two 32-bit writes, the high half first.

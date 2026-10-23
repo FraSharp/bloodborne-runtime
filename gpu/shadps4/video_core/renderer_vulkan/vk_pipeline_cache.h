@@ -115,7 +115,7 @@ bool QuadsAsTriangles();
 bool RectsAsTriangles();
 /// bbport: the components of a vertex attribute format ExpandRects computes corners in (32-bit
 /// floats), else 0.
-u32 RectAttributeComponents(vk::Format format);
+u32 RectAttributeComponents(VideoCore::Backend::Format format);
 /// Components in a fetch format the CPU fixed-quad expander can reproduce. Check the guest
 /// encoding before SurfaceFormat can assert on an unsupported format.
 u32 FixedQuadCpuComponents(AmdGpu::DataFormat data, AmdGpu::NumberFormat number);
