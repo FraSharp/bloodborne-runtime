@@ -100,7 +100,11 @@ struct UniqueBuffer {
         : device{other.device}, buffer{std::exchange(other.buffer, VK_NULL_HANDLE)},
           bda_addr{std::exchange(other.bda_addr, 0)},
           allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
-          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)} {}
+          allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
+          metal_memory{std::exchange(other.metal_memory, VK_NULL_HANDLE)},
+          metal_buffer{std::exchange(other.metal_buffer, nullptr)},
+          metal_contents{std::exchange(other.metal_contents, nullptr)},
+          metal_size{std::exchange(other.metal_size, 0)} {}
 
     UniqueBuffer& operator=(UniqueBuffer&& other) noexcept {
         if (this != &other) {
@@ -110,12 +114,19 @@ struct UniqueBuffer {
             bda_addr = std::exchange(other.bda_addr, 0);
             allocator = std::exchange(other.allocator, VK_NULL_HANDLE);
             allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
+            metal_memory = std::exchange(other.metal_memory, VK_NULL_HANDLE);
+            metal_buffer = std::exchange(other.metal_buffer, nullptr);
+            metal_contents = std::exchange(other.metal_contents, nullptr);
+            metal_size = std::exchange(other.metal_size, 0);
         }
         return *this;
     }
 
     void Create(vk::BufferCreateInfo& buffer_ci, VideoCore::MemoryType mem_type,
                 VmaAllocationInfo* out_alloc_info);
+    /// BB_GFX_BACKEND=metal (M1): the buffer's memory is a Metal buffer made by the backend and
+    /// imported into MoltenVK.
+    void CreateInMetal(vk::BufferCreateInfo& buffer_ci, VideoCore::MemoryType mem_type);
 
     void Destroy();
 
@@ -124,6 +135,10 @@ struct UniqueBuffer {
     vk::DeviceAddress bda_addr{};
     VmaAllocator allocator;
     VmaAllocation allocation{};
+    vk::DeviceMemory metal_memory{}; ///< CreateInMetal: the imported memory
+    void* metal_buffer{};            ///< its id<MTLBuffer>, retained
+    void* metal_contents{};          ///< mapped, unless private
+    u64 metal_size{};
 };
 
 

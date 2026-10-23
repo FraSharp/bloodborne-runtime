@@ -7,12 +7,16 @@
 #include "bbport_metal_residency.h"
 #include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
+#include "video_core/renderer_metal/mtl_resources.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
 #include <array>
 #include <cstdio>
 #include <vk_mem_alloc.h>
+#ifdef __APPLE__
+#include <vulkan/vulkan_metal.h>
+#endif
 
 namespace Vulkan {
 
@@ -64,9 +68,80 @@ void UniqueBuffer::Destroy() {
   } else if (buffer) {
     device.destroyBuffer(buffer);
   }
+  if (metal_memory) {
+    BbMetalResidency::RemoveMemory(metal_memory);
+    device.freeMemory(metal_memory);
+    MetalResources::Release(metal_buffer);
+  }
   buffer = VK_NULL_HANDLE;
   allocation = VK_NULL_HANDLE;
+  metal_memory = VK_NULL_HANDLE;
+  metal_buffer = nullptr;
+  metal_contents = nullptr;
+  metal_size = 0;
   bda_addr = 0;
+}
+
+void UniqueBuffer::CreateInMetal(vk::BufferCreateInfo &buffer_ci,
+                                 MemoryType mem_type) {
+#ifdef __APPLE__
+  const bool host = mem_type != MemoryType::DeviceLocal;
+  const auto storage =
+      mem_type == MemoryType::DeviceLocal ? MetalResources::Storage::Private
+      : mem_type == MemoryType::HostCached
+          ? MetalResources::Storage::Shared
+          : MetalResources::Storage::SharedWriteCombined;
+  buffer = Vulkan::Check(device.createBuffer(buffer_ci));
+  // The Metal buffer is the memory: as large as the buffer requires.
+  const auto requirements = device.getBufferMemoryRequirements(buffer);
+  const auto metal = MetalResources::NewBuffer(requirements.size, storage);
+  metal_buffer = metal.object;
+  metal_contents = metal.contents;
+  metal_size = buffer_ci.size;
+
+  // A memory type the buffer takes: host-visible and coherent for shared storage,
+  // device-local only for private.
+  const VkPhysicalDeviceMemoryProperties *props = nullptr;
+  vmaGetMemoryProperties(allocator, &props);
+  const VkMemoryPropertyFlags wanted =
+      host ? VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT |
+                 VK_MEMORY_PROPERTY_HOST_COHERENT_BIT
+           : VK_MEMORY_PROPERTY_DEVICE_LOCAL_BIT;
+  u32 type = ~0u;
+  for (u32 i = 0; i < props->memoryTypeCount && type == ~0u; ++i) {
+    const auto flags = props->memoryTypes[i].propertyFlags;
+    if ((requirements.memoryTypeBits & (1u << i)) &&
+        (flags & wanted) == wanted &&
+        (host || !(flags & VK_MEMORY_PROPERTY_HOST_VISIBLE_BIT))) {
+      type = i;
+    }
+  }
+  ASSERT_MSG(type != ~0u, "No memory type for a Metal buffer");
+
+  const VkImportMetalBufferInfoEXT import_info{
+      .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_BUFFER_INFO_EXT,
+      .mtlBuffer = static_cast<MTLBuffer_id>(metal_buffer),
+  };
+  const vk::MemoryAllocateFlagsInfo flags_info{
+      .pNext = &import_info,
+      .flags = buffer_ci.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress
+                   ? vk::MemoryAllocateFlagBits::eDeviceAddress
+                   : vk::MemoryAllocateFlags{},
+  };
+  metal_memory = Vulkan::Check(device.allocateMemory({
+      .pNext = &flags_info,
+      .allocationSize = requirements.size,
+      .memoryTypeIndex = type,
+  }));
+  Vulkan::Check(device.bindBufferMemory(buffer, metal_memory, 0));
+  BbMetalResidency::AddMemory(metal_memory);
+  if (buffer_ci.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
+    bda_addr = device.getBufferAddress({.buffer = buffer});
+    ASSERT_MSG(bda_addr != 0, "Failed to get buffer device address");
+  }
+#else
+  UNREACHABLE_MSG("Metal buffers need macOS");
+#endif
 }
 
 void UniqueBuffer::Create(vk::BufferCreateInfo &buffer_ci, MemoryType mem_type,
@@ -294,6 +369,11 @@ void CreateBufferFromDesc(const Instance &instance,
     create_info.sharingMode = vk::SharingMode::eConcurrent;
     create_info.queueFamilyIndexCount = static_cast<u32>(families.size());
     create_info.pQueueFamilyIndices = families.data();
+  }
+  if (MetalResources::Enabled() && desc.memory != Backend::MemoryClass::Sparse &&
+      !out_alloc_info) {
+    buffer.CreateInMetal(create_info, desc.memory);
+    return;
   }
   buffer.Create(create_info, desc.memory, out_alloc_info);
 }

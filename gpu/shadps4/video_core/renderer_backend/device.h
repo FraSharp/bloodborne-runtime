@@ -18,8 +18,8 @@ enum class Api : u8 {
     Metal,
 };
 
-/// The API the process renders with: BB_GFX_BACKEND=vulkan|metal, read once. Only Vulkan has a
-/// backend so far (step A0); asking for Metal prints a note and returns Vulkan.
+/// The API the process renders with: BB_GFX_BACKEND=vulkan|metal, read once. Metal (macOS only)
+/// makes resources in Metal and records through MoltenVK so far (step M1).
 Api SelectedApi();
 
 class Device {

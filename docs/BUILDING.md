@@ -54,6 +54,7 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on Metal with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
 | `BB_METAL_FRAME=1` | The experimental Metal renderer |
+| `BB_GFX_BACKEND=metal` | The render adapter's Metal backend (macOS; in progress): buffers made in Metal and imported into MoltenVK |
 | `BB_RECOMP_LIB=PATH` | Load the recompiled library |
 | `BB_LANGUAGE`, `BB_UI_LANGUAGE` | The game's language (PS4 code), the menu's (`en`, `pt-BR`, ...) |
 | `BB_MODS_DIR`, `BB_MODS_ENABLED=0` | Mods folder, or no mods |

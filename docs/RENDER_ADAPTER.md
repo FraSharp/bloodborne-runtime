@@ -3,7 +3,7 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
-backend); next: M1, the Metal backend's device and resources.
+backend). M1 is in progress (buffers made in Metal; images next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -350,6 +350,18 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   clears, fences and semaphores; the upscalers' and host passes' own recording (their per-frame
   views included); MetalFX's shared buffer and semaphore; the overlay's ImGui renderer, which
   stays native interop.
+
+- **M1, the route:** until the Metal backend records (M2), it makes resources in Metal and hands
+  them to MoltenVK through `VK_EXT_metal_objects` imports, so the Vulkan recording and the
+  Metal path keep working (decided 2026-10-23). `BB_GFX_BACKEND=metal` selects it on macOS;
+  `renderer_metal/mtl_resources.{h,mm}` holds the Metal side.
+- **M1, buffers:** every buffer but sparse ones and imported host memory is an `MTLBuffer`
+  (private storage for device-local memory, shared write-combined for upload and stream
+  memory, shared for readback), imported as the `VkBuffer`'s memory and added to the residency
+  set; shared ones are mapped through their contents. The guest pool was already used where it
+  is (imported host memory). Measured with `BB_METAL_FRAME=1`: 38.6 FPS, 4.0 µs per draw, the
+  frame correct; Metal API validation without new messages, 400 Metal pipelines built; on
+  MoltenVK's recording with FSR 3.1, 35.5 ms median (35.2–35.6 with Vulkan-made buffers).
 
 ## Decisions
 

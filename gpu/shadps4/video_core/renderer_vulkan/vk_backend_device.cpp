@@ -8,6 +8,7 @@
 
 #include "bbport_guest_memory.h"
 #include "bbport_metal_residency.h"
+#include "video_core/renderer_metal/mtl_resources.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
@@ -34,6 +35,7 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
       scheduler{instance, true}, capabilities{QueryResourceCapabilities(instance)},
       descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
     instance.SetBackendDevice(this);
+    MetalResources::Init(static_cast<VkDevice>(instance.GetDevice()));
     capabilities.non_coherent_atom_size = instance.NonCoherentAtomSize();
     VideoCore::Backend::SelectedApi();
 }
@@ -56,6 +58,11 @@ Backend::BufferAllocation BackendDevice::Insert(UniqueBuffer&& buffer, bool spar
                                           static_cast<size_t>(alloc_info.size)};
         }
         result.coherent = property_flags & VK_MEMORY_PROPERTY_HOST_COHERENT_BIT;
+    }
+    if (buffer.metal_contents) {
+        // A Metal buffer in shared storage: mapped, coherent (Apple's unified memory).
+        result.mapped = std::span<u8>{static_cast<u8*>(buffer.metal_contents),
+                                      static_cast<size_t>(buffer.metal_size)};
     }
     std::scoped_lock lock{objects_mutex};
     result.handle = buffers.Insert(std::move(buffer));
