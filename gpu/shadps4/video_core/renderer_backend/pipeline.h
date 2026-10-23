@@ -93,7 +93,8 @@ struct ComputePipelineDesc {
 /// A pipeline the device made; an empty handle when the driver rejected it.
 struct PipelineAllocation {
     PipelineHandle handle;
-    u64 native{}; ///< Device::NativeHandle(handle)
+    u64 native{};          ///< Device::NativeHandle(handle)
+    const void* binding{}; ///< the backend's state for CommandRecorder::BindResources
 };
 
 } // namespace VideoCore::Backend

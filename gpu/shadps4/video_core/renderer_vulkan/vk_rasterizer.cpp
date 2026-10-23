@@ -49,6 +49,13 @@
 
 namespace Vulkan {
 
+namespace {
+/// Push constants as the adapter's recorder takes them.
+std::span<const u8> PushBytes(const Shader::PushData& push_data) {
+    return {reinterpret_cast<const u8*>(&push_data), sizeof(push_data)};
+}
+} // namespace
+
 using VideoCore::Backend::BufferAccess;
 using VideoCore::Backend::ImageAccess;
 
@@ -103,7 +110,7 @@ static Shader::PushData MakeUserData(const AmdGpu::Regs& regs) {
 
 Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& instance_,
                        Scheduler& scheduler_, Runtime& runtime_, AmdGpu::Liverpool* liverpool_)
-    : instance{instance_}, scheduler{scheduler_}, recorder{scheduler_}, runtime{runtime_}, page_manager{this},
+    : instance{instance_}, scheduler{scheduler_}, recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(), instance_.GetDevice()}, runtime{runtime_}, page_manager{this},
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
       texture_cache{device, instance, scheduler, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
@@ -1996,8 +2003,9 @@ void Rasterizer::DrawRecord(const GraphicsPipeline* pipeline, const PreparedDraw
     // deadinside28/bloodborne_pc).
     {
         BB_SECTION(PipelineBind);
-        pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
-                                {buffer_infos.data(), buffer_infos.size()});
+        recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
+                               {image_infos.data(), image_infos.size()},
+                               {buffer_infos.data(), buffer_infos.size()});
     }
 
     const auto& vs_info = pipeline->GetStage(Shader::SwStage::Vertex);
@@ -2146,8 +2154,9 @@ void Rasterizer::DrawIndirectRecord(const GraphicsPipeline* pipeline, bool is_in
     MarkPass(pipeline, state);
     scheduler.BeginRendering(state);
     // Push constants after the pass begins (see DrawRecord).
-    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
-                            {buffer_infos.data(), buffer_infos.size()});
+    recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
+                           {image_infos.data(), image_infos.size()},
+                           {buffer_infos.data(), buffer_infos.size()});
 
     ASSERT(stride == (is_indexed ? sizeof(VkDrawIndexedIndirectCommand)
                                  : sizeof(VkDrawIndirectCommand)));
@@ -2263,8 +2272,9 @@ void Rasterizer::DispatchRecord(const ComputePipeline* pipeline) {
 
     scheduler.EndRendering();
     mark();
-    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
-                            {buffer_infos.data(), buffer_infos.size()});
+    recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
+                           {image_infos.data(), image_infos.size()},
+                           {buffer_infos.data(), buffer_infos.size()});
 
     const vk::Pipeline handle = pipeline->Handle();
     const u32 dim_x = cs_program.dim_x, dim_y = cs_program.dim_y, dim_z = cs_program.dim_z;
@@ -2335,8 +2345,9 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
         }
         std::tie(args, args_offset) = indirect_guard->CheckArgs(*buffer, base);
     }
-    pipeline->BindResources(set_writes, push_data, {image_infos.data(), image_infos.size()},
-                            {buffer_infos.data(), buffer_infos.size()});
+    recorder.BindResources(pipeline->Allocation(), set_writes, PushBytes(push_data),
+                           {image_infos.data(), image_infos.size()},
+                           {buffer_infos.data(), buffer_infos.size()});
 
     const vk::Pipeline handle = pipeline->Handle();
     const vk::Buffer raw_args = buffer->Handle();

@@ -180,8 +180,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     std::unique_ptr<ComputePipeline> pipeline;
     {
         MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<ComputePipeline>(instance, scheduler, desc_heap, profile,
-                                                     compute_key, *sel.infos[0],
+        pipeline = std::make_unique<ComputePipeline>(instance, profile, compute_key, *sel.infos[0],
                                                      ShaderHandles(sel.modules)[0], sdata, true);
     }
     if (MetalShadow::Enabled()) {
@@ -274,7 +273,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     {
         MetalShadow::GameBuildScope game_build;
         pipeline = std::make_unique<GraphicsPipeline>(
-            instance, scheduler, desc_heap, profile, sel.graphics_key, sel.infos,
+            instance, profile, sel.graphics_key, sel.infos,
             sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, true);
     }
     MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos, sel.runtime_infos,

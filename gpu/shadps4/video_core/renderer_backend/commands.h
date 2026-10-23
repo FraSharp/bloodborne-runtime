@@ -6,9 +6,12 @@
 #include <span>
 
 #include "common/types.h"
+#include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/format.h"
 
 namespace VideoCore::Backend {
+
+struct PipelineAllocation;
 
 /// What a command was, for naming the command a GPU hang is stuck in (breadcrumbs).
 enum class CrumbKind : u8 { Pass, Draw, DrawIndexed, DrawIndirect, Dispatch, DispatchIndirect };
@@ -79,6 +82,14 @@ public:
     /// Binds `buffers` from slot 0. `sizes` and `strides` empty: the pipeline's strides.
     virtual void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                                    std::span<const u64> sizes, std::span<const u64> strides) = 0;
+
+    /// The resources of the next draws or dispatches with `pipeline`: `writes` into its slots
+    /// and `push_constants`. Writes may point into `images` and `buffers`, which are then copied
+    /// whole instead of element by element.
+    virtual void BindResources(const PipelineAllocation& pipeline, std::span<const SlotWrite> writes,
+                               std::span<const u8> push_constants,
+                               std::span<const ImageBinding> images = {},
+                               std::span<const BufferBinding> buffers = {}) = 0;
 
     /// The vertex input state of the next draws (pipelines built with dynamic vertex input).
     virtual void SetVertexInput(std::span<const VertexBinding> bindings,

@@ -11,6 +11,7 @@
 #include "video_core/renderer_backend/handle_table.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
+#include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -93,7 +94,9 @@ public:
         vk::UniqueDescriptorSetLayout set_layout;
         vk::UniquePipelineLayout layout;
         vk::UniquePipeline pipeline;
-        bool push_descriptors{}; ///< the set is pushed, not allocated
+        vk::PipelineBindPoint bind_point{};
+        vk::ShaderStageFlags push_stages{}; ///< the push constants' stages
+        bool push_descriptors{};            ///< the set is pushed, not allocated
         boost::container::static_vector<VideoCore::Backend::ShaderHandle, 5> shaders; ///< held
     };
     /// Valid until the pipeline is destroyed; null for a stale handle.
@@ -116,11 +119,16 @@ public:
     [[nodiscard]] Scheduler& GetScheduler() noexcept {
         return scheduler;
     }
+    /// Descriptor sets of pipelines with more slots than can be pushed.
+    [[nodiscard]] DescriptorHeap& GetDescriptorHeap() noexcept {
+        return descriptor_heap;
+    }
 
 private:
     Instance instance;
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;
+    DescriptorHeap descriptor_heap;
 
     VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
     /// The set and pipeline layouts of `layout`, in a new record.

@@ -10,12 +10,11 @@
 
 namespace Vulkan {
 
-ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
-                                 DescriptorHeap& desc_heap, const Shader::Profile& profile,
+ComputePipeline::ComputePipeline(const Instance& instance, const Shader::Profile& profile,
                                  ComputePipelineKey compute_key_, const Shader::Info& info_,
                                  VideoCore::Backend::ShaderHandle shader,
                                  SerializationSupport& sdata, bool preloading /*=false*/)
-    : Pipeline{instance, scheduler, desc_heap, profile, true}, compute_key{compute_key_} {
+    : Pipeline{instance, profile, true}, compute_key{compute_key_} {
     stages[int(Shader::SwStage::Compute)] = &info_;
     BindingSlots slots;
     AppendBindingSlots(info_, VideoCore::Backend::ShaderStage::Compute, slots);
@@ -28,7 +27,7 @@ ComputePipeline::ComputePipeline(const Instance& instance, Scheduler& scheduler,
         throw Serialization::CorruptData{"cached compute pipeline rejected by the driver"};
     }
     ASSERT_MSG(created.handle, "Failed to create compute pipeline");
-    Adopt(created);
+    allocation = created;
 }
 
 ComputePipeline::~ComputePipeline() = default;

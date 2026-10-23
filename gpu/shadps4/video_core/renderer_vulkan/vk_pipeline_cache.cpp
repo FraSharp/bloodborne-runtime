@@ -69,14 +69,6 @@ using Shader::SwStage;
 
 constexpr static auto SpirvVersion1_6 = 0x00010600U;
 
-constexpr static std::array DescriptorHeapSizes = {
-    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 512},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 8192},
-    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
-    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
-};
-
 static u32 MapOutputs(std::span<Shader::OutputMap, 3> outputs, const AmdGpu::VsOutputControl& ctl) {
     u32 num_outputs = 0;
 
@@ -362,8 +354,7 @@ private:
 
 PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
                              AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
-    : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_},
-      desc_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
+    : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_} {
     sel.regs = &liverpool->regs;
     const auto& vk12_props = instance.GetVk12Properties();
     profile = Shader::Profile{
@@ -615,7 +606,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             GraphicsPipeline::SerializationSupport sdata{};
             MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, key, infos, runtime_infos, fetch,
+                instance, profile, key, infos, runtime_infos, fetch,
                 shaders, sdata, false);
             MetalShadow::GraphicsFromVulkan(key, modules, infos, runtime_infos, sdata, pipeline);
             std::scoped_lock lk{job->mutex};
@@ -637,7 +628,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, sel.graphics_key, sel.infos,
+                instance, profile, sel.graphics_key, sel.infos,
                 sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, false);
         }
         MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos,
@@ -749,7 +740,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<ComputePipeline>(
-                instance, scheduler, desc_heap, profile, compute_key, *sel.infos[0],
+                instance, profile, compute_key, *sel.infos[0],
                 ShaderHandles(sel.modules)[0], sdata, false);
         }
         if (MetalShadow::Enabled()) {

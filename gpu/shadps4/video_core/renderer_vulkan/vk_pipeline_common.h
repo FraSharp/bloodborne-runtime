@@ -24,23 +24,21 @@ static constexpr auto AllGraphicsStageBits =
     vk::ShaderStageFlagBits::eFragment;
 
 class Instance;
-class Scheduler;
-class DescriptorHeap;
 
 /// A guest pipeline, made by the render adapter's device from its description (A5).
 class Pipeline {
 public:
-    Pipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-             const Shader::Profile& profile, bool is_compute = false);
+    Pipeline(const Instance& instance, const Shader::Profile& profile, bool is_compute = false);
     virtual ~Pipeline();
 
     /// Empty when the driver rejected the pipeline: its draws are skipped.
     vk::Pipeline Handle() const noexcept {
-        return pipeline;
+        return vk::Pipeline{reinterpret_cast<VkPipeline>(allocation.native)};
     }
 
-    vk::PipelineLayout GetLayout() const noexcept {
-        return pipeline_layout;
+    /// What the device made, for CommandRecorder::BindResources.
+    const VideoCore::Backend::PipelineAllocation& Allocation() const noexcept {
+        return allocation;
     }
 
     auto GetStages() const {
@@ -60,13 +58,8 @@ public:
         return is_compute;
     }
 
-    /// The render adapter's slot writes (docs/RENDER_ADAPTER.md, A4), pushed as descriptors.
+    /// The render adapter's slot writes (docs/RENDER_ADAPTER.md, A4).
     using DescriptorWrites = std::vector<VideoCore::Backend::SlotWrite>;
-    /// `image_infos` and `buffer_infos`: the arrays the writes point into, if known (their
-    /// descriptors are then copied for the recording thread in one piece each).
-    void BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
-                       std::span<const VideoCore::Backend::ImageBinding> image_infos = {},
-                       std::span<const VideoCore::Backend::BufferBinding> buffer_infos = {}) const;
 
 protected:
     using BindingSlots = boost::container::small_vector<VideoCore::Backend::BindingSlot, 32>;
@@ -76,20 +69,10 @@ protected:
     /// buffers, images, samplers.
     static void AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,
                                    BindingSlots& slots);
-    /// Takes the pipeline the device made (nothing for an empty allocation).
-    void Adopt(const VideoCore::Backend::PipelineAllocation& allocation);
-
     const Instance& instance;
-    Scheduler& scheduler;
-    DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
-    VideoCore::Backend::PipelineHandle handle;
-    // The device's objects (BackendDevice::PipelineRecord), valid while `handle` is.
-    vk::Pipeline pipeline;
-    vk::PipelineLayout pipeline_layout;
-    vk::DescriptorSetLayout desc_layout;
+    VideoCore::Backend::PipelineAllocation allocation; ///< destroyed with the pipeline
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
-    bool uses_push_descriptors{};
     bool is_compute;
 };
 

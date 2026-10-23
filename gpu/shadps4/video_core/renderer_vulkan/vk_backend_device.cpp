@@ -18,10 +18,21 @@
 
 namespace Vulkan {
 
+namespace {
+constexpr std::array DescriptorHeapSizes = {
+    vk::DescriptorPoolSize{vk::DescriptorType::eUniformBuffer, 512},
+    vk::DescriptorPoolSize{vk::DescriptorType::eStorageBuffer, 8192},
+    vk::DescriptorPoolSize{vk::DescriptorType::eSampledImage, 8192},
+    vk::DescriptorPoolSize{vk::DescriptorType::eStorageImage, 1024},
+    vk::DescriptorPoolSize{vk::DescriptorType::eSampler, 1024},
+};
+} // namespace
+
 BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_index,
                              bool enable_validation, bool enable_crash_diagnostic)
     : instance{window, physical_device_index, enable_validation, enable_crash_diagnostic},
-      scheduler{instance, true}, capabilities{QueryResourceCapabilities(instance)} {
+      scheduler{instance, true}, capabilities{QueryResourceCapabilities(instance)},
+      descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
     instance.SetBackendDevice(this);
     capabilities.non_coherent_atom_size = instance.NonCoherentAtomSize();
     VideoCore::Backend::SelectedApi();

@@ -2,7 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A5 are done; next: A6 (presenter, overlay, upscalers).
+**State:** approved on 2026-10-22. A0 to A5 are done; A6 is in progress (resource binding through the
+recorder; the host passes next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -301,6 +302,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   with. Measured: 400 pipelines built (0 failed), Metal API validation without new messages,
   4.38 µs per draw against 4.37, 37.8 FPS against 37.7, the frame correct. Every pipeline of
   the test run builds; the 550 of the acceptance were a longer session's count.
+
+- **A6, resource binding:** a draw's or dispatch's resources are bound through
+  `CommandRecorder::BindResources` (the pipeline's allocation, its slot writes and push
+  constants). `PipelineAllocation::binding` carries the backend's state for it, so binding takes
+  no lookup; the Vulkan backend reads its pipeline record there (layout, bind point, push stages,
+  push or allocated set) and owns the descriptor heap. Guest pipelines no longer record anything
+  themselves. Measured (new build second): 4.24 µs per draw against 4.34, 37.7 FPS both, the
+  frame correct.
 
 ## Decisions
 

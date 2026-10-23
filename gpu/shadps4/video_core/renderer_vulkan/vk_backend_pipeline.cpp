@@ -36,6 +36,10 @@ std::unique_ptr<BackendDevice::PipelineRecord> BackendDevice::MakePipelineLayout
         binding += slot.count;
     }
     auto record = std::make_unique<PipelineRecord>();
+    record->bind_point = push_stages == vk::ShaderStageFlagBits::eCompute
+                             ? vk::PipelineBindPoint::eCompute
+                             : vk::PipelineBindPoint::eGraphics;
+    record->push_stages = push_stages;
     record->push_descriptors = binding < instance.MaxPushDescriptors();
     const vk::DescriptorSetLayoutCreateInfo set_layout_ci = {
         .flags = record->push_descriptors
@@ -74,6 +78,7 @@ std::unique_ptr<BackendDevice::PipelineRecord> BackendDevice::MakePipelineLayout
 Backend::PipelineAllocation BackendDevice::InsertPipeline(std::unique_ptr<PipelineRecord> record) {
     Backend::PipelineAllocation allocation{
         .native = reinterpret_cast<u64>(static_cast<VkPipeline>(*record->pipeline)),
+        .binding = record.get(),
     };
     std::scoped_lock lock{objects_mutex};
     allocation.handle = pipelines.Insert(std::move(record));

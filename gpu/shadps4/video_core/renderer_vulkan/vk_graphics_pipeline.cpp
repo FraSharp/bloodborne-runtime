@@ -125,13 +125,12 @@ static Backend::ShaderHandle AuxShader(const Instance& instance, std::span<const
 }
 
 GraphicsPipeline::GraphicsPipeline(
-    const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-    const Shader::Profile& profile, const GraphicsPipelineKey& key_,
+    const Instance& instance, const Shader::Profile& profile, const GraphicsPipelineKey& key_,
     std::span<const Shader::Info*, MaxShaderStages> infos,
     std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,
     std::optional<const Shader::Gcn::FetchShaderData> fetch_shader_,
     std::span<const Backend::ShaderHandle> shaders, SerializationSupport& sdata, bool preloading)
-    : Pipeline{instance, scheduler, desc_heap, profile}, key{key_},
+    : Pipeline{instance, profile}, key{key_},
       fetch_shader{std::move(fetch_shader_)} {
     auto& device = BackendDevice::From(instance);
     const auto& caps = device.GetCapabilities();
@@ -329,7 +328,7 @@ GraphicsPipeline::GraphicsPipeline(
         LOG_ERROR(Render_Vulkan, "Graphics pipeline {} rejected; its draws are skipped", debug_str);
         return;
     }
-    Adopt(created);
+    allocation = created;
 }
 
 GraphicsPipeline::~GraphicsPipeline() = default;
