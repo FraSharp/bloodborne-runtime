@@ -3,7 +3,7 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is in progress
-(access declarations and bindings done; dynamic state and passes next).
+(access declarations, bindings and dynamic state done; render passes next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -241,6 +241,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   copied it: about 4% slower in three alternating Metal pairs. Without that copy: 33.4, 33.6,
   34.6 FPS against 34.0, 35.5, 33.5, recording 4.2–4.7 µs per draw against 4.3–4.6. Validation
   clean; the frame correct.
+
+- **A4, dynamic state:** viewports, scissors (`Rect2D`), depth compare, stencil operations,
+  cull mode, winding and color write masks are set in the adapter's vocabulary
+  (`renderer_backend/pass.h`, laid out like Vulkan's where it matters); the Vulkan scheduler
+  converts them when it records. Three alternating Metal pairs: 36.6, 38.0, 38.0 FPS against
+  37.2, 37.8, 38.5; recording 4.3–5.3 µs per draw against 4.1–4.2, inside the 5.6 µs budget.
+  Moving the render-pass targets as well cost about 3% in six pairs, for reasons not found yet;
+  that half is not on main.
 
 ## Decisions
 

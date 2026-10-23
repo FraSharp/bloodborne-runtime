@@ -5,9 +5,13 @@
 
 #include <array>
 #include <bit>
+#include <iterator>
+#include <span>
+#include <type_traits>
 #include <cstddef>
 
 #include "video_core/renderer_backend/binding.h"
+#include "video_core/renderer_backend/pass.h"
 #include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
@@ -108,6 +112,12 @@ static_assert(sizeof(Backend::ImageBinding) == sizeof(VkDescriptorImageInfo) &&
               offsetof(Backend::ImageBinding, sampler) == offsetof(VkDescriptorImageInfo, sampler) &&
               offsetof(Backend::ImageBinding, view) == offsetof(VkDescriptorImageInfo, imageView) &&
               offsetof(Backend::ImageBinding, layout) == offsetof(VkDescriptorImageInfo, imageLayout));
+static_assert(sizeof(Backend::Viewport) == sizeof(VkViewport) &&
+              offsetof(Backend::Viewport, x) == offsetof(VkViewport, x) &&
+              offsetof(Backend::Viewport, max_depth) == offsetof(VkViewport, maxDepth));
+static_assert(sizeof(Backend::Rect2D) == sizeof(VkRect2D) &&
+              offsetof(Backend::Rect2D, x) == offsetof(VkRect2D, offset) &&
+              offsetof(Backend::Rect2D, width) == offsetof(VkRect2D, extent));
 // Pipeline keys hold write masks; the serialized shader cache depends on their size.
 static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags));
 
@@ -212,6 +222,34 @@ static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags)
         .pImageInfo = reinterpret_cast<const vk::DescriptorImageInfo*>(w.images),
         .pBufferInfo = reinterpret_cast<const vk::DescriptorBufferInfo*>(w.buffers),
     };
+}
+/// Viewports and scissors are laid out like Vulkan's (checked below): read in place.
+template <typename Range>
+[[nodiscard]] inline auto ToVk(const Range& range) noexcept
+    requires std::is_same_v<std::remove_cvref_t<decltype(*std::data(range))>, Backend::Viewport>
+{
+    return std::span<const vk::Viewport>{reinterpret_cast<const vk::Viewport*>(std::data(range)),
+                                         std::size(range)};
+}
+template <typename Range>
+[[nodiscard]] inline auto ToVk(const Range& range) noexcept
+    requires std::is_same_v<std::remove_cvref_t<decltype(*std::data(range))>, Backend::Rect2D>
+{
+    return std::span<const vk::Rect2D>{reinterpret_cast<const vk::Rect2D*>(std::data(range)),
+                                       std::size(range)};
+}
+/// A render target's view and layout as RenderAttachment holds them, and back.
+[[nodiscard]] inline u64 ToNative(vk::ImageView view) noexcept {
+    return reinterpret_cast<u64>(static_cast<VkImageView>(view));
+}
+[[nodiscard]] constexpr u32 ToNative(vk::ImageLayout layout) noexcept {
+    return static_cast<u32>(layout);
+}
+[[nodiscard]] inline vk::ImageView ToVkImageView(u64 view) noexcept {
+    return vk::ImageView{reinterpret_cast<VkImageView>(view)};
+}
+[[nodiscard]] constexpr vk::ImageLayout ToVkImageLayout(u32 layout) noexcept {
+    return static_cast<vk::ImageLayout>(layout);
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));

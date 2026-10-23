@@ -26,7 +26,9 @@
 #include "common/unique_function.h"
 #include "video_core/amdgpu/regs_color.h"
 #include "video_core/amdgpu/regs_primitive.h"
+#include "video_core/renderer_backend/pass.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -108,20 +110,11 @@ struct SubmitInfo {
     }
 };
 
-using Viewports = boost::container::static_vector<vk::Viewport, AmdGpu::NUM_VIEWPORTS>;
-using Scissors = boost::container::static_vector<vk::Rect2D, AmdGpu::NUM_VIEWPORTS>;
-using ColorWriteMasks = std::array<vk::ColorComponentFlags, AmdGpu::NUM_COLOR_BUFFERS>;
-struct StencilOps {
-    vk::StencilOp fail_op{};
-    vk::StencilOp pass_op{};
-    vk::StencilOp depth_fail_op{};
-    vk::CompareOp compare_op{};
-
-    bool operator==(const StencilOps& other) const {
-        return fail_op == other.fail_op && pass_op == other.pass_op &&
-               depth_fail_op == other.depth_fail_op && compare_op == other.compare_op;
-    }
-};
+using Viewports =
+    boost::container::static_vector<VideoCore::Backend::Viewport, AmdGpu::NUM_VIEWPORTS>;
+using Scissors = boost::container::static_vector<VideoCore::Backend::Rect2D, AmdGpu::NUM_VIEWPORTS>;
+using ColorWriteMasks = std::array<VideoCore::Backend::ColorWriteMask, AmdGpu::NUM_COLOR_BUFFERS>;
+using VideoCore::Backend::StencilOps;
 struct DynamicState {
     struct {
         bool viewports : 1;
@@ -163,7 +156,7 @@ struct DynamicState {
 
     bool depth_test_enabled{};
     bool depth_write_enabled{};
-    vk::CompareOp depth_compare_op{};
+    VideoCore::Backend::CompareOp depth_compare_op{};
 
     bool depth_bounds_test_enabled{};
     float depth_bounds_min{};
@@ -186,8 +179,8 @@ struct DynamicState {
 
     bool primitive_restart_enable{};
     bool rasterizer_discard_enable{};
-    vk::CullModeFlags cull_mode{};
-    vk::FrontFace front_face{};
+    VideoCore::Backend::CullMode cull_mode{};
+    VideoCore::Backend::FrontFace front_face{};
 
     std::array<float, 4> blend_constants{};
     ColorWriteMasks color_write_masks{};
@@ -207,11 +200,11 @@ struct DynamicState {
         using Face = vk::StencilFaceFlagBits;
         if (dirty_state.viewports) {
             dirty_state.viewports = false;
-            emit([v = viewports](vk::CommandBuffer c) { c.setViewportWithCount(v); });
+            emit([v = viewports](vk::CommandBuffer c) { c.setViewportWithCount(ToVk(v)); });
         }
         if (dirty_state.scissors) {
             dirty_state.scissors = false;
-            emit([v = scissors](vk::CommandBuffer c) { c.setScissorWithCount(v); });
+            emit([v = scissors](vk::CommandBuffer c) { c.setScissorWithCount(ToVk(v)); });
         }
         if (dirty_state.depth_test_enabled) {
             dirty_state.depth_test_enabled = false;
@@ -224,7 +217,7 @@ struct DynamicState {
         }
         if (depth_test_enabled && dirty_state.depth_compare_op) {
             dirty_state.depth_compare_op = false;
-            emit([v = depth_compare_op](vk::CommandBuffer c) { c.setDepthCompareOp(v); });
+            emit([v = depth_compare_op](vk::CommandBuffer c) { c.setDepthCompareOp(ToVk(v)); });
         }
         if (dirty_state.depth_bounds_test_enabled) {
             dirty_state.depth_bounds_test_enabled = false;
@@ -258,7 +251,8 @@ struct DynamicState {
         if (stencil_test_enabled) {
             const auto ops = [&](Face face, const StencilOps& o) {
                 emit([face, o](vk::CommandBuffer c) {
-                    c.setStencilOp(face, o.fail_op, o.pass_op, o.depth_fail_op, o.compare_op);
+                    c.setStencilOp(face, ToVk(o.fail_op), ToVk(o.pass_op), ToVk(o.depth_fail_op),
+                                  ToVk(o.compare_op));
                 });
             };
             if (dirty_state.stencil_front_ops && dirty_state.stencil_back_ops &&
@@ -336,11 +330,11 @@ struct DynamicState {
         }
         if (dirty_state.cull_mode) {
             dirty_state.cull_mode = false;
-            emit([v = cull_mode](vk::CommandBuffer c) { c.setCullMode(v); });
+            emit([v = cull_mode](vk::CommandBuffer c) { c.setCullMode(ToVk(v)); });
         }
         if (dirty_state.front_face) {
             dirty_state.front_face = false;
-            emit([v = front_face](vk::CommandBuffer c) { c.setFrontFace(v); });
+            emit([v = front_face](vk::CommandBuffer c) { c.setFrontFace(ToVk(v)); });
         }
         if (dirty_state.blend_constants) {
             dirty_state.blend_constants = false;
@@ -349,7 +343,7 @@ struct DynamicState {
         if (dirty_state.color_write_masks) {
             dirty_state.color_write_masks = false;
             if (color_write_mask_supported) {
-                emit([v = color_write_masks](vk::CommandBuffer c) { c.setColorWriteMaskEXT(0, v); });
+                emit([v = color_write_masks](vk::CommandBuffer c) { c.setColorWriteMaskEXT(0, ToVk(v)); });
             }
         }
         if (dirty_state.line_width) {
@@ -447,7 +441,7 @@ struct DynamicState {
         }
     }
 
-    void SetDepthCompareOp(const vk::CompareOp compare_op) {
+    void SetDepthCompareOp(const VideoCore::Backend::CompareOp compare_op) {
         if (depth_compare_op != compare_op) {
             depth_compare_op = compare_op;
             dirty_state.depth_compare_op = true;
@@ -544,14 +538,14 @@ struct DynamicState {
         }
     }
 
-    void SetCullMode(const vk::CullModeFlags cull_mode_) {
+    void SetCullMode(const VideoCore::Backend::CullMode cull_mode_) {
         if (cull_mode != cull_mode_) {
             cull_mode = cull_mode_;
             dirty_state.cull_mode = true;
         }
     }
 
-    void SetFrontFace(const vk::FrontFace front_face_) {
+    void SetFrontFace(const VideoCore::Backend::FrontFace front_face_) {
         if (front_face != front_face_) {
             front_face = front_face_;
             dirty_state.front_face = true;

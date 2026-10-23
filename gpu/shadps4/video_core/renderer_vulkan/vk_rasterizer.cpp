@@ -6,6 +6,7 @@
 #include <map>
 #include <unordered_set>
 #include <xxhash.h>
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/ui_composition.h"
 #include "bbport_timeline.h"
@@ -4646,7 +4647,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             }
             if (depth_redirected) {
                 auto& depth_image = texture_cache.GetImage(db_desc.first);
-                state.depth_stencil_attachment.image_view =
+                state.depth_stencil_attachment.image_view = 
                     texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Handle();
                 state.depth_stencil_attachment.image_layout = ImageStateOf(*depth_image.backing).state.layout;
             }
@@ -5070,8 +5071,8 @@ void Rasterizer::UpdateViewportScissorState() const {
         regs.generic_scissor.bottom_right_y,
         enable_offset ? regs.window_offset.window_y_offset : 0);
 
-    boost::container::static_vector<vk::Viewport, AmdGpu::NUM_VIEWPORTS> viewports;
-    boost::container::static_vector<vk::Rect2D, AmdGpu::NUM_VIEWPORTS> scissors;
+    Viewports viewports;
+    Scissors scissors;
 
     if (regs.polygon_control.enable_window_offset &&
         (regs.window_offset.window_x_offset != 0 || regs.window_offset.window_y_offset != 0)) {
@@ -5090,24 +5091,24 @@ void Rasterizer::UpdateViewportScissorState() const {
         const auto zoffset = vp_ctl.zoffset_enable ? vp.zoffset : 0.f;
         const auto zscale = vp_ctl.zscale_enable ? vp.zscale : 1.f;
 
-        vk::Viewport viewport{};
+        VideoCore::Backend::Viewport viewport{};
 
         // https://gitlab.freedesktop.org/mesa/mesa/-/blob/209a0ed/src/amd/vulkan/radv_pipeline_graphics.c#L688-689
         // https://gitlab.freedesktop.org/mesa/mesa/-/blob/209a0ed/src/amd/vulkan/radv_cmd_buffer.c#L3103-3109
         // When the clip space is ranged [-1...1], the zoffset is centered.
         // By reversing the above viewport calculations, we get the following:
         if (regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW) {
-            viewport.minDepth = zoffset - zscale;
-            viewport.maxDepth = zoffset + zscale;
+            viewport.min_depth = zoffset - zscale;
+            viewport.max_depth = zoffset + zscale;
         } else {
-            viewport.minDepth = zoffset;
-            viewport.maxDepth = zoffset + zscale;
+            viewport.min_depth = zoffset;
+            viewport.max_depth = zoffset + zscale;
         }
 
         if (!instance.IsDepthRangeUnrestrictedSupported()) {
             // Unrestricted depth range not supported by device. Restrict to valid range.
-            viewport.minDepth = std::max(viewport.minDepth, 0.f);
-            viewport.maxDepth = std::min(viewport.maxDepth, 1.f);
+            viewport.min_depth = std::max(viewport.min_depth, 0.f);
+            viewport.max_depth = std::min(viewport.max_depth, 1.f);
         }
 
         if (regs.IsClipDisabled()) {
@@ -5151,32 +5152,29 @@ void Rasterizer::UpdateViewportScissorState() const {
             const s32 y0 = scale(vp_scsr.top_left_y, target_scale[1]);
             const s32 x1 = scale(vp_scsr.top_left_x + s32(vp_scsr.GetWidth()), target_scale[0]);
             const s32 y1 = scale(vp_scsr.top_left_y + s32(vp_scsr.GetHeight()), target_scale[1]);
-            scissors.push_back({
-                .offset = {x0, y0},
-                .extent = {u32(std::max(x1 - x0, 0)), u32(std::max(y1 - y0, 0))},
-            });
+            scissors.push_back({.x = x0,
+                                .y = y0,
+                                .width = u32(std::max(x1 - x0, 0)),
+                                .height = u32(std::max(y1 - y0, 0))});
         } else {
-            scissors.push_back({
-                .offset = {vp_scsr.top_left_x, vp_scsr.top_left_y},
-                .extent = {vp_scsr.GetWidth(), vp_scsr.GetHeight()},
-            });
+            scissors.push_back({.x = vp_scsr.top_left_x,
+                                .y = vp_scsr.top_left_y,
+                                .width = vp_scsr.GetWidth(),
+                                .height = vp_scsr.GetHeight()});
         }
     }
 
     if (viewports.empty()) {
         // Vulkan requires providing at least one viewport.
-        constexpr vk::Viewport empty_viewport = {
+        constexpr VideoCore::Backend::Viewport empty_viewport = {
             .x = -1.0f,
             .y = -1.0f,
             .width = 1.0f,
             .height = 1.0f,
-            .minDepth = 0.0f,
-            .maxDepth = 1.0f,
+            .min_depth = 0.0f,
+            .max_depth = 1.0f,
         };
-        constexpr vk::Rect2D empty_scissor = {
-            .offset = {0, 0},
-            .extent = {1, 1},
-        };
+        constexpr VideoCore::Backend::Rect2D empty_scissor = {.x = 0, .y = 0, .width = 1, .height = 1};
         viewports.push_back(empty_viewport);
         scissors.push_back(empty_scissor);
     }
@@ -5196,7 +5194,7 @@ void Rasterizer::UpdateDepthStencilState() const {
     if (depth_test_enabled) {
         dynamic_state.SetDepthWriteEnabled(regs.depth_control.depth_write_enable &&
                                            !regs.depth_render_control.depth_clear_enable);
-        dynamic_state.SetDepthCompareOp(ToVk(LiverpoolToVK::CompareOp(regs.depth_control.depth_func)));
+        dynamic_state.SetDepthCompareOp(LiverpoolToVK::CompareOp(regs.depth_control.depth_func));
     }
 
     const auto depth_bounds_test_enabled = regs.depth_control.depth_bounds_enable;
@@ -5220,16 +5218,16 @@ void Rasterizer::UpdateDepthStencilState() const {
     dynamic_state.SetStencilTestEnabled(stencil_test_enabled);
     if (stencil_test_enabled) {
         const StencilOps front_ops{
-            .fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_front)),
-            .pass_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_front)),
-            .depth_fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_front)),
-            .compare_op = ToVk(LiverpoolToVK::CompareOp(regs.depth_control.stencil_ref_func)),
+            .fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_front),
+            .pass_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_front),
+            .depth_fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_front),
+            .compare_op = LiverpoolToVK::CompareOp(regs.depth_control.stencil_ref_func),
         };
         const StencilOps back_ops = regs.depth_control.backface_enable ? StencilOps{
-            .fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_back)),
-            .pass_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_back)),
-            .depth_fail_op = ToVk(LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_back)),
-            .compare_op = ToVk(LiverpoolToVK::CompareOp(regs.depth_control.stencil_bf_func)),
+            .fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_fail_back),
+            .pass_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zpass_back),
+            .depth_fail_op = LiverpoolToVK::StencilOp(regs.stencil_control.stencil_zfail_back),
+            .compare_op = LiverpoolToVK::CompareOp(regs.depth_control.stencil_bf_func),
         } : front_ops;
         dynamic_state.SetStencilOps(front_ops, back_ops);
 
@@ -5301,9 +5299,9 @@ void Rasterizer::UpdatePrimitiveState(const GraphicsPipeline* pipeline,
                "Primitive restart index other than -1 is not supported yet");
 
     const auto cull_mode = LiverpoolToVK::IsPrimitiveCulled(primitive)
-                               ? ToVk(LiverpoolToVK::CullMode(regs.polygon_control.CullingMode()))
-                               : vk::CullModeFlagBits::eNone;
-    const auto front_face = ToVk(LiverpoolToVK::FrontFace(regs.polygon_control.front_face));
+                               ? LiverpoolToVK::CullMode(regs.polygon_control.CullingMode())
+                               : VideoCore::Backend::CullMode::None;
+    const auto front_face = LiverpoolToVK::FrontFace(regs.polygon_control.front_face);
 
     dynamic_state.SetPrimitiveRestartEnabled(prim_restart);
     dynamic_state.SetRasterizerDiscardEnabled(regs.clipper_control.dx_rasterization_kill);
@@ -5321,7 +5319,7 @@ void Rasterizer::UpdateColorBlendingState(const GraphicsPipeline* pipeline) cons
     const auto& regs = Regs();
     auto& dynamic_state = scheduler.GetDynamicState();
     dynamic_state.SetBlendConstants(regs.blend_constants);
-    dynamic_state.SetColorWriteMasks(ToVk(pipeline->GetGraphicsKey().write_masks));
+    dynamic_state.SetColorWriteMasks(pipeline->GetGraphicsKey().write_masks);
     dynamic_state.SetAttachmentFeedbackLoopEnabled(attachment_feedback_loop);
 }
 
