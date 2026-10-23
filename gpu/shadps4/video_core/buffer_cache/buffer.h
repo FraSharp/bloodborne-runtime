@@ -67,14 +67,6 @@ bool ConstantsInPlace();
 /// Hints and requirements for the backing memory type of a commit.
 using MemoryType = Backend::MemoryClass;
 
-constexpr vk::BufferUsageFlags ReadFlags =
-    vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eUniformBuffer |
-    vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eVertexBuffer |
-    vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
-
-constexpr vk::BufferUsageFlags AllFlags =
-    ReadFlags | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer;
-
 /// A backend memory object (a VkDeviceMemory) that a buffer is created over.
 struct NativeMemory {
     u64 value{};
@@ -147,7 +139,7 @@ struct Buffer {
         return handle;
     }
 
-    vk::DeviceAddress BufferDeviceAddress() const noexcept {
+    u64 BufferDeviceAddress() const noexcept {
         ASSERT_MSG(device_address != 0, "Can't get BDA from a non BDA buffer");
         return device_address;
     }

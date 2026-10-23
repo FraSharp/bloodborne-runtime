@@ -5,6 +5,7 @@
 
 #include "common/assert.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_backend_readback.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_host_objects.h"
 

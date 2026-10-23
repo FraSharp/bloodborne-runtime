@@ -8,6 +8,7 @@
 #include "common/assert.h"
 #include "common/logging/log.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_backend_readback.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Vulkan {

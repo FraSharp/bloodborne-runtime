@@ -4,6 +4,7 @@
 #pragma once
 
 #include <array>
+#include <functional>
 #include <span>
 
 #include "common/types.h"
@@ -287,3 +288,10 @@ struct Capabilities {
 };
 
 } // namespace VideoCore::Backend
+
+template <typename Tag>
+struct std::hash<VideoCore::Backend::Handle<Tag>> {
+    std::size_t operator()(VideoCore::Backend::Handle<Tag> handle) const noexcept {
+        return std::hash<u64>{}((u64(handle.generation) << 32) | handle.slot);
+    }
+};

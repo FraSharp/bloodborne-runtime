@@ -467,6 +467,19 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   read through native accessors. `vk_rasterizer.cpp` names no Vulkan type. Measured: 4.42 µs
   per draw against 4.21 (new second) and 4.22 against 4.11 (new first), median 26.3 against
   26.0 and 26.8 against 26.7; MetalFX 30.1 ms median as before; frames correct.
+- **M2, caches without Vulkan services:** the readback queue's copies are a device call
+  (`ReadBackAfter`, the Vulkan backend's `vk_backend_readback`); the shader recompiler's
+  profile comes from the device (`ShaderProfile`), with the game's and the memory model's
+  fields set by the pipeline cache; programs, selections and the shader cache's loader
+  identify shaders by `ShaderHandle` (the Metal shadow and the shader collector look up the
+  Vulkan modules); device addresses are `u64`; the import usage flags are the backend's.
+  Measured: 400 pipelines built, 0 failed, the stale count as the base build's (59); new
+  build second 4.68 µs per draw against 4.48, reversed 4.31 against 4.52; frame correct.
+
+  Left in shared code for the Vulkan backend: the buffer cache's sparse guest arena (sparse
+  buffers, Linux only; guarded by the capability) and the guest-memory chunks used in place
+  (`BB_GUEST_IN_PLACE`, Linux). They move behind the device before M4 drops Vulkan from the
+  Mac build.
 
 ## Decisions
 

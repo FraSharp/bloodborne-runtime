@@ -1,6 +1,7 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
 #include <bit>
+#include <cstdlib>
 #include <mutex>
 #include <set>
 #include <cstdio>
@@ -10,6 +11,7 @@
 #include "bbport_metal_residency.h"
 #include "video_core/renderer_metal/mtl_resources.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
+#include "video_core/renderer_vulkan/vk_backend_readback.h"
 #include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
@@ -48,6 +50,16 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
 }
 
 namespace Backend = VideoCore::Backend;
+
+namespace {
+/// Every use a buffer of guest memory has (imported host memory).
+constexpr vk::BufferUsageFlags ReadFlags =
+    vk::BufferUsageFlagBits::eTransferSrc | vk::BufferUsageFlagBits::eUniformBuffer |
+    vk::BufferUsageFlagBits::eIndexBuffer | vk::BufferUsageFlagBits::eVertexBuffer |
+    vk::BufferUsageFlagBits::eIndirectBuffer | vk::BufferUsageFlagBits::eShaderDeviceAddress;
+constexpr vk::BufferUsageFlags AllFlags =
+    ReadFlags | vk::BufferUsageFlagBits::eTransferDst | vk::BufferUsageFlagBits::eStorageBuffer;
+} // namespace
 
 Backend::Device::WaitResult BackendDevice::WaitFor(u64 tick, u64 timeout_ns) {
     const vk::Semaphore handle = scheduler.GetWorkSemaphore()->Handle();
@@ -115,7 +127,7 @@ Backend::BufferAllocation BackendDevice::ImportHostMemory(void* host, u64 size,
     const vk::BufferCreateInfo buffer_ci = {
         .pNext = &external,
         .size = size,
-        .usage = VideoCore::AllFlags | vk::BufferUsageFlagBits::eUniformTexelBuffer |
+        .usage = AllFlags | vk::BufferUsageFlagBits::eUniformTexelBuffer |
                  vk::BufferUsageFlagBits::eStorageTexelBuffer,
         .sharingMode = vk::SharingMode::eExclusive,
     };
@@ -565,6 +577,72 @@ u64 BackendDevice::NativeHandle(Backend::SamplerHandle sampler) {
     std::scoped_lock lock{objects_mutex};
     const vk::UniqueSampler* entry = samplers.Get(sampler);
     return entry ? reinterpret_cast<u64>(static_cast<VkSampler>(**entry)) : 0;
+}
+
+Shader::Profile BackendDevice::ShaderProfile() const {
+    constexpr u32 SpirvVersion1_6 = 0x00010600U;
+    const auto& vk12_props = instance.GetVk12Properties();
+    return Shader::Profile{
+        .max_viewport_width = instance.GetMaxViewportWidth(),
+        .max_viewport_height = instance.GetMaxViewportHeight(),
+        .max_shared_memory_size = instance.MaxComputeSharedMemorySize(),
+        .supported_spirv = SpirvVersion1_6,
+        .subgroup_size = instance.SubgroupSize(),
+        .support_int8 = instance.IsShaderInt8Supported(),
+        .support_int16 = instance.IsShaderInt16Supported(),
+        .support_int64 = instance.IsShaderInt64Supported(),
+        .support_float16 = instance.IsShaderFloat16Supported(),
+        .support_float64 = instance.IsShaderFloat64Supported(),
+        .supports_denorm_behavior_independence =
+            vk12_props.denormBehaviorIndependence != vk::ShaderFloatControlsIndependence::eNone,
+        .supports_rounding_mode_independence =
+            vk12_props.roundingModeIndependence != vk::ShaderFloatControlsIndependence::eNone,
+        .support_fp16_denorm_preserve = bool(vk12_props.shaderDenormPreserveFloat16),
+        .support_fp16_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat16),
+        .support_fp16_round_to_zero = bool(vk12_props.shaderRoundingModeRTZFloat16),
+        .support_fp32_denorm_preserve = bool(vk12_props.shaderDenormPreserveFloat32),
+        .support_fp32_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat32),
+        .support_fp32_round_to_zero = bool(vk12_props.shaderRoundingModeRTZFloat32),
+        .support_fp64_denorm_preserve = bool(vk12_props.shaderDenormPreserveFloat64),
+        .support_fp64_denorm_flush = bool(vk12_props.shaderDenormFlushToZeroFloat64),
+        .support_fp64_round_to_zero = bool(vk12_props.shaderRoundingModeRTZFloat64),
+        .support_fp16_signed_zero_inf_nan_preserve =
+            bool(vk12_props.shaderSignedZeroInfNanPreserveFloat16),
+        .support_fp32_signed_zero_inf_nan_preserve =
+            bool(vk12_props.shaderSignedZeroInfNanPreserveFloat32),
+        .support_fp64_signed_zero_inf_nan_preserve =
+            bool(vk12_props.shaderSignedZeroInfNanPreserveFloat64),
+        .supports_image_load_store_lod = instance.IsImageLoadStoreLodSupported(),
+        .supports_native_cube_calc = instance.IsAmdGcnShaderSupported(),
+        .supports_trinary_minmax = instance.IsAmdShaderTrinaryMinMaxSupported(),
+        .supports_buffer_fp32_atomic_min_max =
+            instance.IsShaderAtomicFloatBuffer32MinMaxSupported(),
+        .supports_image_fp32_atomic_min_max = instance.IsShaderAtomicFloatImage32MinMaxSupported(),
+        .supports_buffer_int64_atomics = instance.IsBufferInt64AtomicsSupported(),
+        .supports_shared_int64_atomics = instance.IsSharedInt64AtomicsSupported(),
+        .supports_workgroup_explicit_memory_layout =
+            instance.IsWorkgroupMemoryExplicitLayoutSupported(),
+        .supports_amd_shader_explicit_vertex_parameter =
+            instance.IsAmdShaderExplicitVertexParameterSupported(),
+        .supports_fragment_shader_barycentric = instance.IsFragmentShaderBarycentricSupported(),
+        .supports_shader_subgroup_clock = instance.IsShaderSubgroupClockSupported(),
+        .needs_manual_interpolation = instance.IsFragmentShaderBarycentricSupported() &&
+                                      instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
+        // bbport: older NVIDIA (Pascal) has no barycentrics; BB_INTERP_INT_FIX=0/1 overrides.
+        .needs_integer_interpolation_fix = [&] {
+            if (const char* env = std::getenv("BB_INTERP_INT_FIX")) {
+                return env[0] == '1';
+            }
+            return !instance.IsFragmentShaderBarycentricSupported() &&
+                   instance.GetDriverID() == vk::DriverId::eNvidiaProprietary;
+        }(),
+        .needs_lds_barriers = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary ||
+                              instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+        .needs_buffer_offsets = instance.StorageMinAlignment() > 4,
+        .needs_unorm_fixup = instance.GetDriverID() == vk::DriverId::eMesaKosmickrisp,
+        .needs_clip_distance_emulation = instance.GetDriverID() == vk::DriverId::eNvidiaProprietary,
+        .supports_shader_stencil_export = instance.IsShaderStencilExportSupported(),
+    };
 }
 
 } // namespace Vulkan

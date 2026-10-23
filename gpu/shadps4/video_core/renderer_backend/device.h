@@ -3,11 +3,13 @@
 
 #pragma once
 
+#include <functional>
 #include <span>
 #include <string_view>
 
 #include "common/types.h"
 #include "common/unique_function.h"
+#include "shader_recompiler/profile.h"
 #include "video_core/renderer_backend/commands.h"
 #include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_backend/resource.h"
@@ -28,6 +30,9 @@ public:
     virtual ~Device() = default;
 
     [[nodiscard]] virtual Api GetApi() const noexcept = 0;
+    /// What the device's shaders can do, for the shader recompiler (the fields that depend on
+    /// the game or the memory model are the caller's).
+    [[nodiscard]] virtual Shader::Profile ShaderProfile() const = 0;
     [[nodiscard]] virtual const Capabilities& GetCapabilities() const noexcept = 0;
 
     /// The tick of the submission now being recorded.
@@ -108,6 +113,15 @@ public:
 
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
+
+    /// The device copies buffers out on a queue of its own (ReadBackAfter can).
+    [[nodiscard]] virtual bool HasReadbackQueue() const noexcept = 0;
+    /// Copies `copies` of `buffer` (NativeHandle; destination offsets from 0, `total` bytes)
+    /// once submission `tick` is complete, on the readback queue, and hands the host copy to
+    /// `use`; false when it cannot (the caller copies in stream order).
+    [[nodiscard]] virtual bool ReadBackAfter(u64 buffer, std::span<const BufferCopy> copies,
+                                             u64 total, u64 tick,
+                                             const std::function<void(const u8*)>& use) = 0;
 
     /// The backend's own object (a VkSampler, an id<MTLSamplerState>) as an integer, for code
     /// that still calls the API directly (docs/RENDER_ADAPTER.md, "native interop"). Zero for a

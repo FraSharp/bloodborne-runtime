@@ -283,134 +283,6 @@ ReadbackLog* Readbacks() {
 thread_local const char* readback_requester = "";
 thread_local bool readback_is_write = false;
 
-/// bbport: copies finished GPU data out of an arena on the readback queue (Instance), waiting
-/// only for those writes (the timeline semaphore at their tick), not for the queued frames.
-class FastReadback {
-public:
-    explicit FastReadback(const Vulkan::Instance& instance)
-        : device{instance.GetDevice()}, queue{instance.GetReadbackQueue()},
-          allocator{instance.GetAllocator()} {
-        if (!queue) {
-            return;
-        }
-        pool = Vulkan::Check(device.createCommandPoolUnique({
-            .flags = vk::CommandPoolCreateFlagBits::eResetCommandBuffer,
-            .queueFamilyIndex = instance.GetReadbackQueueFamilyIndex(),
-        }));
-        cmdbuf = Vulkan::Check(device.allocateCommandBuffers({
-            .commandPool = *pool,
-            .level = vk::CommandBufferLevel::ePrimary,
-            .commandBufferCount = 1,
-        }))[0];
-        fence = Vulkan::Check(device.createFenceUnique({}));
-    }
-    ~FastReadback() {
-        if (buffer) {
-            vmaDestroyBuffer(allocator, buffer, allocation);
-        }
-    }
-
-    [[nodiscard]] bool Available() const noexcept {
-        return bool(queue);
-    }
-
-    /// Copies `copies` (destination offsets from 0) of `arena` once `semaphore` reaches `tick`;
-    /// returns the host copy, or null on failure (the caller takes the regular path).
-    const u8* Copy(const Buffer* arena, std::span<const Backend::BufferCopy> copies, u64 total,
-                   vk::Semaphore semaphore, u64 tick) {
-        if (!Ensure(total)) {
-            return nullptr;
-        }
-        Vulkan::Check(cmdbuf.reset());
-        Vulkan::Check(cmdbuf.begin({.flags = vk::CommandBufferUsageFlagBits::eOneTimeSubmit}));
-        boost::container::small_vector<vk::BufferCopy, 8> regions;
-        for (const auto& copy : copies) {
-            regions.push_back(Vulkan::ToVk(copy));
-        }
-        cmdbuf.copyBuffer(arena->Handle(), vk::Buffer{buffer}, regions);
-        const vk::MemoryBarrier2 to_host{
-            .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,
-            .srcAccessMask = vk::AccessFlagBits2::eTransferWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eHost,
-            .dstAccessMask = vk::AccessFlagBits2::eHostRead,
-        };
-        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &to_host});
-        Vulkan::Check(cmdbuf.end());
-        const vk::SemaphoreSubmitInfo wait{
-            .semaphore = semaphore,
-            .value = tick,
-            .stageMask = vk::PipelineStageFlagBits2::eTransfer,
-        };
-        const vk::CommandBufferSubmitInfo command{.commandBuffer = cmdbuf};
-        const vk::SubmitInfo2 submit{
-            .waitSemaphoreInfoCount = 1,
-            .pWaitSemaphoreInfos = &wait,
-            .commandBufferInfoCount = 1,
-            .pCommandBufferInfos = &command,
-        };
-        if (queue.submit2(submit, *fence) != vk::Result::eSuccess) {
-            return nullptr;
-        }
-        const auto result = device.waitForFences(*fence, vk::True, UINT64_MAX);
-        Vulkan::Check(device.resetFences(*fence));
-        if (result != vk::Result::eSuccess) {
-            return nullptr;
-        }
-        vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
-        return mapped;
-    }
-
-private:
-    bool Ensure(u64 size) {
-        if (size <= capacity) {
-            return true;
-        }
-        if (buffer) {
-            vmaDestroyBuffer(allocator, buffer, allocation);
-            buffer = VK_NULL_HANDLE;
-            capacity = 0;
-        }
-        const u64 new_capacity = std::max<u64>(std::bit_ceil(size), 1_MB);
-        const VkBufferCreateInfo buffer_ci{
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = new_capacity,
-            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-            .sharingMode = VK_SHARING_MODE_EXCLUSIVE,
-        };
-        const VmaAllocationCreateInfo alloc_ci{
-            .flags = VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT |
-                     VMA_ALLOCATION_CREATE_MAPPED_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
-        };
-        VmaAllocationInfo info{};
-        if (vmaCreateBuffer(allocator, &buffer_ci, &alloc_ci, &buffer, &allocation, &info) !=
-            VK_SUCCESS) {
-            buffer = VK_NULL_HANDLE;
-            return false;
-        }
-        mapped = static_cast<u8*>(info.pMappedData);
-        capacity = new_capacity;
-        return true;
-    }
-
-    vk::Device device;
-    vk::Queue queue;
-    VmaAllocator allocator;
-    vk::UniqueCommandPool pool;
-    vk::CommandBuffer cmdbuf;
-    vk::UniqueFence fence;
-    VkBuffer buffer = VK_NULL_HANDLE;
-    VmaAllocation allocation = nullptr;
-    u8* mapped = nullptr;
-    u64 capacity = 0;
-};
-std::mutex fast_readback_mutex;
-/// One readback queue user for the old model's downloads and the module's read traps.
-FastReadback& SharedReadback(const Vulkan::Instance& instance) {
-    static FastReadback readback{instance};
-    return readback;
-}
-
 // bbport: BB_GPU_WRITE_TWINS=1 — a guest write into a page that holds bytes the GPU is still
 // writing (counters, small compute outputs rewritten every frame) does not wait for the GPU: the
 // guest's copy of those bytes is kept as a "twin" and the page becomes CPU-modified at once.
@@ -808,7 +680,7 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
     }
 
     const u64 bda_pagetable_size =
-        (blocks_per_arena_page * NUM_ARENA_PAGES) * sizeof(vk::DeviceAddress) *
+        (blocks_per_arena_page * NUM_ARENA_PAGES) * sizeof(u64) *
         (LayerActive() ? 2 : 1);
     fault_manager = std::make_unique<FaultManager>(instance, scheduler, *this, block_shift,
                                                    blocks_per_arena_page * NUM_ARENA_PAGES);
@@ -1044,17 +916,14 @@ void BufferCache::LayerCopyBackForCpu(VAddr address) {
         if (tick != 0 && !device.IsComplete(tick)) {
             device.Wait(tick); // submitted, and done
         }
-        auto& readback = SharedReadback(instance);
-        if (readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
-            std::scoped_lock lk{fast_readback_mutex};
-            if (const u8* data = readback.Copy(mirror_buffer, copies, total,
-                                               scheduler.GetWorkSemaphore()->Handle(), tick)) {
+        if (device.HasReadbackQueue() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
+            copied = device.ReadBackAfter(mirror_buffer->Native(), copies, total, tick,
+                                          [&](const u8* data) {
                 for (size_t i = 0; i < copies.size(); ++i) {
                     memory->TryWriteBacking(std::bit_cast<u8*>(guests[i]),
                                             data + copies[i].dst_offset, copies[i].size);
                 }
-                copied = true;
-            }
+            });
         }
         if (copied) {
             gpu_modified_ranges.Subtract(from, block_size);
@@ -1134,20 +1003,13 @@ void BufferCache::DownloadMemory(const Buffer* arena, VAddr device_addr, u64 siz
     }
     const bool write_done = write_tick != 0 && device.IsComplete(write_tick);
     bool fast = false;
-    auto& readback = SharedReadback(instance);
-    if (write_tick != 0 && readback.Available() && !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
+    if (write_tick != 0 && device.HasReadbackQueue() &&
+        !BbToggle::Disabled(BbToggle::ReadbackQueue)) {
         if (!write_done) {
             device.Wait(write_tick);
         }
-        {
-            std::scoped_lock lk{fast_readback_mutex};
-            if (const u8* data = readback.Copy(arena, copies, total_size_bytes,
-                                               scheduler.GetWorkSemaphore()->Handle(),
-                                               write_tick)) {
-                write_back(data, 0);
-                fast = true;
-            }
-        }
+        fast = device.ReadBackAfter(arena->Native(), copies, total_size_bytes, write_tick,
+                                    [&](const u8* data) { write_back(data, 0); });
     }
     if (!fast) {
         const auto download =
@@ -1785,9 +1647,9 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
     }
     boost::container::small_vector<Backend::BufferCopy, 8> copies;
     const auto staging =
-        staging_pool.Request(total_blocks * sizeof(vk::DeviceAddress), MemoryType::HostUncached);
+        staging_pool.Request(total_blocks * sizeof(u64), MemoryType::HostUncached);
     ArenaBinds* arena_binds = BindsForArena(arena);
-    auto* bda_addrs = reinterpret_cast<vk::DeviceAddress*>(staging.mapped);
+    auto* bda_addrs = reinterpret_cast<u64*>(staging.mapped);
     u64 offset = staging.offset;
     for (const auto& bind : binds) {
         Backing backing;
@@ -1806,8 +1668,8 @@ void BufferCache::EnsureResident(const Buffer* arena, u64 first_block, u64 last_
         for (u64 block = 0; block < sparse.size; block += block_size) {
             *(bda_addrs++) = arena->BufferDeviceAddress() + sparse.resourceOffset + block;
         }
-        const u64 copy_size = (bind.end - bind.start) * sizeof(vk::DeviceAddress);
-        copies.emplace_back(offset, bind.start * sizeof(vk::DeviceAddress), copy_size);
+        const u64 copy_size = (bind.end - bind.start) * sizeof(u64);
+        copies.emplace_back(offset, bind.start * sizeof(u64), copy_size);
         offset += copy_size;
     }
 
@@ -3799,7 +3661,7 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
     }
     // Each block's entry is where its first byte of the range would be in the pool: a block shared
     // by two mappings (64 KiB blocks, 16 KiB guest pages) points at the one requested here.
-    std::vector<std::pair<u64, vk::DeviceAddress>> entries;
+    std::vector<std::pair<u64, u64>> entries;
     unified_table_blocks.ForEachGap(first, last + 1, [&](u64 start, u64 end) {
         for (u64 block = start; block < end; ++block) {
             const VAddr at = std::max<VAddr>(block << block_shift, addr);
@@ -3820,14 +3682,14 @@ void BufferCache::UnifiedPageTable(VAddr addr, u64 size) {
     }
     // Written in place (host-visible table): read by commands recorded after this, submitted
     // after these host writes.
-    auto* table = reinterpret_cast<vk::DeviceAddress*>(bda_pagetable_buffer->mapped_data.data());
+    auto* table = reinterpret_cast<u64*>(bda_pagetable_buffer->mapped_data.data());
     for (const auto& [block, address] : entries) {
         table[block] = address;
         unified_table_blocks.Add({block, block + 1});
     }
-    bda_pagetable_buffer->Flush(entries.front().first * sizeof(vk::DeviceAddress),
+    bda_pagetable_buffer->Flush(entries.front().first * sizeof(u64),
                                 (entries.back().first - entries.front().first + 1) *
-                                    sizeof(vk::DeviceAddress));
+                                    sizeof(u64));
 }
 
 void BufferCache::ProcessUnifiedUnmaps() {
@@ -3843,10 +3705,10 @@ void BufferCache::ProcessUnifiedUnmaps() {
     for (const auto& [addr, size] : unmaps) {
         const u64 first = addr >> block_shift, last = (addr + size - 1) >> block_shift;
         unified_table_blocks.Subtract(first, last + 1);
-        std::memset(bda_pagetable_buffer->mapped_data.data() + first * sizeof(vk::DeviceAddress), 0,
-                    (last - first + 1) * sizeof(vk::DeviceAddress));
-        bda_pagetable_buffer->Flush(first * sizeof(vk::DeviceAddress),
-                                    (last - first + 1) * sizeof(vk::DeviceAddress));
+        std::memset(bda_pagetable_buffer->mapped_data.data() + first * sizeof(u64), 0,
+                    (last - first + 1) * sizeof(u64));
+        bda_pagetable_buffer->Flush(first * sizeof(u64),
+                                    (last - first + 1) * sizeof(u64));
     }
 }
 

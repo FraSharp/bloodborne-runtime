@@ -29,10 +29,18 @@ class BackendDevice final : public VideoCore::Backend::Device {
 public:
     BackendDevice(Frontend::WindowSDL& window, s32 physical_device_index, bool enable_validation,
                   bool enable_crash_diagnostic);
+    ~BackendDevice() override;
+
+    [[nodiscard]] bool HasReadbackQueue() const noexcept override;
+    [[nodiscard]] bool ReadBackAfter(u64 buffer,
+                                     std::span<const VideoCore::Backend::BufferCopy> copies,
+                                     u64 total, u64 tick,
+                                     const std::function<void(const u8*)>& use) override;
 
     [[nodiscard]] VideoCore::Backend::Api GetApi() const noexcept override {
         return VideoCore::Backend::Api::Vulkan;
     }
+    [[nodiscard]] Shader::Profile ShaderProfile() const override;
     [[nodiscard]] const VideoCore::Backend::Capabilities& GetCapabilities() const noexcept override {
         return capabilities;
     }
@@ -174,6 +182,9 @@ private:
 
     // No VkPipelineCache: it was never saved, and pipelines loaded from the shader cache (what
     // persists) never had one.
+
+    std::mutex readback_mutex;
+    std::unique_ptr<class FastReadback> readback; ///< made on first use
 
     std::mutex objects_mutex;
     VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
