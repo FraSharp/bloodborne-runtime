@@ -8,9 +8,12 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <mutex>
+#include <set>
 
 #include "common/assert.h"
 #include "video_core/renderer_backend/device.h"
+#include "video_core/renderer_metal/vk_to_mtl.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include <vulkan/vulkan_metal.h>
 
@@ -63,10 +66,72 @@ Buffer NewBuffer(u64 size, Storage storage) {
             storage == Storage::Private ? nullptr : buffer.contents};
 }
 
+Texture NewTexture(const TextureDesc& desc) {
+    namespace VkToMtl = Metal::VkToMtl;
+    const auto format = static_cast<vk::Format>(desc.vk_format);
+    const u32 pixel_format = VkToMtl::PixelFormat(format);
+    if (pixel_format == 0 || !VkToMtl::IsExactPixelFormat(format) ||
+        !(VkToMtl::FormatSwizzle(format) == VkToMtl::IdentitySwizzle)) {
+        // Made by MoltenVK instead; each format named once.
+        static std::mutex mutex;
+        static std::set<u32> named;
+        std::scoped_lock lock{mutex};
+        if (named.insert(desc.vk_format).second) {
+            std::printf("Render adapter: images of format %u made by MoltenVK (no exact Metal "
+                        "format)\n",
+                        desc.vk_format);
+        }
+        return {};
+    }
+    MTLTextureDescriptor* td = [MTLTextureDescriptor new];
+    const bool array = desc.layers > 1;
+    // 1D images are 2D textures one texel high, as MoltenVK makes them (its texture1DAs2D
+    // default): its views of them are 2D.
+    switch (desc.type) {
+    case 3:
+        td.textureType = MTLTextureType3D;
+        break;
+    default:
+        td.textureType = desc.samples > 1
+                             ? (array ? MTLTextureType2DMultisampleArray : MTLTextureType2DMultisample)
+                             : (array ? MTLTextureType2DArray : MTLTextureType2D);
+        break;
+    }
+    td.pixelFormat = static_cast<MTLPixelFormat>(pixel_format);
+    td.width = desc.width;
+    td.height = desc.height;
+    td.depth = desc.depth;
+    td.mipmapLevelCount = desc.levels;
+    td.arrayLength = desc.layers;
+    td.sampleCount = desc.samples;
+    td.storageMode = MTLStorageModePrivate;
+    MTLTextureUsage usage = MTLTextureUsageUnknown;
+    if (desc.shader_read) {
+        usage |= MTLTextureUsageShaderRead;
+    }
+    if (desc.shader_write) {
+        usage |= MTLTextureUsageShaderWrite;
+    }
+    if (desc.render_target) {
+        usage |= MTLTextureUsageRenderTarget;
+    }
+    if (desc.format_views) {
+        usage |= MTLTextureUsagePixelFormatView;
+    }
+    td.usage = usage;
+    id<MTLTexture> texture = [mtl_device newTextureWithDescriptor:td];
+    if (!texture) {
+        return {};
+    }
+    static std::once_flag first;
+    std::call_once(first, [] { std::printf("Render adapter: images made in Metal\n"); });
+    return {(__bridge_retained void*)texture, u64(texture.allocatedSize)};
+}
+
 void Release(void* object) {
     if (object) {
-        id<MTLBuffer> buffer = (__bridge_transfer id<MTLBuffer>)object;
-        buffer = nil;
+        id<MTLResource> resource = (__bridge_transfer id<MTLResource>)object;
+        resource = nil;
     }
 }
 

@@ -29,10 +29,11 @@ struct UniqueImage {
     UniqueImage& operator=(const UniqueImage&) = delete;
 
     UniqueImage(UniqueImage&& other)
-        : allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
+        : device{other.device}, allocator{std::exchange(other.allocator, VK_NULL_HANDLE)},
           allocation{std::exchange(other.allocation, VK_NULL_HANDLE)},
           image{std::exchange(other.image, VK_NULL_HANDLE)}, image_ci{std::move(other.image_ci)},
-          size_bytes{std::exchange(other.size_bytes, 0)} {}
+          size_bytes{std::exchange(other.size_bytes, 0)},
+          metal_texture{std::exchange(other.metal_texture, nullptr)} {}
     UniqueImage& operator=(UniqueImage&& other) {
         if (this == &other) return *this;
         Destroy();
@@ -42,10 +43,14 @@ struct UniqueImage {
         allocation = std::exchange(other.allocation, VK_NULL_HANDLE);
         image_ci = std::move(other.image_ci);
         size_bytes = std::exchange(other.size_bytes, 0);
+        metal_texture = std::exchange(other.metal_texture, nullptr);
         return *this;
     }
 
     void Create(const vk::ImageCreateInfo& image_ci);
+    /// BB_GFX_BACKEND=metal (M1): the image is a Metal texture made by the backend and imported
+    /// into MoltenVK. False (nothing made) for an image Metal cannot make exactly.
+    bool CreateInMetal(const vk::ImageCreateInfo& image_ci);
 
     void Destroy();
 
@@ -64,6 +69,7 @@ public:
     vk::Image image{};
     vk::ImageCreateInfo image_ci{};
     vk::DeviceSize size_bytes{};
+    void* metal_texture{}; ///< CreateInMetal: its id<MTLTexture>, retained
 };
 
 /// The Vulkan backend's barrier state of one texture-cache image allocation: its layout and last

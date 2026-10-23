@@ -260,10 +260,87 @@ void UniqueImage::Destroy() {
     if (image) {
         BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
         BbMetalResidency::RemoveImage(image);
-        vmaDestroyImage(allocator, image, allocation);
+        if (metal_texture) {
+            device.destroyImage(image);
+            MetalResources::Release(metal_texture);
+            metal_texture = nullptr;
+        } else {
+            vmaDestroyImage(allocator, image, allocation);
+        }
         image = vk::Image{};
         allocation = {};
     }
+}
+
+bool UniqueImage::CreateInMetal(const vk::ImageCreateInfo& image_ci) {
+#ifdef __APPLE__
+    if (!MetalResources::Enabled()) {
+        return false;
+    }
+    constexpr auto unsupported =
+        vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency |
+        vk::ImageCreateFlagBits::eSparseAliased | vk::ImageCreateFlagBits::eCubeCompatible |
+        vk::ImageCreateFlagBits::e2DArrayCompatible |
+        vk::ImageCreateFlagBits::eBlockTexelViewCompatible |
+        vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
+    if ((image_ci.flags & unsupported) || image_ci.tiling != vk::ImageTiling::eOptimal) {
+        return false;
+    }
+    using Usage = vk::ImageUsageFlagBits;
+    const auto usage = image_ci.usage;
+    const VkFormat format = static_cast<VkFormat>(image_ci.format);
+    // Block-compressed formats are never render targets.
+    const bool compressed =
+        format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK && format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK;
+    const bool attachment =
+        bool(usage & (Usage::eColorAttachment | Usage::eDepthStencilAttachment));
+    const MetalResources::TextureDesc desc{
+        .vk_format = u32(format),
+        .type = image_ci.imageType == vk::ImageType::e1D   ? 1u
+                : image_ci.imageType == vk::ImageType::e3D ? 3u
+                                                           : 2u,
+        .width = image_ci.extent.width,
+        .height = image_ci.extent.height,
+        .depth = image_ci.extent.depth,
+        .levels = image_ci.mipLevels,
+        .layers = image_ci.arrayLayers,
+        .samples = u32(image_ci.samples),
+        .shader_read = bool(usage & (Usage::eSampled | Usage::eInputAttachment | Usage::eStorage |
+                                     Usage::eTransferSrc | Usage::eTransferDst)),
+        .shader_write = bool(usage & Usage::eStorage),
+        // MoltenVK clears and some copies through render passes.
+        .render_target = attachment || (!compressed && bool(usage & Usage::eTransferDst)),
+        .format_views = bool(image_ci.flags & vk::ImageCreateFlagBits::eMutableFormat) ||
+                        image_ci.arrayLayers > 1,
+    };
+    const auto texture = MetalResources::NewTexture(desc);
+    if (!texture.object) {
+        return false;
+    }
+    const VkImportMetalTextureInfoEXT import_info{
+        .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_TEXTURE_INFO_EXT,
+        .pNext = image_ci.pNext,
+        .plane = VK_IMAGE_ASPECT_PLANE_0_BIT,
+        .mtlTexture = static_cast<MTLTexture_id>(texture.object),
+    };
+    vk::ImageCreateInfo create_info = image_ci;
+    create_info.pNext = &import_info;
+    const auto [result, created] = device.createImage(create_info);
+    if (result != vk::Result::eSuccess) {
+        MetalResources::Release(texture.object);
+        return false;
+    }
+    // The texture is the image's memory: MoltenVK binds none to an imported texture.
+    this->image_ci = image_ci;
+    image = created;
+    metal_texture = texture.object;
+    size_bytes = texture.size_bytes;
+    BbMetalResidency::AddImage(image);
+    BbStats::vk_image_bytes.fetch_add(size_bytes, std::memory_order_relaxed);
+    return true;
+#else
+    return false;
+#endif
 }
 
 void UniqueImage::Create(const vk::ImageCreateInfo& image_ci) {

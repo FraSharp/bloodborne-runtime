@@ -273,7 +273,9 @@ Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& de
                                                     std::string_view name) {
     auto record = std::make_unique<ImageRecord>();
     record->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
-    record->image.Create(ImageCreateInfo(desc));
+    if (const auto create_info = ImageCreateInfo(desc); !record->image.CreateInMetal(create_info)) {
+        record->image.Create(create_info);
+    }
     SetObjectName(instance.GetDevice(), record->image.image, name);
     Backend::ImageAllocation result{
         .native = reinterpret_cast<u64>(static_cast<VkImage>(record->image.image)),

@@ -21,6 +21,24 @@ struct Buffer {
     void* contents{};
 };
 
+/// A texture as a Vulkan image describes it (`vk_format`: a VkFormat; `type`: 1, 2 or 3
+/// dimensions).
+struct TextureDesc {
+    u32 vk_format{};
+    u32 type{2};
+    u32 width{1}, height{1}, depth{1};
+    u32 levels{1}, layers{1}, samples{1};
+    bool shader_read{}, shader_write{}, render_target{};
+    bool format_views{}; ///< views in other formats or of another type
+};
+
+/// A Metal texture (id<MTLTexture>, retained, private storage); `object` is null when Metal has
+/// no texture exactly like the Vulkan image (its format substituted or swizzled).
+struct Texture {
+    void* object{};
+    u64 size_bytes{};
+};
+
 #ifdef BB_METAL_BACKEND
 /// BB_GFX_BACKEND=metal on the Metal build: buffers are made in Metal.
 bool Enabled();
@@ -28,7 +46,8 @@ bool Enabled();
 void Init(void* device);
 /// A buffer of `size` bytes; fatal when Metal cannot make it.
 Buffer NewBuffer(u64 size, Storage storage);
-/// Gives up a reference taken by NewBuffer.
+Texture NewTexture(const TextureDesc& desc);
+/// Gives up a reference taken by NewBuffer or NewTexture.
 void Release(void* object);
 #else
 inline bool Enabled() {
@@ -36,6 +55,9 @@ inline bool Enabled() {
 }
 inline void Init(void*) {}
 inline Buffer NewBuffer(u64, Storage) {
+    return {};
+}
+inline Texture NewTexture(const TextureDesc&) {
     return {};
 }
 inline void Release(void*) {}

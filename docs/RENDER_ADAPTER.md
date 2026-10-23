@@ -3,7 +3,8 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
-backend). M1 is in progress (buffers made in Metal; images next).
+backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
+Next: M2, the Metal backend's recording.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -146,7 +147,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A4 ✓ | Rasterizer: passes, draws, bindings, dynamic-state block | GPU-thread recording ≤ 5.6 µs per draw (today 5.1–5.6) |
 | A5 ✓ | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
 | A6 ✓ | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
-| M1 | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
+| M1 ✓ | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
 | M3 | MetalFX without input and output copies; FSR 3.1 on Metal or left out on that backend (decision) | Upscalers measured against today |
 | M4 | Metal by default on macOS; MoltenVK and `mtl_vk_layer` removed from the macOS build | Release-candidate play tests pass |
@@ -362,6 +363,20 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   is (imported host memory). Measured with `BB_METAL_FRAME=1`: 38.6 FPS, 4.0 µs per draw, the
   frame correct; Metal API validation without new messages, 400 Metal pipelines built; on
   MoltenVK's recording with FSR 3.1, 35.5 ms median (35.2–35.6 with Vulkan-made buffers).
+- **M1, images:** images are `MTLTexture`s (private storage) imported into MoltenVK
+  (`VkImportMetalTextureInfoEXT`; MoltenVK binds no memory to them), made as MoltenVK would make
+  them: 1D images as 2D textures, views in other formats or of other types allowed for mutable
+  and layered images, render targets for attachments and for transfer destinations of
+  uncompressed formats (MoltenVK clears through render passes). Formats Metal substitutes or
+  swizzles, sparse, cube-compatible, 2D-of-3D and block-view images stay MoltenVK's; in the
+  test run none were. Measured with `BB_METAL_FRAME=1`: 25.9 ms median against 26.0 with
+  MoltenVK's images, 4.1 against 4.2 µs per draw; Metal API validation without new messages,
+  400 Metal pipelines built; on MoltenVK's recording with FSR 3.1, 35.6 ms median; frames
+  correct.
+
+  M1 is done: the game loads a save and plays with `BB_GFX_BACKEND=metal`. Two parts of its
+  plan move to M2, which records in Metal: transfers in Metal (MoltenVK records the copies
+  until then) and heaps (nothing measured needs them before Metal manages its own memory).
 
 ## Decisions
 
