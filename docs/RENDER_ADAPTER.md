@@ -2,8 +2,8 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders and vertex input
-through the adapter; pipelines from their keys next).
+**State:** approved on 2026-10-22. A0 to A4 are done; A5 is in progress (shaders, vertex input and
+pipelines through the adapter; pipelines owning their shaders next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -110,8 +110,8 @@ semaphores above the backend.
 A shader is created from SPIR-V plus its binding layout (the recompiler's `Info`). The Metal
 backend converts it with SPIRV-Cross and applies the rect-list, tessellation and geometry
 rewrites, as today. Pipelines are created from backend-neutral descriptions (today's
-`vk_pipeline_key.h` holds no Vulkan handles already). Each backend keeps its own on-disk cache:
-Vulkan's pipeline cache, Metal's binary archive. N2 later replaces the SPIR-V input with
+`vk_pipeline_key.h` holds no Vulkan handles already). The shader cache (keys, SPIR-V and
+pipeline data) is shared; the Metal backend adds its binary archive. N2 later replaces the SPIR-V input with
 shaders converted ahead of time.
 
 Pipelines own their shaders, so a shader is freed when its last pipeline is freed. That closes
@@ -278,6 +278,18 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   the Vulkan backend converts straight into the recording chunk. The rasterizer records no
   Vulkan call of its own now. Measured: 38.9 FPS against 38.8, 4.05 µs per draw against 4.1,
   the frame correct.
+
+- **A5, pipelines:** game pipelines are made by `Device::CreateGraphicsPipeline` and
+  `CreateComputePipeline` from descriptions (`renderer_backend/pipeline.h`: stages with their
+  shader handles, binding slots and push constants, vertex input, topology, rasterization,
+  sample counts, color targets with their blending, depth and stencil formats, logic op) and
+  freed through `DestroyPipeline`. `GraphicsPipeline` and `ComputePipeline` turn the guest key
+  into a description; the Vulkan backend (`vk_backend_pipeline.cpp`) makes the set layout,
+  pipeline layout and pipeline, and keeps them in a record the descriptor pushes read. The
+  fixed-quad vertex shaders are made through the device too. There is no `VkPipelineCache`: it
+  was never saved, and pipelines loaded from the shader cache never had one. Measured: every
+  pipeline built (400 Metal pipelines, 0 failed), Metal API validation without new messages,
+  37.7 FPS against 37.5 and 4.4 µs per draw against 4.4 (new build first), the frame correct.
 
 ## Decisions
 

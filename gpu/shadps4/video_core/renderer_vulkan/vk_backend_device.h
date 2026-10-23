@@ -80,6 +80,23 @@ public:
     void DestroyShader(VideoCore::Backend::ShaderHandle shader) override;
     [[nodiscard]] u64 NativeHandle(VideoCore::Backend::ShaderHandle shader) override;
 
+    [[nodiscard]] VideoCore::Backend::PipelineAllocation CreateGraphicsPipeline(
+        const VideoCore::Backend::GraphicsPipelineDesc& desc, std::string_view name) override;
+    [[nodiscard]] VideoCore::Backend::PipelineAllocation CreateComputePipeline(
+        const VideoCore::Backend::ComputePipelineDesc& desc, std::string_view name) override;
+    void DestroyPipeline(VideoCore::Backend::PipelineHandle pipeline) override;
+    [[nodiscard]] u64 NativeHandle(VideoCore::Backend::PipelineHandle pipeline) override;
+
+    /// A pipeline with the layouts it was made with, for binding its resources.
+    struct PipelineRecord {
+        vk::UniqueDescriptorSetLayout set_layout;
+        vk::UniquePipelineLayout layout;
+        vk::UniquePipeline pipeline;
+        bool push_descriptors{}; ///< the set is pushed, not allocated
+    };
+    /// Valid until the pipeline is destroyed; null for a stale handle.
+    [[nodiscard]] const PipelineRecord* GetPipelineRecord(VideoCore::Backend::PipelineHandle pipeline);
+
     [[nodiscard]] VideoCore::Backend::SamplerHandle CreateSampler(
         const VideoCore::Backend::SamplerDesc& desc) override;
     void DestroySampler(VideoCore::Backend::SamplerHandle sampler) override;
@@ -104,6 +121,14 @@ private:
     VideoCore::Backend::Capabilities capabilities;
 
     VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
+    /// The set and pipeline layouts of `layout`, in a new record.
+    std::unique_ptr<PipelineRecord> MakePipelineLayout(const VideoCore::Backend::BindingLayout& layout,
+                                                       vk::ShaderStageFlags push_stages,
+                                                       std::string_view name);
+    VideoCore::Backend::PipelineAllocation InsertPipeline(std::unique_ptr<PipelineRecord> record);
+
+    // No VkPipelineCache: it was never saved, and pipelines loaded from the shader cache (what
+    // persists) never had one.
 
     std::mutex objects_mutex;
     VideoCore::Backend::HandleTable<VideoCore::Backend::BufferTag, UniqueBuffer> buffers;
@@ -112,6 +137,8 @@ private:
     VideoCore::Backend::HandleTable<VideoCore::Backend::ImageViewTag, vk::UniqueImageView> views;
     VideoCore::Backend::HandleTable<VideoCore::Backend::SamplerTag, vk::UniqueSampler> samplers;
     VideoCore::Backend::HandleTable<VideoCore::Backend::ShaderTag, vk::UniqueShaderModule> shaders;
+    VideoCore::Backend::HandleTable<VideoCore::Backend::PipelineTag, std::unique_ptr<PipelineRecord>>
+        pipelines;
 };
 
 /// The barrier state of an image backing created by this backend.

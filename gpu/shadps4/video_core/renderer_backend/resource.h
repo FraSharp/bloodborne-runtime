@@ -30,11 +30,13 @@ struct ImageTag;
 struct ImageViewTag;
 struct SamplerTag;
 struct ShaderTag;
+struct PipelineTag;
 using BufferHandle = Handle<BufferTag>;
 using ImageHandle = Handle<ImageTag>;
 using ImageViewHandle = Handle<ImageViewTag>;
 using SamplerHandle = Handle<SamplerTag>;
 using ShaderHandle = Handle<ShaderTag>;
+using PipelineHandle = Handle<PipelineTag>;
 
 enum class MemoryClass : u8 {
     DeviceLocal,
@@ -256,6 +258,10 @@ struct Capabilities {
     float max_sampler_lod_bias{};
     u64 non_coherent_atom_size{1}; ///< granularity of FlushBuffer and InvalidateBuffer
     bool attachment_feedback_loop{}; ///< ImageUse::AttachmentFeedbackLoop is available
+    /// Vertex input is set per draw (CommandRecorder::SetVertexInput), not fixed in pipelines.
+    bool dynamic_vertex_input{};
+    u32 color_sample_counts{1}; ///< render target sample counts, as a mask (bit n: 2^n samples)
+    u32 depth_sample_counts{1};
 };
 
 } // namespace VideoCore::Backend

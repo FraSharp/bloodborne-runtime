@@ -7,7 +7,9 @@
 #include <boost/container/small_vector.hpp>
 #include <boost/container/static_vector.hpp>
 
+#include "shader_recompiler/info.h"
 #include "shader_recompiler/resource.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_pipeline_common.h"
@@ -17,12 +19,43 @@
 namespace Vulkan {
 
 Pipeline::Pipeline(const Instance& instance_, Scheduler& scheduler_, DescriptorHeap& desc_heap_,
-                   const Shader::Profile& profile_, vk::PipelineCache pipeline_cache,
-                   bool is_compute_ /*= false*/)
+                   const Shader::Profile& profile_, bool is_compute_ /*= false*/)
     : instance{instance_}, scheduler{scheduler_}, desc_heap{desc_heap_}, profile{profile_},
       is_compute{is_compute_} {}
 
-Pipeline::~Pipeline() = default;
+Pipeline::~Pipeline() {
+    BackendDevice::From(instance).DestroyPipeline(handle);
+}
+
+void Pipeline::AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,
+                                  BindingSlots& slots) {
+    using VideoCore::Backend::BindingKind;
+    for (size_t i = 0; i < info.buffers.size(); ++i) {
+        slots.push_back({.kind = BindingKind::StorageBuffer, .count = 1, .stages = stage});
+    }
+    for (const auto& image : info.images) {
+        slots.push_back({
+            .kind = image.is_written ? BindingKind::StorageImage : BindingKind::SampledImage,
+            .count = image.NumBindings(info),
+            .stages = stage,
+        });
+    }
+    for (size_t i = 0; i < info.samplers.size(); ++i) {
+        slots.push_back({.kind = BindingKind::Sampler, .count = 1, .stages = stage});
+    }
+}
+
+void Pipeline::Adopt(const VideoCore::Backend::PipelineAllocation& allocation) {
+    const auto* record = BackendDevice::From(instance).GetPipelineRecord(allocation.handle);
+    if (!record) {
+        return;
+    }
+    handle = allocation.handle;
+    pipeline = *record->pipeline;
+    pipeline_layout = *record->layout;
+    desc_layout = *record->set_layout;
+    uses_push_descriptors = record->push_descriptors;
+}
 
 
 void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushData& push_data,
@@ -31,7 +64,7 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     const auto bind_point =
         IsCompute() ? vk::PipelineBindPoint::eCompute : vk::PipelineBindPoint::eGraphics;
     const auto stage_flags = IsCompute() ? vk::ShaderStageFlagBits::eCompute : AllGraphicsStageBits;
-    const vk::PipelineLayout layout = *pipeline_layout;
+    const vk::PipelineLayout layout = pipeline_layout;
     scheduler.Record([layout, stage_flags, push_data](vk::CommandBuffer cmdbuf) {
         cmdbuf.pushConstants(layout, stage_flags, 0u, sizeof(push_data), &push_data);
     });
@@ -127,7 +160,7 @@ void Pipeline::BindResources(DescriptorWrites& set_writes, const Shader::PushDat
     }
 
     // Descriptor set updates are device calls: they stay on this thread.
-    const auto desc_set = desc_heap.Commit(*desc_layout);
+    const auto desc_set = desc_heap.Commit(desc_layout);
     for (auto& set_write : vk_writes) {
         set_write.dstSet = desc_set;
     }

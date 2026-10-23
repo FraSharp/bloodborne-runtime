@@ -103,6 +103,10 @@ alternating runs (A, B, A, B) at the same place with the same save and settings:
 p90, game CPU (100% is one core) and the GPU thread's time per draw (`GPU thread us/draw` in the
 log). A healthy run in the Hunter's Dream on an M3 Pro is about 58–62 FPS.
 
+Runs back to back are not equal: the second of a pair reads about 5% more GPU-thread time per
+draw as the Mac warms up (three base-then-new pairs showed a 5% difference that a new-then-base
+pair did not, 4.42 against 4.36 us). Alternate which build goes first before calling a cost.
+
 - Metal System Traces: `TRACE=1`, read with `tools/mst_summary.py`, `tools/mst_passes.py TRACE
   --complete-frames` and `tools/mst_shaders.py`. `xctrace` needs
   `DEVELOPER_DIR=/Applications/Xcode.app/Contents/Developer`; recordings take over a minute to

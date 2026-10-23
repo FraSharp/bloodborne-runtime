@@ -244,6 +244,9 @@ Backend::Capabilities QueryResourceCapabilities(const Instance &instance) {
                                     : 1.0f,
       .max_sampler_lod_bias = instance.MaxSamplerLodBias(),
       .attachment_feedback_loop = instance.IsAttachmentFeedbackLoopLayoutSupported(),
+      .dynamic_vertex_input = instance.IsVertexInputDynamicState(),
+      .color_sample_counts = u32(instance.GetColorSampleCounts()),
+      .depth_sample_counts = u32(instance.GetDepthSampleCounts()),
   };
 }
 

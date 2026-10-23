@@ -12,6 +12,7 @@
 
 #include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/pass.h"
+#include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
@@ -118,6 +119,14 @@ static_assert(sizeof(Backend::Viewport) == sizeof(VkViewport) &&
 static_assert(sizeof(Backend::Rect2D) == sizeof(VkRect2D) &&
               offsetof(Backend::Rect2D, x) == offsetof(VkRect2D, offset) &&
               offsetof(Backend::Rect2D, width) == offsetof(VkRect2D, extent));
+static_assert(u32(vk::ShaderStageFlagBits::eVertex) == u32(Backend::ShaderStage::Vertex) &&
+              u32(vk::ShaderStageFlagBits::eTessellationControl) ==
+                  u32(Backend::ShaderStage::TessellationControl) &&
+              u32(vk::ShaderStageFlagBits::eTessellationEvaluation) ==
+                  u32(Backend::ShaderStage::TessellationEvaluation) &&
+              u32(vk::ShaderStageFlagBits::eGeometry) == u32(Backend::ShaderStage::Geometry) &&
+              u32(vk::ShaderStageFlagBits::eFragment) == u32(Backend::ShaderStage::Fragment) &&
+              u32(vk::ShaderStageFlagBits::eCompute) == u32(Backend::ShaderStage::Compute));
 // Pipeline keys hold write masks; the serialized shader cache depends on their size.
 static_assert(sizeof(Backend::ColorWriteMask) == sizeof(vk::ColorComponentFlags));
 
@@ -256,6 +265,9 @@ template <typename Range>
 }
 [[nodiscard]] constexpr vk::ImageLayout ToVkImageLayout(u32 layout) noexcept {
     return static_cast<vk::ImageLayout>(layout);
+}
+[[nodiscard]] constexpr vk::ShaderStageFlags ToVk(Backend::ShaderStage v) noexcept {
+    return vk::ShaderStageFlags{static_cast<u32>(v)};
 }
 [[nodiscard]] constexpr vk::ColorComponentFlags ToVk(Backend::ColorWriteMask v) noexcept {
     return vk::ColorComponentFlags(static_cast<VkColorComponentFlags>(v));

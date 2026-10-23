@@ -8,6 +8,7 @@
 
 #include "common/types.h"
 #include "common/unique_function.h"
+#include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_backend/resource.h"
 
 namespace VideoCore::Backend {
@@ -73,6 +74,13 @@ public:
                                                         std::string_view name) = 0;
     virtual void DestroyShader(ShaderHandle shader) = 0;
 
+    /// Pipelines from their descriptions (the shaders are the caller's and outlive them).
+    [[nodiscard]] virtual PipelineAllocation CreateGraphicsPipeline(
+        const GraphicsPipelineDesc& desc, std::string_view name) = 0;
+    [[nodiscard]] virtual PipelineAllocation CreateComputePipeline(
+        const ComputePipelineDesc& desc, std::string_view name) = 0;
+    virtual void DestroyPipeline(PipelineHandle pipeline) = 0;
+
     [[nodiscard]] virtual SamplerHandle CreateSampler(const SamplerDesc& desc) = 0;
     virtual void DestroySampler(SamplerHandle sampler) = 0;
 
@@ -84,6 +92,7 @@ public:
     [[nodiscard]] virtual u64 NativeHandle(ImageHandle image) = 0;
     [[nodiscard]] virtual u64 NativeHandle(ImageViewHandle view) = 0;
     [[nodiscard]] virtual u64 NativeHandle(ShaderHandle shader) = 0;
+    [[nodiscard]] virtual u64 NativeHandle(PipelineHandle pipeline) = 0;
 };
 
 } // namespace VideoCore::Backend

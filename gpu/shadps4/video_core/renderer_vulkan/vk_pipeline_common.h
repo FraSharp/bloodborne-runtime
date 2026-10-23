@@ -6,6 +6,7 @@
 #include "shader_recompiler/profile.h"
 #include "shader_recompiler/runtime_info.h"
 #include "video_core/renderer_backend/binding.h"
+#include "video_core/renderer_backend/pipeline.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
 #include <boost/container/small_vector.hpp>
@@ -26,19 +27,20 @@ class Instance;
 class Scheduler;
 class DescriptorHeap;
 
+/// A guest pipeline, made by the render adapter's device from its description (A5).
 class Pipeline {
 public:
     Pipeline(const Instance& instance, Scheduler& scheduler, DescriptorHeap& desc_heap,
-             const Shader::Profile& profile, vk::PipelineCache pipeline_cache,
-             bool is_compute = false);
+             const Shader::Profile& profile, bool is_compute = false);
     virtual ~Pipeline();
 
+    /// Empty when the driver rejected the pipeline: its draws are skipped.
     vk::Pipeline Handle() const noexcept {
-        return *pipeline;
+        return pipeline;
     }
 
     vk::PipelineLayout GetLayout() const noexcept {
-        return *pipeline_layout;
+        return pipeline_layout;
     }
 
     auto GetStages() const {
@@ -67,15 +69,25 @@ public:
                        std::span<const VideoCore::Backend::BufferBinding> buffer_infos = {}) const;
 
 protected:
+    using BindingSlots = boost::container::small_vector<VideoCore::Backend::BindingSlot, 32>;
+
     [[nodiscard]] std::string GetDebugString() const;
+    /// The binding slots of a stage's resources, in the order the recompiler numbers them:
+    /// buffers, images, samplers.
+    static void AppendBindingSlots(const Shader::Info& info, VideoCore::Backend::ShaderStage stage,
+                                   BindingSlots& slots);
+    /// Takes the pipeline the device made (nothing for an empty allocation).
+    void Adopt(const VideoCore::Backend::PipelineAllocation& allocation);
 
     const Instance& instance;
     Scheduler& scheduler;
     DescriptorHeap& desc_heap;
     const Shader::Profile& profile;
-    vk::UniquePipeline pipeline;
-    vk::UniquePipelineLayout pipeline_layout;
-    vk::UniqueDescriptorSetLayout desc_layout;
+    VideoCore::Backend::PipelineHandle handle;
+    // The device's objects (BackendDevice::PipelineRecord), valid while `handle` is.
+    vk::Pipeline pipeline;
+    vk::PipelineLayout pipeline_layout;
+    vk::DescriptorSetLayout desc_layout;
     std::array<const Shader::Info*, Shader::MaxStageTypes> stages{};
     bool uses_push_descriptors{};
     bool is_compute;

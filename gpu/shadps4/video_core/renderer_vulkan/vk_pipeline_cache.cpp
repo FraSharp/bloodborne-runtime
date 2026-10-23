@@ -433,11 +433,6 @@ PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
         .buffer_copy_shader_hash = Game::BufferCopyShader(),
     };
     WarmUp();
-
-    auto [cache_result, cache] = instance.GetDevice().createPipelineCacheUnique({});
-    ASSERT_MSG(cache_result == vk::Result::eSuccess, "Failed to create pipeline cache: {}",
-               vk::to_string(cache_result));
-    pipeline_cache = std::move(cache);
 }
 
 
@@ -616,12 +611,12 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         ++g_bb_compiles;
         compiler->Submit([this, job, key = sel.graphics_key, infos = sel.infos,
                           runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
-                          modules = sel.modules]() mutable {
+                          modules = sel.modules, shaders = ShaderHandles(sel.modules)]() mutable {
             GraphicsPipeline::SerializationSupport sdata{};
             MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, key, *pipeline_cache, infos,
-                runtime_infos, fetch, modules, sdata, false);
+                instance, scheduler, desc_heap, profile, key, infos, runtime_infos, fetch,
+                shaders, sdata, false);
             MetalShadow::GraphicsFromVulkan(key, modules, infos, runtime_infos, sdata, pipeline);
             std::scoped_lock lk{job->mutex};
             job->pipeline = std::move(pipeline);
@@ -642,8 +637,8 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<GraphicsPipeline>(
-                instance, scheduler, desc_heap, profile, sel.graphics_key, *pipeline_cache,
-                sel.infos, sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
+                instance, scheduler, desc_heap, profile, sel.graphics_key, sel.infos,
+                sel.runtime_infos, sel.fetch_shader, ShaderHandles(sel.modules), sdata, false);
         }
         MetalShadow::GraphicsFromVulkan(sel.graphics_key, sel.modules, sel.infos,
                                         sel.runtime_infos, sdata, it.value());
@@ -754,8 +749,8 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<ComputePipeline>(
-                instance, scheduler, desc_heap, profile, *pipeline_cache, compute_key,
-                *sel.infos[0], sel.modules[0], sdata, false);
+                instance, scheduler, desc_heap, profile, compute_key, *sel.infos[0],
+                ShaderHandles(sel.modules)[0], sdata, false);
         }
         if (MetalShadow::Enabled()) {
             MetalShadow::Compute(compute_key, sel.modules[0], it.value()->Handle());
@@ -1257,18 +1252,15 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
                                                          vertex_runtime, profile);
                 auto spv = Shader::Backend::SPIRV::EmitSPIRV(profile, vertex_runtime, ir,
                                                               vertex_binding);
-                const vk::ShaderModuleCreateInfo create_info{
-                    .codeSize = spv.size() * sizeof(u32), .pCode = spv.data()};
-                auto [result, unique] = instance.GetDevice().createShaderModuleUnique(create_info);
-                ASSERT_MSG(result == vk::Result::eSuccess,
-                           "Failed to compile fixed quad vertex shader: {}", vk::to_string(result));
-                module = fixed_quad_modules.emplace(module_key, std::move(unique)).first;
+                module = fixed_quad_modules
+                             .emplace(module_key, MakeShader(spv, "fixed quad vertex shader"))
+                             .first;
             }
             key.fixed_quad_outer = outer;
             key.prim_type = AmdGpu::PrimitiveType::TriangleList;
             sel.runtime_infos[ds_index].fixed_quad_vertex = true;
             sel.runtime_infos[ds_index].fixed_quad_vertex_count = 0;
-            sel.modules[ds_index] = *module->second;
+            sel.modules[ds_index] = module->second;
             sel.modules[hs_index] = nullptr;
             sel.modules[ls_index] = nullptr;
         }
@@ -1484,6 +1476,22 @@ vk::ShaderModule PipelineCache::MakeShader(std::span<const u32> spirv, std::stri
 void PipelineCache::AdoptShader(const VideoCore::Backend::ShaderAllocation& shader) {
     std::scoped_lock lock{shader_handles_mutex};
     shader_handles[shader.native] = shader.handle;
+}
+
+std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> PipelineCache::ShaderHandles(
+    std::span<const vk::ShaderModule> modules) {
+    std::array<VideoCore::Backend::ShaderHandle, MaxShaderStages> handles{};
+    std::scoped_lock lock{shader_handles_mutex};
+    for (size_t i = 0; i < modules.size() && i < handles.size(); ++i) {
+        if (!modules[i]) {
+            continue;
+        }
+        const auto it = shader_handles.find(reinterpret_cast<u64>(static_cast<VkShaderModule>(modules[i])));
+        if (it != shader_handles.end()) {
+            handles[i] = it->second;
+        }
+    }
+    return handles;
 }
 
 void PipelineCache::ReleaseShader(vk::ShaderModule module) {
