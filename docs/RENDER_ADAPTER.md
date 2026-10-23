@@ -3,7 +3,8 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A3 are done; A4 (the rasterizer) is in progress
-(access declarations, bindings and dynamic state done; render passes next).
+(access declarations, bindings, dynamic state and render-pass targets done; draws and
+dispatches as adapter commands next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -247,8 +248,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   (`renderer_backend/pass.h`, laid out like Vulkan's where it matters); the Vulkan scheduler
   converts them when it records. Three alternating Metal pairs: 36.6, 38.0, 38.0 FPS against
   37.2, 37.8, 38.5; recording 4.3–5.3 µs per draw against 4.1–4.2, inside the 5.6 µs budget.
-  Moving the render-pass targets as well cost about 3% in six pairs, for reasons not found yet;
-  that half is not on main.
+- **A4, render-pass targets:** `RenderAttachment` and `RenderState` are the adapter's (the
+  backend's view and its own layout of the image; a target with a clear takes it as its load
+  action); the scheduler converts them when it begins a pass. Measured alone on a quieter Mac:
+  38.5 FPS against 38.4, recording 4.1 µs per draw against 4.2. (Measured together with the
+  dynamic state earlier, the slice looked about 3% slower in six pairs; the cost did not
+  reproduce once the Mac's background load dropped.)
 
 ## Decisions
 

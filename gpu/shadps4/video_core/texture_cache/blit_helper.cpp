@@ -1,6 +1,7 @@
 // SPDX-FileCopyrightText: Copyright 2025 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
@@ -95,8 +96,8 @@ void BlitHelper::ReinterpretColorAsMsDepth(u32 width, u32 height, u32 num_sample
     state.width = width;
     state.height = height;
     state.num_layers = 1;
-    state.depth_stencil_attachment.image_view = depth_view;
-    state.depth_stencil_attachment.image_layout = vk::ImageLayout::eDepthAttachmentOptimal;
+    state.depth_stencil_attachment.image_view = Vulkan::ToNative(depth_view);
+    state.depth_stencil_attachment.image_layout = Vulkan::ToNative(vk::ImageLayout::eDepthAttachmentOptimal);
     state.depth_stencil_attachment.has_depth = true;
     state.depth_stencil_attachment.depth_clear = true;
     scheduler.BeginRendering(state);
@@ -198,8 +199,8 @@ void BlitHelper::CopyBetweenMsImages(u32 width, u32 height, u32 num_samples,
     state.height = height;
     state.num_layers = 1;
     state.num_color_attachments = 1;
-    state.color_attachments[0].image_view = dst_view;
-    state.color_attachments[0].image_layout = vk::ImageLayout::eColorAttachmentOptimal;
+    state.color_attachments[0].image_view = Vulkan::ToNative(dst_view);
+    state.color_attachments[0].image_layout = Vulkan::ToNative(vk::ImageLayout::eColorAttachmentOptimal);
     state.color_attachments[0].is_clear = true;
     scheduler.BeginRendering(state);
 

@@ -4382,7 +4382,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
     VulkanUpscalerTarget redirect{};
     bool color_redirected = false, depth_redirected = false;
     std::pair<u32, u32> guest_extent{1, 1};
-    std::pair<vk::ImageView, vk::ImageLayout> original_color{};
+    std::pair<u64, u32> original_color{}; ///< the target's view and layout (RenderAttachment)
     const auto& regs = Regs();
     const auto& key = pipeline->GetGraphicsKey();
     if (std::popcount(key.mrt_mask & 0x7f) >= 5 && db_desc.first &&
@@ -4518,8 +4518,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         const auto clear_value =
             is_clear ? LiverpoolToVK::ColorBufferClearValue(col_buf) : vk::ClearValue{};
         auto& attachment = state.color_attachments[cb];
-        attachment.image_view = image_view.Handle();
-        attachment.image_layout = ImageStateOf(*image->backing).state.layout;
+        attachment.image_view = Vulkan::ToNative(image_view.Handle());
+        attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image->backing).state.layout);
         attachment.clear_value = clear_value.color.uint32;
         attachment.is_clear = is_clear;
         if (takes_clear) {
@@ -4530,15 +4530,15 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         if (reduced) {
             const auto target = scene_targets->Attachment(image_id, desc.view_info);
-            attachment.image_view = target.view;
-            attachment.image_layout = target.layout;
+            attachment.image_view = Vulkan::ToNative(target.view);
+            attachment.image_layout = Vulkan::ToNative(target.layout);
         }
         image->usage.render_target = 1u;
         if (cb == 0 && color_redirected) {
             guest_extent = {image->info.size.width, image->info.size.height};
             original_color = {attachment.image_view, attachment.image_layout};
-            attachment.image_view = redirect.view;
-            attachment.image_layout = redirect.layout;
+            attachment.image_view = Vulkan::ToNative(redirect.view);
+            attachment.image_layout = Vulkan::ToNative(redirect.layout);
         }
     }
     for (u32 cb = state.num_color_attachments; cb < state.color_attachments.size(); ++cb) {
@@ -4576,8 +4576,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
         state.num_layers = std::min<u32>(state.num_layers, image_view.info.range.extent.layers);
 
         auto& attachment = state.depth_stencil_attachment;
-        attachment.image_view = image_view.Handle();
-        attachment.image_layout = ImageStateOf(*image.backing).state.layout;
+        attachment.image_view = Vulkan::ToNative(image_view.Handle());
+        attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image.backing).state.layout);
         attachment.clear_value = {};
         attachment.is_clear = 0;
 
@@ -4594,8 +4594,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
 
         if (reduced) {
             const auto target = scene_targets->Attachment(image_id, desc.view_info);
-            attachment.image_view = target.view;
-            attachment.image_layout = target.layout;
+            attachment.image_view = Vulkan::ToNative(target.view);
+            attachment.image_layout = Vulkan::ToNative(target.layout);
         }
         image.usage.depth_target = true;
         if (upscaler->Enabled()) {
@@ -4603,8 +4603,8 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             depth_redirected = upscaler->RedirectDepth(image_id, depth_redirect);
             if (depth_redirected) {
                 guest_extent = {image.info.size.width, image.info.size.height};
-                attachment.image_view = depth_redirect.view;
-                attachment.image_layout = depth_redirect.layout;
+                attachment.image_view = Vulkan::ToNative(depth_redirect.view);
+                attachment.image_layout = Vulkan::ToNative(depth_redirect.layout);
                 redirect = depth_redirect;
             }
         }
@@ -4647,9 +4647,9 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             }
             if (depth_redirected) {
                 auto& depth_image = texture_cache.GetImage(db_desc.first);
-                state.depth_stencil_attachment.image_view = 
-                    texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Handle();
-                state.depth_stencil_attachment.image_layout = ImageStateOf(*depth_image.backing).state.layout;
+                state.depth_stencil_attachment.image_view = Vulkan::ToNative(
+                    texture_cache.FindDepthTarget(db_desc.first, db_desc.second).Handle());
+                state.depth_stencil_attachment.image_layout = Vulkan::ToNative(ImageStateOf(*depth_image.backing).state.layout);
             }
         } else {
             state.width = redirect.width;
@@ -4710,7 +4710,7 @@ RenderState Rasterizer::BeginRenderingFull(const GraphicsPipeline* pipeline) {
             auto& attachment = state.color_attachments[cb];
             attachment.is_clear = false;
             attachment.clear_value = {};
-            attachment.image_layout = ImageStateOf(*image.backing).state.layout;
+            attachment.image_layout = Vulkan::ToNative(ImageStateOf(*image.backing).state.layout);
         }
         taken_clears.erase(taken_clears.begin() + k);
     }

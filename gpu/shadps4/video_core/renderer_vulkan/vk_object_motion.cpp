@@ -1,4 +1,5 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
+#include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_object_motion.h"
 
 #include <cstdio>
@@ -230,8 +231,8 @@ void ObjectMotion::Attach(RenderState& state, u32 width, u32 height) {
     Target& target = GetTarget(width, height);
     auto& attachment = state.color_attachments[slot];
     attachment = {};
-    attachment.image_view = *target.view;
-    attachment.image_layout = vk::ImageLayout::eColorAttachmentOptimal;
+    attachment.image_view = Vulkan::ToNative(*target.view);
+    attachment.image_layout = Vulkan::ToNative(vk::ImageLayout::eColorAttachmentOptimal);
     if (!target.written || target.layout != vk::ImageLayout::eColorAttachmentOptimal) {
         // Clear once per frame; later reads must not erase the validity of this history.
         scheduler.EndRendering();

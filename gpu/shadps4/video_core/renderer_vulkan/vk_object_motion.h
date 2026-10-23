@@ -8,6 +8,7 @@
 #pragma once
 
 #include <array>
+#include "video_core/renderer_backend/pass.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/motion_history.h"
 
@@ -17,9 +18,10 @@
 
 namespace Vulkan {
 
+using VideoCore::Backend::RenderState;
+
 class Instance;
 class Scheduler;
-struct RenderState;
 
 class ObjectMotion {
 public:
