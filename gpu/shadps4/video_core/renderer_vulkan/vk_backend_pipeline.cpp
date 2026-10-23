@@ -39,6 +39,9 @@ std::unique_ptr<BackendDevice::PipelineRecord> BackendDevice::MakePipelineLayout
     record->bind_point = push_stages == vk::ShaderStageFlagBits::eCompute
                              ? vk::PipelineBindPoint::eCompute
                              : vk::PipelineBindPoint::eGraphics;
+    if (layout.push_stages != Backend::ShaderStage::None) {
+        push_stages = ToVk(layout.push_stages);
+    }
     record->push_stages = push_stages;
     record->push_descriptors = binding < instance.MaxPushDescriptors();
     const vk::DescriptorSetLayoutCreateInfo set_layout_ci = {
@@ -95,7 +98,8 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
     boost::container::small_vector<vk::VertexInputBindingDescription, 16> bindings;
     boost::container::small_vector<vk::VertexInputAttributeDescription, 16> attributes;
     boost::container::small_vector<vk::VertexInputBindingDivisorDescriptionEXT, 16> divisors;
-    const bool dynamic_vertex_input = instance.IsVertexInputDynamicState();
+    const bool host = desc.host_pass;
+    const bool dynamic_vertex_input = !host && instance.IsVertexInputDynamicState();
     if (!dynamic_vertex_input) {
         for (const auto& binding : desc.vertex_bindings) {
             const bool per_instance = binding.input_rate == Backend::VertexInputRate::Instance;
@@ -139,10 +143,12 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
 
     vk::StructureChain raster_chain = {
         vk::PipelineRasterizationStateCreateInfo{
-            .depthClampEnable =
-                desc.depth_clamp && (!desc.depth_clip || instance.IsDepthClipEnableSupported()),
+            .depthClampEnable = !host && desc.depth_clamp &&
+                                (!desc.depth_clip || instance.IsDepthClipEnableSupported()),
             .rasterizerDiscardEnable = false,
             .polygonMode = ToVk(desc.polygon_mode),
+            .cullMode = host ? ToVk(desc.cull_mode) : vk::CullModeFlags{},
+            .frontFace = host ? ToVk(desc.front_face) : vk::FrontFace{},
             .lineWidth = 1.0f,
         },
         vk::PipelineRasterizationProvokingVertexStateCreateInfoEXT{
@@ -154,10 +160,10 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
             .depthClipEnable = desc.depth_clip,
         },
     };
-    if (!instance.IsProvokingVertexSupported()) {
+    if (host || !instance.IsProvokingVertexSupported()) {
         raster_chain.unlink<vk::PipelineRasterizationProvokingVertexStateCreateInfoEXT>();
     }
-    if (!instance.IsDepthClipEnableSupported()) {
+    if (host || !instance.IsDepthClipEnableSupported()) {
         raster_chain.unlink<vk::PipelineRasterizationDepthClipStateCreateInfoEXT>();
     }
 
@@ -170,9 +176,14 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         .negativeOneToOne = desc.clip_negative_one_to_one,
     };
     const vk::PipelineViewportStateCreateInfo viewport_info = {
-        .pNext = instance.IsDepthClipControlSupported() ? &clip_control : nullptr,
+        .pNext = !host && instance.IsDepthClipControlSupported() ? &clip_control : nullptr,
+        .viewportCount = host ? 1U : 0U,
+        .scissorCount = host ? 1U : 0U,
     };
 
+    // A host pass: one viewport and one scissor per draw.
+    constexpr std::array host_dynamic_states = {vk::DynamicState::eViewport,
+                                                vk::DynamicState::eScissor};
     boost::container::static_vector<vk::DynamicState, 32> dynamic_states = {
         vk::DynamicState::eViewportWithCount,  vk::DynamicState::eScissorWithCount,
         vk::DynamicState::eBlendConstants,     vk::DynamicState::eDepthTestEnable,
@@ -197,8 +208,9 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         dynamic_states.push_back(vk::DynamicState::eVertexInputBindingStride);
     }
     const vk::PipelineDynamicStateCreateInfo dynamic_info = {
-        .dynamicStateCount = static_cast<u32>(dynamic_states.size()),
-        .pDynamicStates = dynamic_states.data(),
+        .dynamicStateCount =
+            static_cast<u32>(host ? host_dynamic_states.size() : dynamic_states.size()),
+        .pDynamicStates = host ? host_dynamic_states.data() : dynamic_states.data(),
     };
 
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
@@ -214,7 +226,8 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
             ++shader->holders;
             record->shaders.push_back(stage.shader);
             shader_stages.push_back({
-                .pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr,
+                .pNext = !host && instance.IsSubgroupSize64Supported() ? &subgroup_size_ci
+                                                                       : nullptr,
                 .stage = vk::ShaderStageFlagBits(u32(stage.stage)),
                 .module = *shader->module,
                 .pName = "main",
@@ -245,7 +258,7 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
             .dstAlphaBlendFactor = ToVk(target.dst_alpha),
             .alphaBlendOp = ToVk(target.alpha_op),
             // With a dynamic write mask, the draw's mask applies (the rasterizer sets it).
-            .colorWriteMask = instance.IsDynamicColorWriteMaskSupported()
+            .colorWriteMask = !host && instance.IsDynamicColorWriteMaskSupported()
                                   ? ToVk(Backend::ColorWriteMask::All)
                                   : ToVk(target.write_mask),
         };
@@ -256,14 +269,14 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         .depthStencilAttachmentSamples = vk::SampleCountFlagBits(desc.depth_samples),
     };
     const vk::PipelineRenderingCreateInfo rendering_ci = {
-        .pNext = instance.IsMixedDepthSamplesSupported() ? &mixed_samples : nullptr,
+        .pNext = !host && instance.IsMixedDepthSamplesSupported() ? &mixed_samples : nullptr,
         .colorAttachmentCount = num_targets,
         .pColorAttachmentFormats = color_formats.data(),
         .depthAttachmentFormat = ToVk(desc.depth_format),
         .stencilAttachmentFormat = ToVk(desc.stencil_format),
     };
     const vk::PipelineColorBlendStateCreateInfo color_blending = {
-        .logicOpEnable = instance.IsLogicOpSupported() && desc.logic_op_enable,
+        .logicOpEnable = !host && instance.IsLogicOpSupported() && desc.logic_op_enable,
         .logicOp = ToVk(desc.logic_op),
         .attachmentCount = num_targets,
         .pAttachments = blend_states.data(),
@@ -279,12 +292,13 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         .pStages = shader_stages.data(),
         .pVertexInputState = dynamic_vertex_input ? nullptr : &vertex_input_info,
         .pInputAssemblyState = &input_assembly,
-        .pTessellationState = &tessellation_state,
+        .pTessellationState = host ? nullptr : &tessellation_state,
         .pViewportState = &viewport_info,
         .pRasterizationState = &raster_chain.get(),
         .pMultisampleState = &multisampling,
-        .pDepthStencilState =
-            !instance.IsExtendedDynamicState3Supported() ? &depth_stencil_info : nullptr,
+        .pDepthStencilState = !host && !instance.IsExtendedDynamicState3Supported()
+                                  ? &depth_stencil_info
+                                  : nullptr,
         .pColorBlendState = &color_blending,
         .pDynamicState = &dynamic_info,
         .layout = *record->layout,
@@ -324,7 +338,9 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
     const vk::ComputePipelineCreateInfo pipeline_ci = {
         .stage =
             {
-                .pNext = instance.IsSubgroupSize64Supported() ? &subgroup_size_ci : nullptr,
+                .pNext = !desc.host_pass && instance.IsSubgroupSize64Supported()
+                             ? &subgroup_size_ci
+                             : nullptr,
                 .stage = vk::ShaderStageFlagBits::eCompute,
                 .module = module,
                 .pName = "main",

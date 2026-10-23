@@ -41,10 +41,11 @@ struct BindingSlot {
 };
 
 /// What a pipeline binds: its slots, and push constants of `push_constant_size` bytes visible to
-/// all its stages.
+/// `push_stages` (None: all its stages).
 struct BindingLayout {
     std::span<const BindingSlot> slots;
     u32 push_constant_size{};
+    ShaderStage push_stages{};
 };
 
 constexpr u32 MaxColorTargets = 8;
@@ -60,9 +61,12 @@ struct ColorTarget {
     ColorWriteMask write_mask{ColorWriteMask::All};
 };
 
-/// A graphics pipeline. Viewports, scissors, depth, stencil, culling, depth bias and blend
-/// constants are set per draw (the rasterizer's dynamic state).
+/// A graphics pipeline. A guest pipeline's viewports, scissors, depth, stencil, culling, depth
+/// bias and blend constants are set per draw (the rasterizer's draw state). A host pass (the
+/// renderer's own: presentation, upscaling) sets one viewport and one scissor per draw and has
+/// no depth or stencil test; its culling is `cull_mode` and `front_face`.
 struct GraphicsPipelineDesc {
+    bool host_pass{};
     std::span<const PipelineStage> stages;
     BindingLayout layout;
     /// The vertex input, unless the device sets it per draw (Capabilities::dynamic_vertex_input).
@@ -83,11 +87,16 @@ struct GraphicsPipelineDesc {
     u32 depth_samples{1};
     bool logic_op_enable{};
     LogicOp logic_op{};
+    CullMode cull_mode{}; ///< host passes
+    FrontFace front_face{};
 };
 
+/// A compute pipeline. Guest shaders run with the guest's subgroup size where the device can
+/// require it; host passes (`host_pass`) with the device's own.
 struct ComputePipelineDesc {
     ShaderHandle shader;
     BindingLayout layout;
+    bool host_pass{};
 };
 
 /// A pipeline the device made; an empty handle when the driver rejected it.

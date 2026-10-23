@@ -18,6 +18,7 @@
 #include <unordered_map>
 #include <vector>
 
+#include "video_core/renderer_vulkan/vk_host_objects.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "common/types.h"
 #include "video_core/renderer_vulkan/vk_common.h"
@@ -286,38 +287,24 @@ private:
     Vulkan::UniqueImage reactive_image; ///< R8 reactive mask
     vk::UniqueImageView opaque_view;
     vk::UniqueImageView reactive_view;
-    vk::UniqueDescriptorSetLayout reactive_desc_layout;
-    vk::UniquePipelineLayout reactive_pipeline_layout;
-    vk::UniquePipeline reactive_pipeline;
-    vk::UniqueDescriptorSetLayout merge_desc_layout;
-    vk::UniquePipelineLayout merge_pipeline_layout;
-    vk::UniquePipeline merge_pipeline;
+    HostPipeline reactive_pipeline;
+    HostPipeline merge_pipeline;
     std::array<Vulkan::UniqueImage, 2> taa_history;
     std::array<vk::UniqueImageView, 2> taa_history_views;
     u32 taa_next = 0;
-    vk::UniqueSampler taa_sampler;
-    vk::UniqueDescriptorSetLayout taa_desc_layout;
-    vk::UniquePipelineLayout taa_pipeline_layout;
-    vk::UniquePipeline taa_pipeline;
-    vk::UniqueDescriptorSetLayout taa_sharpen_desc_layout;
-    vk::UniquePipelineLayout taa_sharpen_pipeline_layout;
-    vk::UniquePipeline taa_sharpen_pipeline;
-    vk::UniquePipeline taa_sharpen_ldr_pipeline;
+    HostSampler taa_sampler;
+    HostPipeline taa_pipeline;
+    HostPipeline taa_sharpen_pipeline;
+    HostPipeline taa_sharpen_ldr_pipeline;
     // bbport: FSR 4 in linear light on the scaled presets (fsr4_color.comp): the decoded input
     // and the passes that decode it and encode the output again.
     Vulkan::UniqueImage fsr4_linear_image;
     bool fsr4_linear_frame = false; ///< this frame's FSR 4 input was decoded (and the output encoded)
     vk::UniqueImageView fsr4_linear_view;
-    vk::UniqueDescriptorSetLayout fsr4_decode_desc_layout;
-    vk::UniquePipelineLayout fsr4_decode_pipeline_layout;
-    vk::UniquePipeline fsr4_decode_pipeline;
-    vk::UniqueDescriptorSetLayout fsr4_encode_desc_layout;
-    vk::UniquePipelineLayout fsr4_encode_pipeline_layout;
-    vk::UniquePipeline fsr4_encode_pipeline;
-    vk::UniqueSampler fsr4_linear_sampler;
-    vk::UniqueDescriptorSetLayout fsr4_reactive_desc_layout;
-    vk::UniquePipelineLayout fsr4_reactive_pipeline_layout;
-    vk::UniquePipeline fsr4_reactive_pipeline;
+    HostPipeline fsr4_decode_pipeline;
+    HostPipeline fsr4_encode_pipeline;
+    HostSampler fsr4_linear_sampler;
+    HostPipeline fsr4_reactive_pipeline;
     /// bbport: FSR 4 takes no reactive mask: its output is blended with `color` (the frame it
     /// upscaled, render size, General layout, same colour space as the output) where the mask
     /// marks blended effects (fsr4_reactive.comp). Recorded after FSR 4 into `cmdbuf`.

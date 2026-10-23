@@ -3,7 +3,7 @@
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
 **State:** approved on 2026-10-22. A0 to A5 are done; A6 is in progress (resource binding through the
-recorder; the host passes next).
+recorder, the host passes' objects through the device; their recording next).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -310,6 +310,19 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   push or allocated set) and owns the descriptor heap. Guest pipelines no longer record anything
   themselves. Measured (new build second): 4.24 µs per draw against 4.34, 37.7 FPS both, the
   frame correct.
+
+- **A6, host pass objects:** the renderer's own passes make their pipelines, shaders, samplers
+  and images through the device: post-processing, FSR 1, camera motion and its debug overlay,
+  and the upscalers' helper passes (merge, reactive mask, TAA and its sharpening, FSR 4's
+  colour decode, encode and reactive blend). A description marked `host_pass` is made as those
+  passes always were: one viewport and one scissor per draw, no depth or stencil test, its own
+  culling, and no guest subgroup size; a binding layout can name its push-constant stages, and
+  slots can hold a combined image and sampler. `HostPipeline` and `HostSampler`
+  (`vk_host_objects.h`) own them for code that still records itself; camera motion dispatches
+  through the recorder. FSR 1 (`BB_FSR1=1`) was not run: it needs a window larger than the
+  game's output. Measured: no faults with the upscaler off, FSR 3.1 (MoltenVK), TAA and MetalFX
+  (Metal), frames correct; frame times as the base build (FSR 3.1 35.4 against 35.2 ms median,
+  TAA 31.5 both, MetalFX 29.9 both); Metal API validation without new messages.
 
 ## Decisions
 

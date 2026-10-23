@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 #include "bbport_game_hooks.h"
+#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_temporal_upscaler.h"
@@ -16,6 +17,7 @@
 #include <deque>
 #include <string>
 
+#include <boost/container/static_vector.hpp>
 #include <vk_mem_alloc.h>
 
 #include "bbport_settings.h"
@@ -305,9 +307,9 @@ void TemporalUpscaler::RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageVie
     }};
     const std::array<float, 5> push{float(w), float(h), jitter[0], jitter[1], 1.0f};
     cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_reactive_pipeline);
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *fsr4_reactive_pipeline_layout, 0,
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, fsr4_reactive_pipeline.Layout(), 0,
                                 writes);
-    cmdbuf.pushConstants(*fsr4_reactive_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+    cmdbuf.pushConstants(fsr4_reactive_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
                          sizeof(push), push.data());
     cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
     const vk::MemoryBarrier2 after{
@@ -653,141 +655,60 @@ bool TemporalUpscaler::EnsureResources(u32 w, u32 h, u32 ow, u32 oh, bool hdr) {
 }
 
 void TemporalUpscaler::CreatePipelines() {
+    namespace Backend = VideoCore::Backend;
     if (merge_pipeline) {
         return;
     }
-    const auto device = instance.GetDevice();
-    const auto storage_layout = [&](u32 count, vk::UniqueDescriptorSetLayout& layout,
-                                    vk::UniquePipelineLayout& pipeline_layout, u32 push_size) {
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
-        for (u32 i = 0; i < count; ++i) {
-            bindings[i] = {.binding = i,
-                           .descriptorType = vk::DescriptorType::eStorageImage,
-                           .descriptorCount = 1,
-                           .stageFlags = vk::ShaderStageFlagBits::eCompute};
+    auto& device = BackendDevice::From(instance);
+    constexpr auto Storage = Backend::BindingKind::StorageImage;
+    constexpr auto Sampled = Backend::BindingKind::SampledImage;
+    constexpr auto Combined = Backend::BindingKind::CombinedImageSampler;
+    const auto slots = [](std::initializer_list<Backend::BindingKind> kinds) {
+        boost::container::static_vector<Backend::BindingSlot, 8> result;
+        for (const auto kind : kinds) {
+            result.push_back({.kind = kind, .stages = Backend::ShaderStage::Compute});
         }
-        layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = count,
-            .pBindings = bindings.data(),
-        }));
-        const vk::PushConstantRange push{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                         .offset = 0,
-                                         .size = push_size};
-        pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1,
-            .pSetLayouts = &*layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &push,
-        }));
+        return result;
     };
-    const auto compute = [&](const auto& code, vk::PipelineLayout layout) {
-        const auto module = CompileSPV(code, device);
-        auto pipeline = Check(device.createComputePipelineUnique(
-            {}, vk::ComputePipelineCreateInfo{
-                    .stage = {.stage = vk::ShaderStageFlagBits::eCompute,
-                              .module = module,
-                              .pName = "main"},
-                    .layout = layout,
-                }));
-        device.destroyShaderModule(module);
-        return pipeline;
+    const auto compute = [&](std::span<const u32> code, const auto& layout, u32 push_size,
+                             std::string_view name) {
+        return MakeHostCompute(device, code, {layout.data(), layout.size()}, push_size, name);
     };
-    {
-        // Merge: three storage images, then the motion and object motion images (debug).
-        std::array<vk::DescriptorSetLayoutBinding, 5> bindings{};
-        for (u32 i = 0; i < bindings.size(); ++i) {
-            bindings[i] = {.binding = i,
-                           .descriptorType = i < 3 ? vk::DescriptorType::eStorageImage
-                                                   : vk::DescriptorType::eSampledImage,
-                           .descriptorCount = 1,
-                           .stageFlags = vk::ShaderStageFlagBits::eCompute};
-        }
-        merge_desc_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = u32(bindings.size()),
-            .pBindings = bindings.data(),
-        }));
-        const vk::PushConstantRange push{.stageFlags = vk::ShaderStageFlagBits::eCompute,
-                                         .offset = 0,
-                                         .size = sizeof(u32)};
-        merge_pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1,
-            .pSetLayouts = &*merge_desc_layout,
-            .pushConstantRangeCount = 1,
-            .pPushConstantRanges = &push,
-        }));
-    }
-    merge_pipeline = compute(UPSCALE_MERGE_COMP, *merge_pipeline_layout);
-    storage_layout(3, reactive_desc_layout, reactive_pipeline_layout, 3 * sizeof(float));
-    reactive_pipeline = compute(UPSCALE_REACTIVE_COMP, *reactive_pipeline_layout);
-    storage_layout(2, taa_sharpen_desc_layout, taa_sharpen_pipeline_layout, sizeof(float));
-    taa_sharpen_pipeline = compute(TAA_SHARPEN_COMP, *taa_sharpen_pipeline_layout);
-    taa_sharpen_ldr_pipeline = compute(TAA_SHARPEN_LDR_COMP, *taa_sharpen_pipeline_layout);
-    storage_layout(1, fsr4_encode_desc_layout, fsr4_encode_pipeline_layout, sizeof(u32));
-    fsr4_encode_pipeline = compute(FSR4_ENCODE_COMP, *fsr4_encode_pipeline_layout);
-    {
-        const std::array<vk::DescriptorSetLayoutBinding, 2> bindings{{
-            {.binding = 0, .descriptorType = vk::DescriptorType::eSampledImage,
-             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
-            {.binding = 1, .descriptorType = vk::DescriptorType::eStorageImage,
-             .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute},
-        }};
-        fsr4_decode_desc_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = u32(bindings.size()), .pBindings = bindings.data()}));
-        const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, sizeof(u32)};
-        fsr4_decode_pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1, .pSetLayouts = &*fsr4_decode_desc_layout,
-            .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
-        fsr4_decode_pipeline = compute(FSR4_DECODE_COMP, *fsr4_decode_pipeline_layout);
-    }
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 3> bindings{};
-        for (u32 i = 0; i < bindings.size(); ++i) {
-            bindings[i] = {.binding = i,
-                           .descriptorType = i < 2 ? vk::DescriptorType::eCombinedImageSampler
-                                                   : vk::DescriptorType::eStorageImage,
-                           .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute};
-        }
-        fsr4_reactive_desc_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = u32(bindings.size()), .pBindings = bindings.data()}));
-        const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 5 * sizeof(float)};
-        fsr4_reactive_pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1, .pSetLayouts = &*fsr4_reactive_desc_layout,
-            .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
-        fsr4_linear_sampler = Check(device.createSamplerUnique({
-            .magFilter = vk::Filter::eLinear, .minFilter = vk::Filter::eLinear,
-            .mipmapMode = vk::SamplerMipmapMode::eNearest,
-            .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vk::SamplerAddressMode::eClampToEdge}));
-        fsr4_reactive_pipeline = compute(FSR4_REACTIVE_COMP, *fsr4_reactive_pipeline_layout);
-    }
-    {
-        std::array<vk::DescriptorSetLayoutBinding, 7> bindings{};
-        for (u32 i = 0; i < bindings.size(); ++i) {
-            bindings[i] = {.binding = i,
-                .descriptorType = i < 4 ? vk::DescriptorType::eCombinedImageSampler
-                                        : vk::DescriptorType::eStorageImage,
-                .descriptorCount = 1, .stageFlags = vk::ShaderStageFlagBits::eCompute};
-        }
-        taa_desc_layout = Check(device.createDescriptorSetLayoutUnique({
-            .flags = vk::DescriptorSetLayoutCreateFlagBits::ePushDescriptorKHR,
-            .bindingCount = u32(bindings.size()), .pBindings = bindings.data()}));
-        const vk::PushConstantRange push{vk::ShaderStageFlagBits::eCompute, 0, 64};
-        taa_pipeline_layout = Check(device.createPipelineLayoutUnique({
-            .setLayoutCount = 1, .pSetLayouts = &*taa_desc_layout,
-            .pushConstantRangeCount = 1, .pPushConstantRanges = &push}));
-        taa_sampler = Check(device.createSamplerUnique({
-            .magFilter = vk::Filter::eNearest, .minFilter = vk::Filter::eNearest,
-            .mipmapMode = vk::SamplerMipmapMode::eNearest,
-            .addressModeU = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeV = vk::SamplerAddressMode::eClampToEdge,
-            .addressModeW = vk::SamplerAddressMode::eClampToEdge}));
-        taa_pipeline = compute(TAA_COMP, *taa_pipeline_layout);
-    }
+    // Merge: three storage images, then the motion and object motion images (debug).
+    merge_pipeline = compute(UPSCALE_MERGE_COMP, slots({Storage, Storage, Storage, Sampled, Sampled}),
+                             sizeof(u32), "upscale merge");
+    reactive_pipeline = compute(UPSCALE_REACTIVE_COMP, slots({Storage, Storage, Storage}),
+                                3 * sizeof(float), "upscale reactive");
+    taa_sharpen_pipeline =
+        compute(TAA_SHARPEN_COMP, slots({Storage, Storage}), sizeof(float), "taa sharpen");
+    taa_sharpen_ldr_pipeline =
+        compute(TAA_SHARPEN_LDR_COMP, slots({Storage, Storage}), sizeof(float), "taa sharpen ldr");
+    fsr4_encode_pipeline = compute(FSR4_ENCODE_COMP, slots({Storage}), sizeof(u32), "fsr4 encode");
+    fsr4_decode_pipeline =
+        compute(FSR4_DECODE_COMP, slots({Sampled, Storage}), sizeof(u32), "fsr4 decode");
+    fsr4_linear_sampler = HostSampler{device,
+                                      {
+                                          .mag_filter = Backend::Filter::Linear,
+                                          .min_filter = Backend::Filter::Linear,
+                                          .mipmap_mode = Backend::MipmapMode::Nearest,
+                                          .address_u = Backend::AddressMode::ClampToEdge,
+                                          .address_v = Backend::AddressMode::ClampToEdge,
+                                          .address_w = Backend::AddressMode::ClampToEdge,
+                                      }};
+    fsr4_reactive_pipeline = compute(FSR4_REACTIVE_COMP, slots({Combined, Combined, Storage}),
+                                     5 * sizeof(float), "fsr4 reactive");
+    taa_sampler = HostSampler{device,
+                              {
+                                  .mag_filter = Backend::Filter::Nearest,
+                                  .min_filter = Backend::Filter::Nearest,
+                                  .mipmap_mode = Backend::MipmapMode::Nearest,
+                                  .address_u = Backend::AddressMode::ClampToEdge,
+                                  .address_v = Backend::AddressMode::ClampToEdge,
+                                  .address_w = Backend::AddressMode::ClampToEdge,
+                              }};
+    taa_pipeline = compute(
+        TAA_COMP, slots({Combined, Combined, Combined, Combined, Storage, Storage, Storage}), 64,
+        "taa");
 }
 
 void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
@@ -855,8 +776,8 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
             std::printf("TAA diagnostic: reset=%u jitter=%.6f,%.6f mode=%u\n",
                         params.reset, jitter[0], jitter[1], params.pad);
     }
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *taa_pipeline_layout, 0, writes);
-    cmdbuf.pushConstants(*taa_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, taa_pipeline.Layout(), 0, writes);
+    cmdbuf.pushConstants(taa_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
                          sizeof(params), &params);
     cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
     const auto& settings = BbSettings::Get();
@@ -878,8 +799,8 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
                 .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &sharpen_infos[i]};
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *taa_sharpen_pipeline);
         cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                    *taa_sharpen_pipeline_layout, 0, sharpen_writes);
-        cmdbuf.pushConstants(*taa_sharpen_pipeline_layout, vk::ShaderStageFlagBits::eCompute,
+                                    taa_sharpen_pipeline.Layout(), 0, sharpen_writes);
+        cmdbuf.pushConstants(taa_sharpen_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute,
                              0, sizeof(strength), &strength);
         cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
     }
@@ -936,7 +857,7 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, fl
     scheduler.RecordCrumb({.name = "TAA extra sharpen"}, [target, copy = vk::Image(extra_sharpen_image),
                       copy_view = *extra_sharpen_view, target_view, extra, w, h,
                       pipeline = ldr ? *taa_sharpen_ldr_pipeline : *taa_sharpen_pipeline,
-                      layout = *taa_sharpen_pipeline_layout](vk::CommandBuffer cmdbuf) {
+                      layout = taa_sharpen_pipeline.Layout()](vk::CommandBuffer cmdbuf) {
         const auto image_barrier = [&](vk::Image image, vk::ImageLayout old_layout,
                                        vk::PipelineStageFlags2 src, vk::AccessFlags2 src_access,
                                        vk::PipelineStageFlags2 dst, vk::AccessFlags2 dst_access) {
@@ -1103,7 +1024,7 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
     const vk::Image reactive = vk::Image(reactive_image);
     const vk::ImageView opaque = *opaque_view, mask = *reactive_view;
     const vk::Pipeline pipeline = *reactive_pipeline;
-    const vk::PipelineLayout layout = *reactive_pipeline_layout;
+    const vk::PipelineLayout layout = reactive_pipeline.Layout();
     const u32 w = width, h = height;
     // Relative color change times the scale (default 1), zero below the threshold (0.2), at
     // most the maximum (0.9, never fully reactive) — the defaults of AMD's mask generator.
@@ -1437,9 +1358,9 @@ void TemporalUpscaler::Run() {
                          : debug_view == BbSettings::DebugMotion ? 2
                                                                  : 0;
         cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *merge_pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, *merge_pipeline_layout, 0,
+        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, merge_pipeline.Layout(), 0,
                                     writes);
-        cmdbuf.pushConstants(*merge_pipeline_layout, vk::ShaderStageFlagBits::eCompute, 0,
+        cmdbuf.pushConstants(merge_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
                              sizeof(mode), &mode);
         cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
     }
@@ -1949,8 +1870,8 @@ void TemporalUpscaler::RunScaled() {
                 const u32 unused = 0;
                 cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_decode_pipeline);
                 cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            *fsr4_decode_pipeline_layout, 0, writes);
-                cmdbuf.pushConstants(*fsr4_decode_pipeline_layout,
+                                            fsr4_decode_pipeline.Layout(), 0, writes);
+                cmdbuf.pushConstants(fsr4_decode_pipeline.Layout(),
                                      vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
                 cmdbuf.dispatch((source_width + 7) / 8, (source_height + 7) / 8, 1);
                 const vk::MemoryBarrier2 decoded{
@@ -1981,8 +1902,8 @@ void TemporalUpscaler::RunScaled() {
                 const u32 unused = 0;
                 cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_encode_pipeline);
                 cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            *fsr4_encode_pipeline_layout, 0, write);
-                cmdbuf.pushConstants(*fsr4_encode_pipeline_layout,
+                                            fsr4_encode_pipeline.Layout(), 0, write);
+                cmdbuf.pushConstants(fsr4_encode_pipeline.Layout(),
                                      vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
                 cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
                 const vk::MemoryBarrier2 encoded{

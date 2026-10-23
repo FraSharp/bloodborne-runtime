@@ -36,6 +36,13 @@ these were investigated. Run-by-run logs of the investigations are in this file'
   nearby save and repeat steps are needed.
 - **Pale blood after a save reload.** Blood on enemies already killed when the save is reloaded
   can appear pale with bright edges instead of dark red. The cause has not been isolated.
+- **A presented frame's view freed early on the Metal path.** With a render size below the
+  output (`BB_RENDER_RES`) and `BB_METAL_FRAME=1`, Metal API validation reports a 1920×1080
+  BGRA8 sRGB texture destroyed while a "bbport Metal path" command buffer still needs it (225
+  and 249 times in 75-second runs). It is the view the presenter makes of the display image
+  each frame and frees after the draw submission; the Metal path's command buffer outlives it.
+  No visible fault so far. Render adapter A6 makes it through the device, whose release waits
+  past the next submission.
 - **Missing objects or character parts after death reloads** on the translator, not under
   Rosetta 2 (2026-10-15): a candidate bbcpu translation bug; not seen since the pool fix, not
   retested separately.

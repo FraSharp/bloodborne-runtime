@@ -10,6 +10,7 @@ namespace VideoCore::Backend {
 /// What a slot holds. The values are Vulkan's descriptor types (renderer_vulkan/vk_state.h).
 enum class BindingKind : s32 {
     Sampler = 0,
+    CombinedImageSampler = 1, ///< ImageBinding with both a sampler and a view
     SampledImage = 2,
     StorageImage = 3,
     UniformBuffer = 6,

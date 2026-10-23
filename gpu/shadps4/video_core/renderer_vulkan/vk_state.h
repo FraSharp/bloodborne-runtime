@@ -100,6 +100,8 @@ static_assert(s32(vk::ComponentSwizzle::eIdentity) == s32(Backend::ComponentSwiz
               s32(vk::ComponentSwizzle::eB) == s32(Backend::ComponentSwizzle::B) &&
               s32(vk::ComponentSwizzle::eA) == s32(Backend::ComponentSwizzle::A));
 static_assert(s32(vk::DescriptorType::eSampler) == s32(Backend::BindingKind::Sampler) &&
+              s32(vk::DescriptorType::eCombinedImageSampler) ==
+                  s32(Backend::BindingKind::CombinedImageSampler) &&
               s32(vk::DescriptorType::eSampledImage) == s32(Backend::BindingKind::SampledImage) &&
               s32(vk::DescriptorType::eStorageImage) == s32(Backend::BindingKind::StorageImage) &&
               s32(vk::DescriptorType::eUniformBuffer) == s32(Backend::BindingKind::UniformBuffer) &&
