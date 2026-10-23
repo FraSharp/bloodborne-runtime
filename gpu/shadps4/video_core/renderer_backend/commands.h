@@ -10,6 +10,7 @@
 #include "video_core/renderer_backend/binding.h"
 #include "video_core/renderer_backend/format.h"
 #include "video_core/renderer_backend/pass.h"
+#include "video_core/renderer_backend/resource.h"
 
 namespace VideoCore::Backend {
 
@@ -122,6 +123,12 @@ public:
     /// Binds `buffers` from slot 0. `sizes` and `strides` empty: the pipeline's strides.
     virtual void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                                    std::span<const u64> sizes, std::span<const u64> strides) = 0;
+
+    /// `image` (one the device made: its allocation) is used for `access` from now on: the
+    /// backend places the barrier from its last use. `discard`: its contents are not needed.
+    /// Whole images of one level and layer; `aspect` the planes used.
+    virtual void TransitImage(const ImageAllocation& image, ImageAspect aspect, ImageAccess access,
+                              bool discard = false) = 0;
 
     /// Later `after` uses of all memory wait for earlier `before` uses.
     virtual void Barrier(MemoryUse before, MemoryUse after) = 0;

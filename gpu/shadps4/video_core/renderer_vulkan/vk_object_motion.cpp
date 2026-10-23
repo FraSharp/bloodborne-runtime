@@ -52,7 +52,9 @@ bool CreateBuffer(const Instance& instance, vk::DeviceSize size, bool host, vk::
 } // namespace
 
 ObjectMotion::ObjectMotion(const Instance& instance_, Scheduler& scheduler_)
-    : instance{instance_}, scheduler{scheduler_} {
+    : instance{instance_}, scheduler{scheduler_},
+      recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(),
+               instance_.GetDevice()} {
     // Pipeline selection limits the extra attachment and vertex stores to likely
     // animated draws. A setting or environment override can still disable the path.
     if (!BbSettings::Get().object_motion ||
@@ -128,18 +130,11 @@ void ObjectMotion::OnFrameStart() {
     for (auto& target : targets) {
         target.written = false;
     }
-    scheduler.EndRendering();
+    recorder.EndPass();
     // Last frame's stores must be visible to this frame's loads. Also finish old reads
     // before the ping-pong half they reference is reused for writes.
-    scheduler.Record([](vk::CommandBuffer cmd) {
-        const vk::MemoryBarrier2 barrier{
-            .srcStageMask = vk::PipelineStageFlagBits2::eVertexShader,
-            .srcAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eVertexShader,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderRead | vk::AccessFlagBits2::eShaderWrite,
-        };
-        cmd.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &barrier});
-    });
+    using Use = VideoCore::Backend::MemoryUse;
+    recorder.Barrier(Use::VertexRead | Use::VertexWrite, Use::VertexRead | Use::VertexWrite);
 }
 
 u32 ObjectMotion::PrepareDraw(const DrawInfo& draw) {
@@ -222,7 +217,7 @@ ObjectMotion::Target& ObjectMotion::GetTarget(u32 width, u32 height) {
     slot->width = width;
     slot->height = height;
     slot->written = false;
-    slot->layout = vk::ImageLayout::eUndefined;
+    slot->attached = false;
     slot->used_frame = frame;
     return *slot;
 }
@@ -234,26 +229,12 @@ void ObjectMotion::Attach(RenderState& state, u32 width, u32 height) {
     attachment = {};
     attachment.image_view = Vulkan::ToNative(*target.view);
     attachment.image_layout = Vulkan::ToNative(vk::ImageLayout::eColorAttachmentOptimal);
-    if (!target.written || target.layout != vk::ImageLayout::eColorAttachmentOptimal) {
+    if (!target.written || !target.attached) {
         // Clear once per frame; later reads must not erase the validity of this history.
-        scheduler.EndRendering();
-        const vk::ImageMemoryBarrier2 barrier{
-            .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eColorAttachmentOutput,
-            .dstAccessMask = vk::AccessFlagBits2::eColorAttachmentWrite |
-                             vk::AccessFlagBits2::eColorAttachmentRead,
-            .oldLayout = target.layout,
-            .newLayout = vk::ImageLayout::eColorAttachmentOptimal,
-            .image = vk::Image(target.image),
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-        };
-        // Recorded in order on the recording thread: CommandBuffer() here switched the rest of
-        // the submission (most of the G-buffer) to direct recording on the GPU thread.
-        scheduler.Record([barrier](vk::CommandBuffer cmd) {
-            cmd.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
-        });
-        target.layout = vk::ImageLayout::eColorAttachmentOptimal;
+        recorder.EndPass();
+        recorder.TransitImage(target.image.Allocation(), VideoCore::Backend::ImageAspect::Color,
+                              VideoCore::Backend::ImageAccess::ColorAttachment);
+        target.attached = true;
         attachment.is_clear = !target.written;
         target.written = true;
     }
@@ -274,20 +255,9 @@ vk::ImageView ObjectMotion::PrepareRead(u32 width, u32 height, bool& valid) {
         target = &GetTarget(1, 1);
     }
     valid = target->written && width == target->width && height == target->height;
-    const vk::ImageMemoryBarrier2 barrier{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite,
-        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .dstAccessMask = vk::AccessFlagBits2::eShaderRead,
-        .oldLayout = target->layout,
-        .newLayout = vk::ImageLayout::eGeneral,
-        .image = vk::Image(target->image),
-        .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
-    };
-    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {
-        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
-    });
-    target->layout = vk::ImageLayout::eGeneral;
+    recorder.TransitImage(target->image.Allocation(), VideoCore::Backend::ImageAspect::Color,
+                          VideoCore::Backend::ImageAccess::ComputeRead);
+    target->attached = false;
     read_target = target;
     return *target->view;
 }

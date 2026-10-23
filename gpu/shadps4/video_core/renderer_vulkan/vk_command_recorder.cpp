@@ -64,6 +64,29 @@ std::pair<vk::PipelineStageFlags2, vk::AccessFlags2> StagesAndAccess(Backend::Me
 }
 } // namespace
 
+void CommandRecorder::TransitImage(const Backend::ImageAllocation& image, Backend::ImageAspect aspect,
+                                   Backend::ImageAccess access, bool discard) {
+    auto& state = static_cast<ImageState*>(image.backend_state)->state;
+    const bool depth = Backend::Has(aspect, Backend::ImageAspect::Depth);
+    const bool stencil = Backend::Has(aspect, Backend::ImageAspect::Stencil);
+    // The renderer's own images are never read while they are targets: no feedback loops.
+    const auto next = ImageAccessState(access, depth, stencil, false);
+    const vk::ImageMemoryBarrier2 barrier{
+        .srcStageMask = state.pl_stage,
+        .srcAccessMask = state.access_mask,
+        .dstStageMask = next.pl_stage,
+        .dstAccessMask = next.access_mask,
+        .oldLayout = discard ? vk::ImageLayout::eUndefined : state.layout,
+        .newLayout = next.layout,
+        .image = NativeImage(image.native),
+        .subresourceRange = {ToVk(aspect), 0, 1, 0, 1},
+    };
+    state = next;
+    scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
+    });
+}
+
 void CommandRecorder::Barrier(Backend::MemoryUse before, Backend::MemoryUse after) {
     const auto [src_stage, src_access] = StagesAndAccess(before);
     const auto [dst_stage, dst_access] = StagesAndAccess(after);

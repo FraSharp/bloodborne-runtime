@@ -406,6 +406,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   `ClearColor` (32-bit words), deferred clears included; the copy shader's copies, the
   rasterizer's buffer copies and the tiling downloads pass the adapter's regions. Measured (new
   build second): 4.15 µs per draw against 4.22, 25.9 ms median both, the frame correct.
+- **M2, the backends' own presenters and upscalers:** the presenter and the temporal upscaler
+  stay the Vulkan backend's: their passes are tied to vendor libraries that exist only there
+  (FidelityFX on Vulkan, FSR 4, DLSS) and to their submissions. The Metal backend gets its own
+  (step 4), with MetalFX and FSR 4.1.1 on Metal; TAA and the sharpening and merge passes, whose
+  shaders both use, are dispatched by each. The command stream (step 1) covers the code both
+  backends run.
+- **M2, image transitions:** the recorder transitions images the device made by declared
+  access (`TransitImage`, from the barrier state the backend keeps for each image); the access
+  mapping is shared with the runtime's. Object motion's target uses it. Measured: MetalFX 30.1
+  ms median, FSR 3.1 35.7, object motion active, frames correct.
 
 ## Decisions
 

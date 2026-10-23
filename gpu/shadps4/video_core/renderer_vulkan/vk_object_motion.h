@@ -9,6 +9,7 @@
 
 #include <array>
 #include "video_core/renderer_backend/pass.h"
+#include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_host_objects.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/motion_history.h"
@@ -75,7 +76,8 @@ private:
         vk::UniqueImageView view;
         u32 width = 0, height = 0;
         bool written = false; ///< this frame's vectors are in the image
-        vk::ImageLayout layout = vk::ImageLayout::eUndefined;
+        bool attached = false; ///< last used as the pass's colour target
+
         u64 used_frame = 0;
     };
     static constexpr u32 MaxTargets = 4;
@@ -94,6 +96,7 @@ private:
 
     const Instance& instance;
     Scheduler& scheduler;
+    CommandRecorder recorder; ///< the render adapter's
     bool enabled = false;
 
     // Parameter ring (host visible): FrameSlots frames of ParamsPerFrame entries (two u32x4),

@@ -33,6 +33,9 @@ public:
     void BindIndexBuffer(u64 buffer, u64 offset, VideoCore::Backend::IndexType type) override;
     void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
                            std::span<const u64> sizes, std::span<const u64> strides) override;
+    void TransitImage(const VideoCore::Backend::ImageAllocation& image,
+                      VideoCore::Backend::ImageAspect aspect, VideoCore::Backend::ImageAccess access,
+                      bool discard = false) override;
     void Barrier(VideoCore::Backend::MemoryUse before, VideoCore::Backend::MemoryUse after) override;
     void BufferBarrier(u64 buffer, u64 offset, u64 size, VideoCore::Backend::MemoryUse before,
                        VideoCore::Backend::MemoryUse after) override;

@@ -84,6 +84,11 @@ struct ImageState {
     std::vector<State> subresource_states;
 };
 
+/// The layout, stages and accesses of an image use (docs/RENDER_ADAPTER.md: declared accesses).
+/// `feedback_loop`: VK_EXT_attachment_feedback_loop_layout is available.
+ImageState::State ImageAccessState(VideoCore::Backend::ImageAccess access, bool is_depth,
+                                   bool has_stencil, bool feedback_loop);
+
 /// A texture-cache image allocation as the backend keeps it: at a fixed address, so the image's
 /// backing reaches its state without a lookup.
 struct ImageRecord {

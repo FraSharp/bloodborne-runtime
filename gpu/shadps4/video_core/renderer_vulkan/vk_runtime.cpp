@@ -391,65 +391,10 @@ void Runtime::ImageBarriers(VideoCore::Image& image, vk::ImageLayout dst_layout,
 
 bool Runtime::Transit(VideoCore::Image* image, VideoCore::Backend::ImageAccess access,
                       std::optional<VideoCore::SubresourceRange> subres_range) {
-    using VideoCore::Backend::ImageAccess;
-    using Stage = vk::PipelineStageFlagBits2;
-    using Access = vk::AccessFlagBits2;
-    const bool feedback_loop = instance.IsAttachmentFeedbackLoopLayoutSupported();
-    const bool has_stencil = image->info.props.has_stencil;
-    constexpr auto color_target = Access::eColorAttachmentWrite | Access::eColorAttachmentRead;
-    constexpr auto depth_tests = Stage::eEarlyFragmentTests | Stage::eLateFragmentTests;
-    constexpr auto depth_target =
-        Access::eDepthStencilAttachmentWrite | Access::eDepthStencilAttachmentRead;
-    switch (access) {
-    case ImageAccess::Sampled:
-        return Transit(image,
-                       image->info.props.is_depth ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                                  : vk::ImageLayout::eShaderReadOnlyOptimal,
-                       Stage::eAllCommands, Access::eShaderRead, subres_range);
-    case ImageAccess::Storage:
-        return Transit(image, vk::ImageLayout::eGeneral, Stage::eAllCommands,
-                       Access::eShaderRead | Access::eShaderWrite, subres_range);
-    case ImageAccess::SampledWhileTarget:
-        return feedback_loop
-                   ? Transit(image, vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT,
-                             Stage::eAllGraphics, Access::eShaderRead, subres_range)
-                   : Transit(image, vk::ImageLayout::eGeneral, Stage::eAllCommands,
-                             Access::eShaderRead | Access::eShaderWrite, subres_range);
-    case ImageAccess::ColorAttachment:
-        return Transit(image, vk::ImageLayout::eColorAttachmentOptimal,
-                       Stage::eColorAttachmentOutput, color_target, subres_range);
-    case ImageAccess::ColorAttachmentFeedback:
-        return Transit(image,
-                       feedback_loop ? vk::ImageLayout::eAttachmentFeedbackLoopOptimalEXT
-                                     : vk::ImageLayout::eGeneral,
-                       Stage::eColorAttachmentOutput, color_target, subres_range);
-    case ImageAccess::DepthAttachment:
-        return Transit(image,
-                       has_stencil ? vk::ImageLayout::eDepthStencilAttachmentOptimal
-                                   : vk::ImageLayout::eDepthAttachmentOptimal,
-                       depth_tests, depth_target, subres_range);
-    case ImageAccess::DepthReadOnlyStencilWrite:
-        return Transit(image, vk::ImageLayout::eDepthReadOnlyStencilAttachmentOptimal,
-                       depth_tests, depth_target, subres_range);
-    case ImageAccess::DepthReadOnly:
-        return Transit(image,
-                       has_stencil ? vk::ImageLayout::eDepthStencilReadOnlyOptimal
-                                   : vk::ImageLayout::eDepthReadOnlyOptimal,
-                       depth_tests, depth_target, subres_range);
-    case ImageAccess::ComputeRead:
-        return Transit(image, vk::ImageLayout::eGeneral, Stage::eComputeShader, Access::eShaderRead,
-                       subres_range);
-    case ImageAccess::ComputeReadWrite:
-        return Transit(image, vk::ImageLayout::eGeneral, Stage::eComputeShader,
-                       Access::eShaderRead | Access::eShaderWrite, subres_range);
-    case ImageAccess::TransferSource:
-        return Transit(image, vk::ImageLayout::eTransferSrcOptimal, Stage::eTransfer,
-                       Access::eTransferRead, subres_range);
-    case ImageAccess::TransferDestination:
-        return Transit(image, vk::ImageLayout::eTransferDstOptimal, Stage::eTransfer,
-                       Access::eTransferWrite, subres_range);
-    }
-    UNREACHABLE();
+    const auto state =
+        ImageAccessState(access, image->info.props.is_depth, image->info.props.has_stencil,
+                         instance.IsAttachmentFeedbackLoopLayoutSupported());
+    return Transit(image, state.layout, state.pl_stage, state.access_mask, subres_range);
 }
 
 static std::pair<vk::PipelineStageFlags2, vk::AccessFlags2> BufferAccessMasks(

@@ -455,4 +455,68 @@ void CreateBufferFromDesc(const Instance &instance,
   buffer.Create(create_info, desc.memory, out_alloc_info);
 }
 
+ImageState::State ImageAccessState(Backend::ImageAccess access, bool is_depth, bool has_stencil,
+                                   bool feedback_loop) {
+  using Backend::ImageAccess;
+  using Stage = vk::PipelineStageFlagBits2;
+  using Access = vk::AccessFlagBits2;
+  using Layout = vk::ImageLayout;
+  constexpr auto color_target =
+      Access::eColorAttachmentWrite | Access::eColorAttachmentRead;
+  constexpr auto depth_tests =
+      Stage::eEarlyFragmentTests | Stage::eLateFragmentTests;
+  constexpr auto depth_target = Access::eDepthStencilAttachmentWrite |
+                                Access::eDepthStencilAttachmentRead;
+  const auto state = [](vk::PipelineStageFlags2 stage, vk::AccessFlags2 bits,
+                        Layout layout) {
+    return ImageState::State{
+        .pl_stage = stage, .access_mask = bits, .layout = layout};
+  };
+  switch (access) {
+  case ImageAccess::Sampled:
+    return state(Stage::eAllCommands, Access::eShaderRead,
+                 is_depth ? Layout::eDepthStencilReadOnlyOptimal
+                          : Layout::eShaderReadOnlyOptimal);
+  case ImageAccess::Storage:
+    return state(Stage::eAllCommands, Access::eShaderRead | Access::eShaderWrite,
+                 Layout::eGeneral);
+  case ImageAccess::SampledWhileTarget:
+    return feedback_loop
+               ? state(Stage::eAllGraphics, Access::eShaderRead,
+                       Layout::eAttachmentFeedbackLoopOptimalEXT)
+               : state(Stage::eAllCommands,
+                       Access::eShaderRead | Access::eShaderWrite, Layout::eGeneral);
+  case ImageAccess::ColorAttachment:
+    return state(Stage::eColorAttachmentOutput, color_target,
+                 Layout::eColorAttachmentOptimal);
+  case ImageAccess::ColorAttachmentFeedback:
+    return state(Stage::eColorAttachmentOutput, color_target,
+                 feedback_loop ? Layout::eAttachmentFeedbackLoopOptimalEXT
+                               : Layout::eGeneral);
+  case ImageAccess::DepthAttachment:
+    return state(depth_tests, depth_target,
+                 has_stencil ? Layout::eDepthStencilAttachmentOptimal
+                             : Layout::eDepthAttachmentOptimal);
+  case ImageAccess::DepthReadOnlyStencilWrite:
+    return state(depth_tests, depth_target,
+                 Layout::eDepthReadOnlyStencilAttachmentOptimal);
+  case ImageAccess::DepthReadOnly:
+    return state(depth_tests, depth_target,
+                 has_stencil ? Layout::eDepthStencilReadOnlyOptimal
+                             : Layout::eDepthReadOnlyOptimal);
+  case ImageAccess::ComputeRead:
+    return state(Stage::eComputeShader, Access::eShaderRead, Layout::eGeneral);
+  case ImageAccess::ComputeReadWrite:
+    return state(Stage::eComputeShader, Access::eShaderRead | Access::eShaderWrite,
+                 Layout::eGeneral);
+  case ImageAccess::TransferSource:
+    return state(Stage::eTransfer, Access::eTransferRead,
+                 Layout::eTransferSrcOptimal);
+  case ImageAccess::TransferDestination:
+    return state(Stage::eTransfer, Access::eTransferWrite,
+                 Layout::eTransferDstOptimal);
+  }
+  UNREACHABLE();
+}
+
 } // namespace Vulkan
