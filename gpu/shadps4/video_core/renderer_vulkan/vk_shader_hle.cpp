@@ -40,8 +40,8 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
         dst_max = std::max(dst_max, copy.dst_offset + copy.size);
     }
     auto& runtime = rasterizer.GetRuntime();
-    auto& scheduler = runtime.GetScheduler();
-    const auto& instance = runtime.GetInstance();
+    auto& scheduler = rasterizer.GetScheduler();
+    const auto& instance = rasterizer.GetInstance();
     const u64 align = instance.StorageMinAlignment();
     src_min = Common::AlignDown(src_min, align);
     dst_min = Common::AlignDown(dst_min, align);
@@ -112,7 +112,7 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
 static bool HoistCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
                       const VideoCore::Buffer* dst, std::span<const VideoCore::Backend::BufferCopy> copies) {
     auto& runtime = rasterizer.GetRuntime();
-    auto& scheduler = runtime.GetScheduler();
+    auto& scheduler = rasterizer.GetScheduler();
     if (!Scheduler::HoistCopies() || !scheduler.IsRendering() || copies.empty()) {
         return false;
     }

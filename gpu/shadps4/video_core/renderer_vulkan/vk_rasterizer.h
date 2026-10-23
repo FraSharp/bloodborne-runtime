@@ -46,7 +46,16 @@ public:
                         Scheduler& scheduler, Runtime& runtime, AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
-    [[nodiscard]] Runtime& GetRuntime() noexcept {
+    /// The command stream's scheduler and the device's instance (the Vulkan backend's own
+    /// passes in the copy shader's handling).
+    [[nodiscard]] Scheduler& GetScheduler() noexcept {
+        return scheduler;
+    }
+    [[nodiscard]] const Instance& GetInstance() const noexcept {
+        return instance;
+    }
+
+    [[nodiscard]] VideoCore::Backend::Transfers& GetRuntime() noexcept {
         return runtime;
     }
 
@@ -459,7 +468,7 @@ private:
     const Instance& instance;
     Scheduler& scheduler;
     CommandRecorder recorder; ///< the render adapter's commands (renderer_backend/commands.h)
-    Runtime& runtime;
+    VideoCore::Backend::Transfers& runtime; ///< the backend's transfers (the Vulkan Runtime)
     VideoCore::PageManager page_manager;
     VideoCore::BufferCache buffer_cache;
     VideoCore::TextureCache texture_cache;

@@ -441,7 +441,10 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   pool). The Vulkan `Runtime` implements it (`final`: calls through it stay direct); the
   texture cache, its images, the tile manager and the buffer cache hold the interface. Measured,
   new build first: 4.11 µs per draw against 4.17 (a base-first pair read 4.61 against 4.18
-  again; reversed, nothing), the frame correct.
+  again; reversed, nothing), the frame correct. The rasterizer holds the interface too
+  (virtual calls on the draw path, its accesses per bound image): 4.34 µs per draw against
+  4.58, 26.5 ms median both, new build second. It still makes the Vulkan backend's upscaler
+  parts with the Vulkan runtime.
 
 ## Decisions
 
