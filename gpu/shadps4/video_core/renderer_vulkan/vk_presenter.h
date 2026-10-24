@@ -38,6 +38,9 @@ struct Frame {
     vk::Image image;
     vk::ImageView image_view;
     vk::Fence present_done;
+    /// With the Metal frame, the present scheduler's tick its present signals, in place of
+    /// `present_done` (its submission is then committed in Metal; a fence would not be).
+    u64 present_tick{};
     vk::Semaphore ready_semaphore;
     u64 ready_tick;
     bool is_hdr{false};
@@ -107,6 +110,8 @@ public:
     /// bbport: waits until the GPU has finished the commands that render `frame` (any thread).
     void WaitRendered(const Frame* frame);
     Frame* PrepareLastFrame();
+    /// Waits until the GPU is past the frame's present (its fence, or its tick).
+    void WaitPresentDone(const Frame* frame);
 
 private:
     Frame* GetRenderFrame();

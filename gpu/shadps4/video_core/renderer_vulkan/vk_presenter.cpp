@@ -217,13 +217,11 @@ void Presenter::RecreateFrame(Frame* frame, u32 width, u32 height) {
     frame->is_hdr = swapchain.GetHDR();
 }
 
-Frame* Presenter::PrepareLastFrame() {
-    if (last_submit_frame == nullptr) {
-        return nullptr;
+void Presenter::WaitPresentDone(const Frame* frame) {
+    if (swapchain.IsMetal()) {
+        present_scheduler.GetWorkSemaphore()->Wait(frame->present_tick);
+        return;
     }
-
-    Frame* frame = last_submit_frame;
-
     while (true) {
         vk::Result result = instance.GetDevice().waitForFences(frame->present_done, false,
                                                                std::numeric_limits<u64>::max());
@@ -239,6 +237,15 @@ Frame* Presenter::PrepareLastFrame() {
         ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
                    "Device lost during waiting for a frame");
     }
+}
+
+Frame* Presenter::PrepareLastFrame() {
+    if (last_submit_frame == nullptr) {
+        return nullptr;
+    }
+
+    Frame* frame = last_submit_frame;
+    WaitPresentDone(frame);
 
     auto& scheduler = flip_scheduler;
     scheduler.EndRendering();
@@ -665,13 +672,6 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
     }
 
-    // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
-    // skip frame because of slow swapchain recreation. If a frame skip occurs, we skip signal
-    // the frame's present fence and future GetRenderFrame() call will hang waiting for this frame.
-    const auto reset_result = instance.GetDevice().resetFences(frame->present_done);
-    ASSERT_MSG(reset_result == vk::Result::eSuccess,
-               "Unexpected error resetting present done fence: {}", vk::to_string(reset_result));
-
     if (swapchain.IsMetal()) {
         PresentMetal(frame, is_game_frame);
         free_frame();
@@ -680,6 +680,13 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         }
         return;
     }
+
+    // Reset fence for queue submission. Do it here instead of GetRenderFrame() because we may
+    // skip frame because of slow swapchain recreation. If a frame skip occurs, we skip signal
+    // the frame's present fence and future GetRenderFrame() call will hang waiting for this frame.
+    const auto reset_result = instance.GetDevice().resetFences(frame->present_done);
+    ASSERT_MSG(reset_result == vk::Result::eSuccess,
+               "Unexpected error resetting present done fence: {}", vk::to_string(reset_result));
 
     // bbport: the game frame is blitted (letterboxed) straight into the swapchain image.
     const vk::Image swapchain_image = swapchain.Image();
@@ -837,8 +844,8 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
 
 // The Metal frame's present (docs/RENDER_ADAPTER.md, M2 step 4): the frame letterboxed into the
 // window's drawable and the overlay over it, encoded in Metal after the frame's own work on the
-// queue. The present scheduler's submission stays, empty but for the diagnostics' copies, for
-// the frame's fence (Metal submissions replace it later).
+// queue. The present scheduler's submission stays, empty but for the diagnostics' copies; its
+// tick tells when the GPU is past the frame.
 void Presenter::PresentMetal(Frame* frame, bool is_game_frame) {
     (void)is_game_frame;
     auto& scheduler = present_scheduler;
@@ -873,9 +880,10 @@ void Presenter::PresentMetal(Frame* frame, bool is_game_frame) {
                 metal_present_cv.notify_all();
             });
     }
+    // Its tick stands for the frame's fence: a fenced submission would go through MoltenVK.
     SubmitInfo info{};
     info.AddWait(frame->ready_semaphore, frame->ready_tick);
-    info.AddSignal(frame->present_done);
+    frame->present_tick = scheduler.CurrentTick();
     scheduler.Flush(info);
 }
 
@@ -892,26 +900,8 @@ Frame* Presenter::GetRenderFrame() {
         free_queue.pop();
     }
 
-    const vk::Device device = instance.GetDevice();
-    vk::Result result{};
-
-    const auto wait = [&]() {
-        result = device.waitForFences(frame->present_done, false, std::numeric_limits<u64>::max());
-        return result;
-    };
-
     // Wait for the presentation to be finished so all frame resources are free
-    while (wait() != vk::Result::eSuccess) {
-        if (result == vk::Result::eErrorDeviceLost) {
-            Breadcrumbs::ReportDeviceLost("waiting for a frame");
-        }
-        ASSERT_MSG(result != vk::Result::eErrorDeviceLost,
-                   "Device lost during waiting for a frame");
-        // Retry if the waiting times out
-        if (result == vk::Result::eTimeout) {
-            continue;
-        }
-    }
+    WaitPresentDone(frame);
 
     if (swapchain.IsMetal()) {
         // Its last Metal present may still be drawing it into the window.
