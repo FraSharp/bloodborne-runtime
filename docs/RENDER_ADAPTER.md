@@ -5,7 +5,9 @@
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
 M2 is in progress: step 1, the command stream, is done (everything both backends run records
-through the adapter); step 2, a Metal command stream, is next.
+through the adapter); in step 2, the Metal recorder encodes every command the shared code
+records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
+ticks) still goes through MoltenVK.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -532,6 +534,27 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   The rasterizer holds the Vulkan instance and scheduler only to make the Vulkan backend's
   parts (the sparse arena, the upscaler). These move behind the device before M4 drops Vulkan
   from the Mac build.
+- **M2 step 2, the Metal recorder:** with the Metal frame (`BB_METAL_FRAME=1`) the device's
+  recorder is the Metal recorder (`renderer_metal/mtl_recorder.mm`). The Metal frame already
+  owns every command buffer and encodes each Vulkan call into Metal (`mtl_vk_layer`); the
+  Metal recorder encodes its commands into the owned command buffer's Metal state itself
+  (`MetalLayer::OwnedFor`), so they are no longer Vulkan calls translated back. It covers the
+  draw state (one recorded command per commit with the changed fields, where the Vulkan
+  recorder records one per field), draws and dispatches with their pipelines, vertex and index
+  buffers, push constants and descriptors, barriers and image transitions, clears, blits,
+  fills and GPU-written labels. The Vulkan runtime's transfers and the scheduler's passes
+  encode through a `StreamEncoder` (`vk_stream_encoder.h`): Vulkan commands, or the Metal
+  frame's encodings. Measured with the Metal frame, each slice against the one before it
+  (base first): the draw state 37.5 against 36.8 FPS; draws and bindings 37.0 against 36.4;
+  barriers and clears 38.7 against 35.6; transfers 37.2 (its base run was slow throughout)
+  and 38.2 in a second run; passes 38.2 against 37.8; labels 37.9 against 38.4 (new second).
+  Frames correct throughout, with MetalFX, scene resolution and object motion too.
+
+  Still Vulkan on the Metal frame: the command buffers' begin and end and the submissions
+  (how the layer makes and commits its Metal command buffers; MoltenVK's empty submissions
+  signal the scheduler's ticks), debug labels and breadcrumb markers, draws whose count the GPU
+  reads and image resolves (the Metal frame encodes neither), and the Vulkan backend's own
+  presenter and upscaler (step 4).
 
 ## Decisions
 
