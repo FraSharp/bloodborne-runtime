@@ -273,6 +273,24 @@ public:
         });
     }
 
+    /// A label the guest waits on, as the portable label (vk_gpu_labels.cpp) the layer encoded:
+    /// after all earlier work, the high word before the low word the guest polls.
+    void WriteLabel(u64 buffer, u64 offset, u64 value, u32 num_bytes) override {
+        scheduler.Record([buffer = AsBuffer(buffer), offset, value, num_bytes](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::Barrier(o);
+                if (num_bytes == 8) {
+                    const u32 high = u32(value >> 32);
+                    MetalFrame::UpdateBuffer(o, buffer, offset + 4, sizeof(high), &high);
+                    MetalFrame::Barrier(o);
+                }
+                const u32 low = u32(value);
+                MetalFrame::UpdateBuffer(o, buffer, offset, sizeof(low), &low);
+                MetalFrame::Barrier(o);
+            });
+        });
+    }
+
 protected:
     void RecordBarrier() {
         scheduler.Record([](vk::CommandBuffer cmd) {
@@ -503,7 +521,7 @@ std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(Vulkan::Scheduler& sc
                                                            Vulkan::DescriptorHeap& descriptor_heap,
                                                            vk::Device device) {
     std::printf("Metal recorder: draws, dispatches, bindings, the draw state, barriers, clears, "
-                "blits, fills, passes and the runtime's transfers are encoded in Metal directly\n");
+                "blits, fills, labels, passes and the runtime's transfers are encoded in Metal directly\n");
     return std::make_unique<FrameRecorder>(scheduler, descriptor_heap, device);
 }
 
