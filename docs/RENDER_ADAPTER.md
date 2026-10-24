@@ -9,8 +9,8 @@ through the adapter); in step 2, the Metal recorder encodes every command the sh
 records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
 ticks) still goes through MoltenVK, to be replaced once nothing else submits through Vulkan
 (after step 4). Step 3 is done: with the Metal frame, shaders and pipelines are Metal's only.
-In step 4 the window is presented through Metal and the present is drawn in Metal; the
-upscalers' own passes are next.
+In step 4 the window is presented through Metal, the present is drawn in Metal, and the
+upscaler's own passes are encoded in Metal; Metal submissions are next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -598,6 +598,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   scheduler's submission stays, empty but for the diagnostics' copies (the frame dumps), for
   the frame's fence until Metal submissions replace it. Measured: 36.5 against 37.0 FPS (new
   second); validation clean; the drawable grab as before.
+- **M2 step 4, the upscaler's passes:** the upscaler stays the Vulkan backend's own class, but
+  what it records goes through the device: TAA and its sharpening (barriers, the histories'
+  transitions by declared use, bindings, dispatches) and its other compute passes (the scene
+  merge, the reactive mask, the extra sharpening after MetalFX and FSR 4, FSR 4's encode,
+  decode and reactive passes) through the recorder; its barriers, blits, copies, depth clear
+  and diagnostic download through the stream encoder (`ActiveStreamEncoder`, the device's).
+  With the Metal frame all of it is encoded in Metal directly. Still recorded as Vulkan by
+  the upscaler: FSR 3.1 (FidelityFX's library) and DLSS. Measured with the Metal frame: TAA
+  30.2 against 30.4 FPS, FSR 3.1 32.6 both, MetalFX at Quality 29.8 against 30.3 (new
+  second each); MoltenVK as before; frames correct.
 
 ## Decisions
 
