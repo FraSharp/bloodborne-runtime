@@ -88,6 +88,13 @@ public:
     }
 
 protected:
+    /// How BindResources records its parts (`data` and `writes` already in the recording chunk);
+    /// the Metal recorder encodes them instead.
+    virtual void RecordPushConstants(vk::PipelineLayout layout, vk::ShaderStageFlags stages,
+                                     std::span<const u8> data);
+    virtual void RecordPushDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout layout,
+                                       std::span<const vk::WriteDescriptorSet> writes);
+
     Scheduler& scheduler;
     DescriptorHeap& descriptor_heap;
     vk::Device device;

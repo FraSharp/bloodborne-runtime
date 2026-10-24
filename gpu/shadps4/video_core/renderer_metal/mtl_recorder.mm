@@ -8,6 +8,7 @@
 #include "video_core/renderer_metal/mtl_frame.h"
 #include "video_core/renderer_metal/mtl_recorder.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
+#include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
@@ -108,9 +109,138 @@ MetalFrame::Owned* Encoder(vk::CommandBuffer cmdbuf) {
     return o;
 }
 
+/// Runs `encode(owned)` as the layer runs its encodings: counted, in an autorelease pool (the
+/// recording threads never drain one of their own).
+template <typename F>
+void Encode(vk::CommandBuffer cmdbuf, F&& encode) {
+    if (auto* o = Encoder(cmdbuf)) {
+        ++o->commands;
+        @autoreleasepool {
+            encode(*o);
+        }
+    }
+}
+
+VkBuffer AsBuffer(u64 native) {
+    return reinterpret_cast<VkBuffer>(native);
+}
+VkPipeline AsPipeline(u64 native) {
+    return reinterpret_cast<VkPipeline>(native);
+}
+
 class FrameRecorder final : public Vulkan::CommandRecorder {
 public:
     using Vulkan::CommandRecorder::CommandRecorder;
+
+    // Each command captures only what it encodes, as the Vulkan recorder's (larger captures fill
+    // the recording chunks sooner).
+    void Draw(const Backend::DrawCommand& d, const Backend::Crumb& crumb) override {
+        if (d.args_buffer && d.count_buffer) {
+            // Not encoded by the Metal frame either (counted as unsupported there).
+            Vulkan::CommandRecorder::Draw(d, crumb);
+            return;
+        }
+        const VkPipeline pipeline = AsPipeline(d.pipeline);
+        if (!d.args_buffer) {
+            scheduler.RecordCrumb(crumb, [pipeline, indexed = d.indexed, count = d.count,
+                                          instances = d.instances, first = d.first,
+                                          first_instance = d.first_instance](vk::CommandBuffer cmd) {
+                Encode(cmd, [&](MetalFrame::Owned& o) {
+                    MetalFrame::BindPipeline(o, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                    if (indexed) {
+                        MetalFrame::DrawIndexed(o, count, instances, 0, s32(first), first_instance);
+                    } else {
+                        MetalFrame::Draw(o, count, instances, first, first_instance);
+                    }
+                });
+            });
+            return;
+        }
+        scheduler.RecordCrumb(crumb, [pipeline, indexed = d.indexed, args = AsBuffer(d.args_buffer),
+                                      args_offset = d.args_offset, max_draws = d.max_draws,
+                                      stride = d.stride](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::BindPipeline(o, VK_PIPELINE_BIND_POINT_GRAPHICS, pipeline);
+                MetalFrame::DrawIndirect(o, args, args_offset, max_draws, stride, indexed);
+            });
+        });
+    }
+
+    void Dispatch(const Backend::DispatchCommand& d, const Backend::Crumb& crumb) override {
+        const VkPipeline pipeline = AsPipeline(d.pipeline);
+        if (!d.args_buffer) {
+            scheduler.RecordCrumb(crumb, [pipeline, x = d.groups[0], y = d.groups[1],
+                                          z = d.groups[2]](vk::CommandBuffer cmd) {
+                Encode(cmd, [&](MetalFrame::Owned& o) {
+                    MetalFrame::BindPipeline(o, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                    MetalFrame::Dispatch(o, x, y, z);
+                });
+            });
+            return;
+        }
+        scheduler.RecordCrumb(crumb, [pipeline, args = AsBuffer(d.args_buffer),
+                                      args_offset = d.args_offset,
+                                      raw = vk::Buffer{AsBuffer(d.crumb_args_buffer)},
+                                      raw_offset = d.crumb_args_offset,
+                                      slot = crumb.args_slot](vk::CommandBuffer cmd) {
+            Vulkan::Breadcrumbs::CopyArgs(cmd, raw, raw_offset, slot); // what the game wrote
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::BindPipeline(o, VK_PIPELINE_BIND_POINT_COMPUTE, pipeline);
+                MetalFrame::DispatchIndirect(o, args, args_offset);
+            });
+        });
+    }
+
+    void BindIndexBuffer(u64 buffer, u64 offset, Backend::IndexType type) override {
+        scheduler.Record([handle = AsBuffer(buffer), offset, type](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::BindIndexBuffer(o, handle, offset, static_cast<VkIndexType>(type));
+            });
+        });
+    }
+
+    void BindVertexBuffers(std::span<const u64> buffers, std::span<const u64> offsets,
+                           std::span<const u64> sizes, std::span<const u64> strides) override {
+        const u32 count = static_cast<u32>(buffers.size());
+        // Handles and offsets are 64-bit like u64: read in place. The Metal frame takes no sizes.
+        const auto handles = scheduler.RecordData(std::span<const VkBuffer>{
+            reinterpret_cast<const VkBuffer*>(buffers.data()), count});
+        const auto vk_offsets = scheduler.RecordData(std::span<const VkDeviceSize>{offsets});
+        const auto vk_strides = strides.empty()
+                                    ? std::span<const VkDeviceSize>{}
+                                    : scheduler.RecordData(std::span<const VkDeviceSize>{strides});
+        scheduler.Record([count, handles, vk_offsets, vk_strides](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::BindVertexBuffers(o, 0, count, handles.data(), vk_offsets.data(),
+                                              vk_strides.empty() ? nullptr : vk_strides.data());
+            });
+        });
+    }
+
+protected:
+    void RecordPushConstants(vk::PipelineLayout, vk::ShaderStageFlags,
+                             std::span<const u8> data) override {
+        scheduler.Record([data](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::PushConstants(o, 0, u32(data.size()), data.data());
+            });
+        });
+    }
+
+    void RecordPushDescriptors(vk::PipelineBindPoint bind_point, vk::PipelineLayout,
+                               std::span<const vk::WriteDescriptorSet> writes) override {
+        static_assert(sizeof(vk::WriteDescriptorSet) == sizeof(VkWriteDescriptorSet));
+        scheduler.Record([point = static_cast<VkPipelineBindPoint>(bind_point),
+                          writes](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::PushDescriptorSet(
+                    o, point, 0, u32(writes.size()),
+                    reinterpret_cast<const VkWriteDescriptorSet*>(writes.data()));
+            });
+        });
+    }
+
+public:
 
     /// The changed draw state as one command (the Vulkan recorder records one per field, and
     /// the layer translated each back).
@@ -237,7 +367,8 @@ public:
 std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(Vulkan::Scheduler& scheduler,
                                                            Vulkan::DescriptorHeap& descriptor_heap,
                                                            vk::Device device) {
-    std::printf("Metal recorder: the draw state is encoded in Metal directly\n");
+    std::printf("Metal recorder: draws, dispatches, bindings and the draw state are encoded in "
+                "Metal directly\n");
     return std::make_unique<FrameRecorder>(scheduler, descriptor_heap, device);
 }
 

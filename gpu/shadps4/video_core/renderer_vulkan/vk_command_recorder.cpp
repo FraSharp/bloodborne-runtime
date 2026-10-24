@@ -453,6 +453,21 @@ void CommandRecorder::InsertLabel(const char* name, u32 color) {
     scheduler.CommandBuffer().insertDebugUtilsLabelEXT(label);
 }
 
+void CommandRecorder::RecordPushConstants(vk::PipelineLayout layout, vk::ShaderStageFlags stages,
+                                          std::span<const u8> data) {
+    scheduler.Record([layout, stages, data](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pushConstants(layout, stages, 0u, u32(data.size()), data.data());
+    });
+}
+
+void CommandRecorder::RecordPushDescriptors(vk::PipelineBindPoint bind_point,
+                                            vk::PipelineLayout layout,
+                                            std::span<const vk::WriteDescriptorSet> writes) {
+    scheduler.Record([bind_point, layout, writes](vk::CommandBuffer cmdbuf) {
+        cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
+    });
+}
+
 void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                                     std::span<const Backend::SlotWrite> set_writes,
                                     std::span<const u8> push_constants,
@@ -462,10 +477,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
     const auto bind_point = record.bind_point;
     const vk::PipelineLayout layout = *record.layout;
     if (!push_constants.empty()) {
-        scheduler.Record([layout, stage_flags = record.push_stages,
-                          data = scheduler.RecordData(push_constants)](vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushConstants(layout, stage_flags, 0u, u32(data.size()), data.data());
-        });
+        RecordPushConstants(layout, record.push_stages, scheduler.RecordData(push_constants));
     }
 
     // Bind descriptor set.
@@ -514,10 +526,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                     writes[i].pBufferInfo = buffers.data() + (write.buffers - buffer_infos.data());
                 }
             }
-            scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
-                                 vk::CommandBuffer cmdbuf) {
-                cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
-            });
+            RecordPushDescriptors(bind_point, layout, std::span{writes, count});
             return;
         }
         size_t bytes = count * sizeof(vk::WriteDescriptorSet) + 64;
@@ -539,10 +548,7 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
                     scheduler.RecordData(std::span{write.pImageInfo, write.descriptorCount}).data();
             }
         }
-        scheduler.Record([bind_point, layout, writes = std::span{writes, count}](
-                             vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, writes);
-        });
+        RecordPushDescriptors(bind_point, layout, std::span{writes, count});
         return;
     }
 
@@ -552,9 +558,8 @@ void CommandRecorder::BindResources(const Backend::PipelineAllocation& pipeline,
         vk_writes.push_back(ToVk(write));
     }
     if (record.push_descriptors) {
-        scheduler.Record([&](vk::CommandBuffer cmdbuf) {
-            cmdbuf.pushDescriptorSetKHR(bind_point, layout, 0, vk_writes);
-        });
+        // Recorded at once (not deferred): the writes may stay where they are.
+        RecordPushDescriptors(bind_point, layout, vk_writes);
         return;
     }
 
