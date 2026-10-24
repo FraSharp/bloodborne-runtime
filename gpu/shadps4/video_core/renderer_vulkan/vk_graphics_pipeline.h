@@ -42,7 +42,7 @@ public:
         bool Deserialize(Serialization::Archive& ar);
     };
 
-    GraphicsPipeline(const Instance& instance, const Shader::Profile& profile,
+    GraphicsPipeline(VideoCore::Backend::Device& device, const Shader::Profile& profile,
                      const GraphicsPipelineKey& key,
                      std::span<const Shader::Info*, MaxShaderStages> stages,
                      std::span<const Shader::RuntimeInfo, MaxShaderStages> runtime_infos,

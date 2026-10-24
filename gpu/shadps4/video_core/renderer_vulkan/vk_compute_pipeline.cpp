@@ -10,15 +10,15 @@
 
 namespace Vulkan {
 
-ComputePipeline::ComputePipeline(const Instance& instance, const Shader::Profile& profile,
+ComputePipeline::ComputePipeline(VideoCore::Backend::Device& device, const Shader::Profile& profile,
                                  ComputePipelineKey compute_key_, const Shader::Info& info_,
                                  VideoCore::Backend::ShaderHandle shader,
                                  SerializationSupport& sdata, bool preloading /*=false*/)
-    : Pipeline{instance, profile, true}, compute_key{compute_key_} {
+    : Pipeline{device, profile, true}, compute_key{compute_key_} {
     stages[int(Shader::SwStage::Compute)] = &info_;
     BindingSlots slots;
     AppendBindingSlots(info_, VideoCore::Backend::ShaderStage::Compute, slots);
-    const auto created = BackendDevice::From(instance).CreateComputePipeline(
+    const auto created = device.CreateComputePipeline(
         {.shader = shader, .layout = {.slots = slots, .push_constant_size = sizeof(Shader::PushData)}},
         GetDebugString());
     if (preloading && !created.handle) {

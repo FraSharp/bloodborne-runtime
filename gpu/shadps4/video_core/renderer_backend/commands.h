@@ -3,6 +3,7 @@
 
 #pragma once
 
+#include <functional>
 #include <span>
 #include <string>
 
@@ -227,6 +228,14 @@ public:
     virtual void RecordHostCopy(Common::UniqueFunction<void>&& copy) = 0;
     virtual void NoteHostCopySource(u64 address, u64 size) = 0;
     [[nodiscard]] virtual bool HostCopiesPendingFor(u64 address, u64 size) = 0;
+    /// Before a write the guest can observe: waits for every queued host copy, or only for
+    /// those that may read [address, address + size).
+    virtual void WaitHostCopies() = 0;
+    virtual void WaitHostCopiesFor(u64 address, u64 size) = 0;
+    /// Runs `signal` after the host copies queued so far, without waiting here; before a
+    /// guest-visible write, WaitDeferredSignals writes the signals deferred so far first.
+    virtual void SignalAfterHostCopies(std::function<void()> signal) = 0;
+    virtual void WaitDeferredSignals() = 0;
 
     /// Debug labels for capture tools (`color`: 0xAARRGGBB, 0 for none).
     virtual void BeginLabel(const char* name) = 0;

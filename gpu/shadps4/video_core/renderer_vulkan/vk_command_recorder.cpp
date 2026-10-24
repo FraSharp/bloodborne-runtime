@@ -241,6 +241,22 @@ bool CommandRecorder::HostCopiesPendingFor(u64 address, u64 size) {
     return scheduler.HostCopiesPendingFor(address, size);
 }
 
+void CommandRecorder::WaitHostCopies() {
+    scheduler.WaitHostCopies();
+}
+
+void CommandRecorder::WaitHostCopiesFor(u64 address, u64 size) {
+    scheduler.WaitHostCopiesFor(address, size);
+}
+
+void CommandRecorder::SignalAfterHostCopies(std::function<void()> signal) {
+    scheduler.SignalAfterHostCopies(std::move(signal));
+}
+
+void CommandRecorder::WaitDeferredSignals() {
+    scheduler.WaitDeferredSignals();
+}
+
 void CommandRecorder::BeginPass(const Backend::RenderState& state) {
     scheduler.BeginRendering(state);
 }

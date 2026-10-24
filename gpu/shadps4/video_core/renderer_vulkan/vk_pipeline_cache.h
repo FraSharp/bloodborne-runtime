@@ -134,8 +134,8 @@ class PipelineCompiler;
 
 class PipelineCache {
 public:
-    explicit PipelineCache(const Instance& instance, Scheduler& scheduler,
-                           AmdGpu::Liverpool* liverpool, u32 sparse_page_shift);
+    explicit PipelineCache(VideoCore::Backend::Device& device, AmdGpu::Liverpool* liverpool,
+                           u32 sparse_page_shift);
     ~PipelineCache();
 
     void WarmUp();
@@ -201,8 +201,7 @@ private:
     }
 
 private:
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     AmdGpu::Liverpool* liverpool;
     Shader::Profile profile{};
     Shader::Pools pools;

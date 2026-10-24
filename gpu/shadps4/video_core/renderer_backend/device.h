@@ -60,6 +60,10 @@ public:
     /// (reading back what it wrote).
     virtual void AfterCompletion(Common::UniqueFunction<void>&& work) = 0;
 
+    /// Guest memory the GPU uses in place where the platform maps it for the device
+    /// (BB_GUEST_GPU_MEMORY, Linux): set up before the runtime maps direct memory.
+    virtual void InstallGuestMemory() = 0;
+
     // Thread-safe. Destroy* is deferred like DeferRelease; the handle is stale at once.
     [[nodiscard]] virtual BufferAllocation CreateBuffer(const BufferDesc& desc,
                                                         std::string_view name) = 0;

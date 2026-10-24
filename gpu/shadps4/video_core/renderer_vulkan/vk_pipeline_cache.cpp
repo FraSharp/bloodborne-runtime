@@ -191,7 +191,7 @@ const Shader::RuntimeInfo& PipelineCache::BuildRuntimeInfo(PipelineSelection& se
         info.hw.vs.user_clip_plane_mask = regs.clipper_control.user_clip_plane_enable;
         info.hw.vs.num_outputs = MapOutputs(info.hw.vs.outputs, regs.vs_output_control);
         info.hw.vs.emulate_depth_negative_one_to_one =
-            !BackendDevice::From(instance).GetCapabilities().depth_clip_control &&
+            !device.GetCapabilities().depth_clip_control &&
             regs.clipper_control.clip_space == AmdGpu::ClipSpace::MinusWToW;
         info.hw.vs.clip_disable = regs.IsClipDisabled();
         info.hw.vs.motion_vectors = sel.motion;
@@ -351,12 +351,12 @@ private:
     bool stop = false;
 };
 
-PipelineCache::PipelineCache(const Instance& instance_, Scheduler& scheduler_,
-                             AmdGpu::Liverpool* liverpool_, u32 sparse_page_shift)
-    : instance{instance_}, scheduler{scheduler_}, liverpool{liverpool_} {
+PipelineCache::PipelineCache(VideoCore::Backend::Device& device_, AmdGpu::Liverpool* liverpool_,
+                             u32 sparse_page_shift)
+    : device{device_}, liverpool{liverpool_} {
     sel.regs = &liverpool->regs;
     // What the device's shaders can do; the rest comes from the game and the memory model.
-    profile = BackendDevice::From(instance).ShaderProfile();
+    profile = device.ShaderProfile();
     profile.sparse_page_shift = sparse_page_shift;
     // bbport BB_LAYER_MEMORY: buffers over nearly all memory go through the page table.
     profile.paged_buffers = VideoCore::BufferCache::LayerPagedActive();
@@ -545,7 +545,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
             GraphicsPipeline::SerializationSupport sdata{};
             MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
-                instance, profile, key, infos, runtime_infos, fetch,
+                device, profile, key, infos, runtime_infos, fetch,
                 modules, sdata, false);
             MetalShadow::GraphicsFromVulkan(key, NativeModules(modules), infos, runtime_infos,
                                             sdata, pipeline);
@@ -568,7 +568,7 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<GraphicsPipeline>(
-                instance, profile, sel.graphics_key, sel.infos,
+                device, profile, sel.graphics_key, sel.infos,
                 sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
         }
         MetalShadow::GraphicsFromVulkan(sel.graphics_key, NativeModules(sel.modules), sel.infos,
@@ -624,7 +624,7 @@ bool PipelineCache::AsyncSkippable(const PipelineSelection& selection, bool indi
         const char* env = std::getenv("BB_ASYNC_PIPELINES");
         return !(env && env[0] == '0');
     }();
-    if (!enabled || !BackendDevice::From(instance).GetCapabilities().dynamic_vertex_input || !selection.regs) {
+    if (!enabled || !device.GetCapabilities().dynamic_vertex_input || !selection.regs) {
         return false;
     }
     static u32 frame_seen = ~0u;
@@ -680,7 +680,7 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         {
             MetalShadow::GameBuildScope game_build;
             it.value() = std::make_unique<ComputePipeline>(
-                instance, profile, compute_key, *sel.infos[0],
+                device, profile, compute_key, *sel.infos[0],
                 sel.modules[0], sdata, false);
         }
         if (MetalShadow::Enabled()) {
@@ -966,8 +966,8 @@ bool PipelineCache::RefreshGraphicsKey(PipelineSelection& sel) {
     // Force all color samples to match depth samples to avoid unsupported MSAA configuration
     if (color_samples != 0) {
         const bool depth_mismatch = db_enabled && color_samples != key.depth_samples;
-        if (!all_color_samples_same && !BackendDevice::From(instance).GetCapabilities().mixed_any_samples ||
-            all_color_samples_same && depth_mismatch && !BackendDevice::From(instance).GetCapabilities().mixed_depth_samples) {
+        if (!all_color_samples_same && !device.GetCapabilities().mixed_any_samples ||
+            all_color_samples_same && depth_mismatch && !device.GetCapabilities().mixed_depth_samples) {
             key.color_samples.fill(key.depth_samples);
             key.num_samples = key.depth_samples;
         }
@@ -1026,7 +1026,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
 
     switch (regs.stage_enable.raw) {
     case AmdGpu::ShaderStageEnable::VgtStages::EsGs:
-        if (!BackendDevice::From(instance).GetCapabilities().geometry_shaders) {
+        if (!device.GetCapabilities().geometry_shaders) {
             NoteSkippedGeometryDraw();
             return false;
         }
@@ -1042,7 +1042,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         break;
     case AmdGpu::ShaderStageEnable::VgtStages::LsHs:
-        if (!BackendDevice::From(instance).GetCapabilities().tessellation) {
+        if (!device.GetCapabilities().tessellation) {
             return false;
         }
         if (!bind_stage(HwStage::Hull, SwStage::TessellationControl)) {
@@ -1057,10 +1057,10 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
         }
         break;
     case AmdGpu::ShaderStageEnable::VgtStages::LsHsEsGs:
-        if (!BackendDevice::From(instance).GetCapabilities().tessellation) {
+        if (!device.GetCapabilities().tessellation) {
             return false;
         }
-        if (!BackendDevice::From(instance).GetCapabilities().geometry_shaders) {
+        if (!device.GetCapabilities().geometry_shaders) {
             NoteSkippedGeometryDraw();
             return false;
         }
@@ -1211,7 +1211,7 @@ bool PipelineCache::RefreshGraphicsStages(PipelineSelection& sel) {
             }
         }
     }
-    if (vs_info && sel.fetch_shader && !BackendDevice::From(instance).GetCapabilities().dynamic_vertex_input) {
+    if (vs_info && sel.fetch_shader && !device.GetCapabilities().dynamic_vertex_input) {
         // Without vertex input dynamic state, the pipeline needs to specialize on format.
         // Stride will still be handled outside the pipeline using dynamic state.
         u32 vertex_binding = 0;
@@ -1399,18 +1399,18 @@ PipelineCache::Result PipelineCache::GetProgram(PipelineSelection& sel, HwStage 
 
 VideoCore::Backend::ShaderHandle PipelineCache::MakeShader(std::span<const u32> spirv,
                                                            std::string_view name) {
-    const auto shader = BackendDevice::From(instance).CreateShader(spirv, name);
+    const auto shader = device.CreateShader(spirv, name);
     ASSERT_MSG(shader.handle, "Failed to compile SPIR-V shader {}", name);
     return shader.handle;
 }
 
 void PipelineCache::ReleaseShader(VideoCore::Backend::ShaderHandle module) {
-    BackendDevice::From(instance).DestroyShader(module);
+    device.DestroyShader(module);
 }
 
 vk::ShaderModule PipelineCache::NativeModule(VideoCore::Backend::ShaderHandle module) {
     return module ? vk::ShaderModule{reinterpret_cast<VkShaderModule>(
-                        BackendDevice::From(instance).NativeHandle(module))}
+                        device.NativeHandle(module))}
                   : vk::ShaderModule{};
 }
 

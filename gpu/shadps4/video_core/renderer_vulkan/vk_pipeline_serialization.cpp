@@ -180,7 +180,7 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
     std::unique_ptr<ComputePipeline> pipeline;
     {
         MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<ComputePipeline>(instance, profile, compute_key, *sel.infos[0],
+        pipeline = std::make_unique<ComputePipeline>(device, profile, compute_key, *sel.infos[0],
                                                      sel.modules[0], sdata, true);
     }
     if (MetalShadow::Enabled()) {
@@ -273,7 +273,7 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
     {
         MetalShadow::GameBuildScope game_build;
         pipeline = std::make_unique<GraphicsPipeline>(
-            instance, profile, sel.graphics_key, sel.infos,
+            device, profile, sel.graphics_key, sel.infos,
             sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
     }
     MetalShadow::GraphicsFromVulkan(sel.graphics_key, NativeModules(sel.modules), sel.infos,
@@ -319,7 +319,7 @@ bool PipelineCache::LoadPipelineStage(Serialization::Archive& ar, size_t stage) 
     // bbport: a module the driver rejects is a damaged entry (WarmUp rebuilds the cache), not a
     // fatal error as in CompileSPV.
     const auto compile = [&] {
-        const auto shader = BackendDevice::From(instance).CreateShader(spv, {});
+        const auto shader = device.CreateShader(spv, {});
         if (!shader.handle) {
             throw Serialization::CorruptData{"cached SPIR-V rejected by the driver"};
         }

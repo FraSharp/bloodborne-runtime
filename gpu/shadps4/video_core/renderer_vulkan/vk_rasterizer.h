@@ -46,15 +46,6 @@ public:
                         Scheduler& scheduler, Runtime& runtime, AmdGpu::Liverpool* liverpool);
     ~Rasterizer();
 
-    /// The command stream's scheduler and the device's instance (the Vulkan backend's own
-    /// passes in the copy shader's handling).
-    [[nodiscard]] Scheduler& GetScheduler() noexcept {
-        return scheduler;
-    }
-    [[nodiscard]] const Instance& GetInstance() const noexcept {
-        return instance;
-    }
-
     [[nodiscard]] VideoCore::Backend::Device& GetDevice() noexcept {
         return device;
     }
@@ -137,13 +128,13 @@ public:
     /// bbport: a guest thread wrote [addr, addr + size) with a libc import (memcpy, memset, memmove)
     /// over pages the caches watch (no write tracking): what a write fault did.
     void OnCpuWrite(VAddr addr, u64 size);
-    /// GPU thread, before a write the guest can observe (see Scheduler::WaitHostCopies).
+    /// GPU thread, before a write the guest can observe (CommandRecorder::WaitHostCopies).
     void WaitHostCopies() {
         DrainDrawPipe();
-        scheduler.WaitHostCopies();
+        recorder.WaitHostCopies();
     }
     /// Before a write into [address, address + size): waits only when a host copy may still read
-    /// it (Scheduler::WaitHostCopiesFor). BB_HOST_COPY_WAITS=all: always (the old behaviour).
+    /// it (CommandRecorder::WaitHostCopiesFor). BB_HOST_COPY_WAITS=all: always (the old behaviour).
     void WaitHostCopiesFor(VAddr address, u64 size) {
         DrainDrawPipe();
         static const bool all = [] {
@@ -151,14 +142,14 @@ public:
             return env && std::string_view{env} == "all";
         }();
         if (all) {
-            scheduler.WaitHostCopies();
+            recorder.WaitHostCopies();
         } else {
-            scheduler.WaitHostCopiesFor(address, size);
+            recorder.WaitHostCopiesFor(address, size);
         }
     }
-    /// Notes the guest memory a host copy issued now reads (see Scheduler::NoteHostCopySource).
+    /// Notes the guest memory a host copy issued now reads (CommandRecorder::NoteHostCopySource).
     void NoteHostCopySource(VAddr address, u64 size) {
-        scheduler.NoteHostCopySource(address, size);
+        recorder.NoteHostCopySource(address, size);
     }
 
     /// bbport: GPU command thread: waits until the draw recording thread has recorded every
@@ -196,11 +187,11 @@ public:
     void NotePendingRead(VAddr address, u64 size);
     /// Before a guest-visible write: fences deferred earlier are written first.
     void WaitDeferredSignals() {
-        scheduler.WaitDeferredSignals();
+        recorder.WaitDeferredSignals();
     }
     /// Runs `signal` after the guest memory copies issued so far, without waiting here.
     void SignalAfterHostCopies(std::function<void()> signal) {
-        scheduler.SignalAfterHostCopies(std::move(signal));
+        recorder.SignalAfterHostCopies(std::move(signal));
     }
     /// bbport BB_HONEST_LABELS=1: runs `signal` once the GPU has finished every command recorded
     /// before this call (the submission of the current tick), in call order, on a thread that
@@ -259,7 +250,7 @@ public:
     /// they wait for, in order, when it gets there (one request in flight at a time).
     void RequestSignalFlush();
     u64 CurrentTick() const {
-        return scheduler.CurrentTick();
+        return device.CurrentTick();
     }
     /// The newest queued value of the fence at `address` (a WaitRegMem in the same stream is met
     /// by it in stream order).
@@ -470,6 +461,7 @@ private:
     friend class VideoCore::BufferCache;
 
     VideoCore::Backend::Device& device; ///< the render adapter's (ticks, waits)
+    // The Vulkan backend's own parts only: the buffer cache's sparse arena and the upscaler.
     const Instance& instance;
     Scheduler& scheduler;
     /// The device's command stream (renderer_backend/commands.h).

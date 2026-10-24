@@ -12,6 +12,7 @@
 #include "video_core/renderer_metal/mtl_resources.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_backend_readback.h"
+#include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
@@ -73,6 +74,11 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
     capabilities.vertex_stores =
         instance.GetPhysicalDevice().getFeatures().vertexPipelineStoresAndAtomics;
     VideoCore::Backend::SelectedApi();
+    GpuProfiler::Init(instance, scheduler);
+}
+
+void BackendDevice::InstallGuestMemory() {
+    BbGuestMemory::Install(instance);
 }
 
 namespace Backend = VideoCore::Backend;

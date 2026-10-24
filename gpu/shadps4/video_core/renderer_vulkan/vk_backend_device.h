@@ -75,6 +75,7 @@ public:
     void AfterCompletion(Common::UniqueFunction<void>&& work) override {
         scheduler.DeferPriorityOperation(std::move(work));
     }
+    void InstallGuestMemory() override;
 
     [[nodiscard]] VideoCore::Backend::BufferAllocation CreateBuffer(
         const VideoCore::Backend::BufferDesc& desc, std::string_view name) override;

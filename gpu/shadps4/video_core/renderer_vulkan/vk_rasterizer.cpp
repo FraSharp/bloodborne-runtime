@@ -114,7 +114,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
       texture_cache{device, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
-      pipeline_cache{instance, scheduler, liverpool, buffer_cache.GetSparsePageShift()},
+      pipeline_cache{device, liverpool, buffer_cache.GetSparsePageShift()},
       host_markers_enabled{EmulatorSettings.IsVkHostMarkersEnabled()},
       guest_markers_enabled{EmulatorSettings.IsVkGuestMarkersEnabled()} {
     // bbport (macOS): objects removed from the Metal residency set stay alive until the GPU has
@@ -142,20 +142,15 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
     }
-    BbGuestMemory::Install(instance); // bbport: before the runtime maps direct memory
+    device.InstallGuestMemory(); // bbport: before the runtime maps direct memory
     memory->SetRasterizer(this);
 
-    GpuProfiler::Init(instance, scheduler);
     if (DrawPipeWanted()) {
         constant_ring = std::make_unique<ConstantRing>(device);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
     }
     // bbport: this thread joins the texture binding helper before it changes image state.
     runtime.SetImageAccessHook(&JoinBindHelper, this);
-    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
-        runtime.FlushBarriers();
-        buffer_cache.SubmitPendingArenaBinds(info);
-    });
 }
 
 Rasterizer::~Rasterizer() {

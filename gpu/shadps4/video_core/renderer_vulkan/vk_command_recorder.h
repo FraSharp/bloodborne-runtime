@@ -72,6 +72,10 @@ public:
     void RecordHostCopy(Common::UniqueFunction<void>&& copy) override;
     void NoteHostCopySource(u64 address, u64 size) override;
     [[nodiscard]] bool HostCopiesPendingFor(u64 address, u64 size) override;
+    void WaitHostCopies() override;
+    void WaitHostCopiesFor(u64 address, u64 size) override;
+    void SignalAfterHostCopies(std::function<void()> signal) override;
+    void WaitDeferredSignals() override;
     void BeginLabel(const char* name) override;
     void EndLabel() override;
     void InsertLabel(const char* name, u32 color) override;

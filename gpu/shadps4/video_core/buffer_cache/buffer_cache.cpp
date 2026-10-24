@@ -562,6 +562,11 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
       gds_buffer{device, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = device.GetCapabilities().integrated;
+    // Each submission carries the barriers pending and the sparse arena binds made for it.
+    scheduler.SetSubmitCallback([this](Vulkan::SubmitInfo& info) {
+        runtime.FlushBarriers();
+        SubmitPendingArenaBinds(info);
+    });
     // bbport (macOS, MoltenVK): no sparse buffers. The game's memory pool is imported once; its
     // mappings alias it, so every guest buffer is a range of it (UnifiedRange).
     if (!device.GetCapabilities().sparse_buffers) {
