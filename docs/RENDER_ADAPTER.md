@@ -7,7 +7,9 @@ backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Met
 M2 is in progress: step 1, the command stream, is done (everything both backends run records
 through the adapter); in step 2, the Metal recorder encodes every command the shared code
 records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
-ticks) still goes through MoltenVK.
+ticks) still goes through MoltenVK, to be replaced once nothing else submits through Vulkan
+(after step 4). Step 3 is done: with the Metal frame, shaders and pipelines are Metal's only.
+Step 4, the presenter and upscalers on Metal, is next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -555,6 +557,22 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   signal the scheduler's ticks), debug labels and breadcrumb markers, draws whose count the GPU
   reads and image resolves (the Metal frame encodes neither), and the Vulkan backend's own
   presenter and upscaler (step 4).
+- **M2 step 3, pipelines and shaders:** with the Metal frame every draw and dispatch binds the
+  Metal pipeline, so MoltenVK's builds were unused work. The device asks the layer for a
+  Metal-only pipeline (`MetalLayer::MetalOnlyPipeline`, a placeholder handle MoltenVK never
+  sees) and builds the Metal pipeline itself: guest pipelines from their own state, which
+  their description carries (`GuestGraphics`, `GuestCompute`: the pipeline cache's key, guest
+  state only, and the shaders by guest stage; the Metal builder emulates rect and quad lists,
+  tessellation and geometry shaders from it), the renderer's own from the create info the
+  device makes. Shaders are their SPIR-V registered with the Metal builder under placeholder
+  handles, without MoltenVK modules; pipelines hold their shaders, and the last release drops
+  the builder's copy by handle (the compiled forms stay with the content cache the session's
+  Metal pipelines point into). The pipeline cache no longer calls the Metal builder itself.
+  Measured with the Metal frame: the same 400 Metal pipelines, 0 failed, no draw without one;
+  FPS as before each slice (38.6 against 34.0 with a slow base run, 37.9 against 38.0, 36.9
+  against 36.3); 400 shaders with 6.7 MiB of SPIR-V no longer copied into MoltenVK modules.
+  The pipeline cache keeps its programs for the session, so no shader is released early in
+  play.
 
 ## Decisions
 
