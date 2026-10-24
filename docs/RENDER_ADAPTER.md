@@ -9,8 +9,8 @@ through the adapter); in step 2, the Metal recorder encodes every command the sh
 records into the Metal frame directly. Step 3 is done: with the Metal frame, shaders and
 pipelines are Metal's only. In step 4 the window is presented through Metal, the present is
 drawn in Metal, and the upscaler's own passes are encoded in Metal. The stream's skeleton is
-in progress: the frame's submissions are committed in Metal; the presenter's fenced
-submission, command buffers' begin and end, and debug labels still go through MoltenVK.
+in progress: every submission is committed in Metal; command buffers are still begun and
+ended in MoltenVK (empty: it never runs them).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -616,10 +616,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   one for them. Its waits are already ordered by the single queue, so a submission goes to
   MoltenVK only when it has a fence, a binary semaphore, a semaphore without a shared event,
   or waits for a value not yet committed. `BB_METAL_SUBMIT=0` hands every submission to
-  MoltenVK. Measured with the Metal frame: 36.3 FPS both (new second); ~335 submissions a
-  second committed in Metal, ~35 through MoltenVK (the presenter's, which waits on a fence);
-  the GPU thread's 4.20–4.37 µs per draw against 4.19–5.19; Metal API validation clean; the
-  drawable grab correct.
+  MoltenVK. The presenter's submission signals no fence with the Metal frame: a frame records
+  the present scheduler's tick and waits on it. Measured with the Metal frame (new second):
+  36.3 FPS both with the presenter still fenced (~335 submissions a second in Metal, ~35
+  through MoltenVK; Metal API validation clean), then 39.6 against 38.7 with its tick (~433 a
+  second in Metal, none through MoltenVK; 4.06–4.20 µs per draw against 4.13–4.63); frames
+  correct. Debug labels, timestamps and occlusion queries on these command buffers are not
+  run: nothing submits MoltenVK's side of them. Not taken: leaving MoltenVK's command buffers
+  unbegun (the layer answering begin and end) was slower in both orders, 38.6 against 39.5
+  and 38.2 against 39.4 FPS (4.31–4.73 against 4.11–4.28 µs per draw), cause unknown; they
+  stay until MoltenVK leaves (M4).
 
 ## Decisions
 
