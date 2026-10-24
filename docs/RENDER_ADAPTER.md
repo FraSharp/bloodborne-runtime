@@ -9,8 +9,8 @@ through the adapter); in step 2, the Metal recorder encodes every command the sh
 records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
 ticks) still goes through MoltenVK, to be replaced once nothing else submits through Vulkan
 (after step 4). Step 3 is done: with the Metal frame, shaders and pipelines are Metal's only.
-In step 4 the window is presented through Metal; the presenter's and upscalers' own passes
-are next.
+In step 4 the window is presented through Metal and the present is drawn in Metal; the
+upscalers' own passes are next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -587,8 +587,17 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   new build in both orders (4.26–5.19 against 4.10–4.28 µs new first), unexplained (nothing in
   the change runs on that thread). Metal API validation clean; the drawable grab shows the
   frame letterboxed with the FPS counter. Not yet tried: window resizing, full screen,
-  minimising, HDR output and Immediate mode. The extra full-screen copy goes when the presenter
-  draws into the drawable itself.
+  minimising, HDR output and Immediate mode.
+- **M2 step 4, the present drawn in Metal:** the presenter no longer draws into an offscreen
+  image for the swapchain to copy. With the Metal frame one Metal command buffer, after the
+  frame's work on the queue, clears the drawable to black, draws the frame letterboxed into it
+  (a full-screen triangle sampling it linearly, as the Vulkan blit filtered), draws the
+  settings overlay and FPS counter with Dear ImGui's Metal backend
+  (`shim/bbport_overlay_metal.mm`; the overlay's frame logic is shared), and presents it. A
+  frame is reused once its present has read it; the swapchain keeps no images. The present
+  scheduler's submission stays, empty but for the diagnostics' copies (the frame dumps), for
+  the frame's fence until Metal submissions replace it. Measured: 36.5 against 37.0 FPS (new
+  second); validation clean; the drawable grab as before.
 
 ## Decisions
 
