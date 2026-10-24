@@ -16,10 +16,6 @@
 #include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
 #include "video_core/renderer_vulkan/vk_depth_resampler.h"
-#if BB_METAL_BACKEND
-#include "video_core/renderer_metal/mtl_recorder.h"
-#include "video_core/renderer_metal/mtl_vk_layer.h"
-#endif
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
@@ -110,14 +106,11 @@ static u32 BufferImageCopySize(const vk::BufferImageCopy& copy, const vk::Format
 }
 
 Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
-    : instance{instance_}, scheduler{scheduler_}, staging_pool{instance_, scheduler_} {
+    : instance{instance_}, scheduler{scheduler_}, staging_pool{instance_, scheduler_},
+      encoder{&scheduler_.Encoder()} {
     blit_helper = std::make_unique<VideoCore::BlitHelper>(instance, scheduler);
     depth_resampler = std::make_unique<DepthResampler>(instance, scheduler);
-#if BB_METAL_BACKEND
-    if (MetalLayer::FrameEnabled()) {
-        encoder = &Metal::FrameTransferEncoder();
-    }
-#endif
+
 
     memory_barrier.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
     memory_barrier.dstAccessMask =

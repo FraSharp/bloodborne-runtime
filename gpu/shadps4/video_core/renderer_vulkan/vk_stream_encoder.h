@@ -1,5 +1,5 @@
-// The Vulkan runtime's transfer commands (docs/RENDER_ADAPTER.md, M2 step 2): how the runtime's
-// recorded commands encode their copies, clears and barriers. As Vulkan commands, or, with the
+// The Vulkan backend's stream commands (docs/RENDER_ADAPTER.md, M2 step 2): how the scheduler's
+// passes and the runtime's copies, clears and barriers encode. As Vulkan commands, or, with the
 // Metal frame (BB_METAL_FRAME=1), straight into its Metal encoders (renderer_metal/
 // mtl_recorder.mm) instead of as Vulkan calls the layer translates.
 // SPDX-License-Identifier: GPL-2.0-or-later
@@ -15,9 +15,9 @@ namespace Vulkan {
 
 /// Called inside recorded commands with the command buffer they run on; arrays live in the
 /// recording chunk (or on the caller's stack when recorded at once).
-class TransferEncoder {
+class StreamEncoder {
 public:
-    virtual ~TransferEncoder() = default;
+    virtual ~StreamEncoder() = default;
 
     virtual void CopyBuffer(vk::CommandBuffer cmd, vk::Buffer src, vk::Buffer dst,
                             std::span<const vk::BufferCopy> regions) const = 0;
@@ -38,9 +38,11 @@ public:
                                  const vk::ClearColorValue& color,
                                  const vk::ImageSubresourceRange& range) const = 0;
     virtual void Barrier(vk::CommandBuffer cmd, const vk::DependencyInfo& info) const = 0;
+    virtual void BeginRendering(vk::CommandBuffer cmd, const vk::RenderingInfo& info) const = 0;
+    virtual void EndRendering(vk::CommandBuffer cmd) const = 0;
 };
 
 /// The Vulkan commands themselves.
-[[nodiscard]] const TransferEncoder& VulkanTransferEncoder();
+[[nodiscard]] const StreamEncoder& VulkanStreamEncoder();
 
 } // namespace Vulkan

@@ -30,6 +30,7 @@
 #include "video_core/renderer_backend/pass.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_state.h"
+#include "video_core/renderer_vulkan/vk_stream_encoder.h"
 #include "video_core/renderer_vulkan/vk_resource_pool.h"
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
@@ -444,6 +445,15 @@ public:
     static void TracePassBreak(void* caller);
 
     /// Sets a function to be called on every scheduler submission.
+    /// How passes and the runtime's transfers encode (vk_stream_encoder.h); set before any
+    /// recording.
+    void SetEncoder(const StreamEncoder& stream_encoder) noexcept {
+        encoder = &stream_encoder;
+    }
+    [[nodiscard]] const StreamEncoder& Encoder() const noexcept {
+        return *encoder;
+    }
+
     void SetSubmitCallback(SubmitFunc&& on_submit) {
         this->on_submit = std::move(on_submit);
     }
@@ -992,6 +1002,7 @@ private:
     /// with the segments before it.
     bool direct_segment = false;
     CarriedScope* carried_scope = nullptr;
+    const StreamEncoder* encoder = &VulkanStreamEncoder();
     void CarrySuspend(bool inside_render_pass) {
         if (carried_scope) {
             carried_scope->Suspend(inside_render_pass);

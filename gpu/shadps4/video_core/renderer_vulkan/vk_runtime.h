@@ -8,7 +8,7 @@
 #include "video_core/renderer_backend/transfers.h"
 #include "video_core/renderer_vulkan/vk_barrier_tracker.h"
 #include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
-#include "video_core/renderer_vulkan/vk_transfer_encoder.h"
+#include "video_core/renderer_vulkan/vk_stream_encoder.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/types.h"
 
@@ -182,8 +182,9 @@ private:
     void (*native_access_hook)(void*, VideoCore::Image&, bool) = nullptr;
     void* native_access_context = nullptr;
     std::unique_ptr<DepthResampler> depth_resampler;
-    /// How recorded transfers encode (the Metal frame's own with BB_METAL_FRAME=1).
-    const TransferEncoder* encoder = &VulkanTransferEncoder();
+    /// How recorded transfers encode: the scheduler's (the Metal frame's own with
+    /// BB_METAL_FRAME=1), set before the runtime exists.
+    const StreamEncoder* encoder;
     const Instance& instance;
     Scheduler& scheduler;
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;

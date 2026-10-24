@@ -10,7 +10,7 @@
 #include <memory>
 
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
-#include "video_core/renderer_vulkan/vk_transfer_encoder.h"
+#include "video_core/renderer_vulkan/vk_stream_encoder.h"
 
 namespace Metal {
 
@@ -19,6 +19,6 @@ namespace Metal {
     Vulkan::Scheduler& scheduler, Vulkan::DescriptorHeap& descriptor_heap, vk::Device device);
 
 /// The Vulkan runtime's transfers encoded by the Metal frame.
-[[nodiscard]] const Vulkan::TransferEncoder& FrameTransferEncoder();
+[[nodiscard]] const Vulkan::StreamEncoder& FrameStreamEncoder();
 
 } // namespace Metal

@@ -424,8 +424,9 @@ public:
     }
 };
 
-/// The runtime's transfers, encoded as the layer encodes the Vulkan commands they replace.
-class FrameTransfers final : public Vulkan::TransferEncoder {
+/// The scheduler's passes and the runtime's transfers, encoded as the layer encodes the Vulkan
+/// commands they replace.
+class FrameStream final : public Vulkan::StreamEncoder {
 public:
     void CopyBuffer(vk::CommandBuffer cmd, vk::Buffer src, vk::Buffer dst,
                     std::span<const vk::BufferCopy> regions) const override {
@@ -468,7 +469,7 @@ public:
     void ResolveImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
                       const vk::ImageResolve& region) const override {
         // Not encoded by the Metal frame (counted as unsupported there): the layer's way.
-        Vulkan::VulkanTransferEncoder().ResolveImage(cmd, src, dst, region);
+        Vulkan::VulkanStreamEncoder().ResolveImage(cmd, src, dst, region);
     }
     void ClearColorImage(vk::CommandBuffer cmd, vk::Image image, const vk::ClearColorValue& color,
                          const vk::ImageSubresourceRange& range) const override {
@@ -480,12 +481,21 @@ public:
     void Barrier(vk::CommandBuffer cmd, const vk::DependencyInfo&) const override {
         Encode(cmd, [](MetalFrame::Owned& o) { MetalFrame::Barrier(o); });
     }
+    void BeginRendering(vk::CommandBuffer cmd, const vk::RenderingInfo& info) const override {
+        static_assert(sizeof(vk::RenderingInfo) == sizeof(VkRenderingInfo));
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::BeginRendering(o, reinterpret_cast<const VkRenderingInfo*>(&info));
+        });
+    }
+    void EndRendering(vk::CommandBuffer cmd) const override {
+        Encode(cmd, [](MetalFrame::Owned& o) { MetalFrame::EndRendering(o); });
+    }
 };
 
 } // namespace
 
-const Vulkan::TransferEncoder& FrameTransferEncoder() {
-    static const FrameTransfers encoder;
+const Vulkan::StreamEncoder& FrameStreamEncoder() {
+    static const FrameStream encoder;
     return encoder;
 }
 
@@ -493,7 +503,7 @@ std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(Vulkan::Scheduler& sc
                                                            Vulkan::DescriptorHeap& descriptor_heap,
                                                            vk::Device device) {
     std::printf("Metal recorder: draws, dispatches, bindings, the draw state, barriers, clears, "
-                "blits, fills and the runtime's transfers are encoded in Metal directly\n");
+                "blits, fills, passes and the runtime's transfers are encoded in Metal directly\n");
     return std::make_unique<FrameRecorder>(scheduler, descriptor_heap, device);
 }
 

@@ -1,12 +1,12 @@
-// The Vulkan runtime's transfer commands as Vulkan commands (vk_transfer_encoder.h).
+// The Vulkan backend's stream commands as Vulkan commands (vk_stream_encoder.h).
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "video_core/renderer_vulkan/vk_transfer_encoder.h"
+#include "video_core/renderer_vulkan/vk_stream_encoder.h"
 
 namespace Vulkan {
 namespace {
 
-class VulkanEncoder final : public TransferEncoder {
+class VulkanEncoder final : public StreamEncoder {
 public:
     void CopyBuffer(vk::CommandBuffer cmd, vk::Buffer src, vk::Buffer dst,
                     std::span<const vk::BufferCopy> regions) const override {
@@ -47,11 +47,17 @@ public:
     void Barrier(vk::CommandBuffer cmd, const vk::DependencyInfo& info) const override {
         cmd.pipelineBarrier2(info);
     }
+    void BeginRendering(vk::CommandBuffer cmd, const vk::RenderingInfo& info) const override {
+        cmd.beginRendering(info);
+    }
+    void EndRendering(vk::CommandBuffer cmd) const override {
+        cmd.endRendering();
+    }
 };
 
 } // namespace
 
-const TransferEncoder& VulkanTransferEncoder() {
+const StreamEncoder& VulkanStreamEncoder() {
     static const VulkanEncoder encoder;
     return encoder;
 }
