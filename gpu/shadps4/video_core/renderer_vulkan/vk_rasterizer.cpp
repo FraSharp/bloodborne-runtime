@@ -147,7 +147,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
 
     GpuProfiler::Init(instance, scheduler);
     if (DrawPipeWanted()) {
-        constant_ring = std::make_unique<ConstantRing>(instance, scheduler);
+        constant_ring = std::make_unique<ConstantRing>(device);
         draw_pipe = std::make_unique<DrawPipe>(&RunDrawPacket, this);
     }
     // bbport: this thread joins the texture binding helper before it changes image state.
@@ -349,7 +349,7 @@ bool Rasterizer::OcclusionEvent(VAddr address, u32 pairs) {
         return false;
     }
     if (!occlusion) {
-        occlusion = std::make_unique<OcclusionQueries>(instance, scheduler, buffer_cache);
+        occlusion = std::make_unique<OcclusionQueries>(device, buffer_cache);
     }
     occlusion->Event(address, pairs);
     return true;
@@ -380,7 +380,7 @@ bool Rasterizer::WriteTimestampOnGpu(VAddr address, bool end_of_pipe) {
         return false;
     }
     if (!timestamps) {
-        timestamps = std::make_unique<GpuTimestamps>(instance, scheduler, buffer_cache);
+        timestamps = std::make_unique<GpuTimestamps>(device, buffer_cache);
     }
     return timestamps->Write(address, end_of_pipe);
 }
@@ -2342,7 +2342,7 @@ void Rasterizer::DispatchIndirectRecord(const ComputePipeline* pipeline, VAddr a
     u64 args_offset = base;
     if (IndirectGuard::Enabled()) {
         if (!indirect_guard) {
-            indirect_guard = std::make_unique<IndirectGuard>(instance, scheduler);
+            indirect_guard = std::make_unique<IndirectGuard>(device);
         }
         std::tie(args, args_offset) = indirect_guard->CheckArgs(*buffer, base);
     }

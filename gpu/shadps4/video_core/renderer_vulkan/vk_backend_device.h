@@ -70,6 +70,9 @@ public:
         // Past the next submission: the draw pipeline records draws prepared earlier.
         scheduler.DeferOperationPastNext(std::move(release));
     }
+    void AfterCompletion(Common::UniqueFunction<void>&& work) override {
+        scheduler.DeferPriorityOperation(std::move(work));
+    }
 
     [[nodiscard]] VideoCore::Backend::BufferAllocation CreateBuffer(
         const VideoCore::Backend::BufferDesc& desc, std::string_view name) override;

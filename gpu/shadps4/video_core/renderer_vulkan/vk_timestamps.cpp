@@ -1,6 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "video_core/renderer_vulkan/vk_state.h"
-#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_timestamps.h"
 
 #include <array>
@@ -11,9 +9,6 @@
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/host_shaders/gpu_timestamp_comp.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
 
 namespace Vulkan {
 
@@ -34,13 +29,9 @@ void Split(u64 value, u32 (&out)[2]) {
 
 } // namespace
 
-GpuTimestamps::GpuTimestamps(const Instance& instance_, Scheduler& scheduler_,
+GpuTimestamps::GpuTimestamps(VideoCore::Backend::Device& device_,
                              VideoCore::BufferCache& buffer_cache_)
-    : instance{instance_}, scheduler{scheduler_},
-      recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(),
-               instance_.GetDevice()},
-      buffer_cache{buffer_cache_} {
-    auto& device = BackendDevice::From(instance);
+    : device{device_}, buffer_cache{buffer_cache_} {
     valid_bits = device.GetCapabilities().timestamp_valid_bits;
     period_ns = device.GetCapabilities().timestamp_period_ns;
     if (valid_bits == 0 || period_ns <= 0.0) {
@@ -56,26 +47,26 @@ GpuTimestamps::GpuTimestamps(const Instance& instance_, Scheduler& scheduler_,
     namespace Backend = VideoCore::Backend;
     constexpr std::array slots{Backend::BindingSlot{.kind = Backend::BindingKind::StorageBuffer,
                                                     .stages = Backend::ShaderStage::Compute}};
-    pipeline = MakeHostCompute(device, GPU_TIMESTAMP_COMP, slots, sizeof(Push), "GPU timestamp");
+    pipeline = Backend::MakeCompute(device, GPU_TIMESTAMP_COMP, slots, sizeof(Push), "GPU timestamp");
 }
 
 GpuTimestamps::~GpuTimestamps() {
-    BackendDevice::From(instance).DestroyQueryPool(pool.handle);
+    device.DestroyQueryPool(pool.handle);
 }
 
 void GpuTimestamps::Calibrate() {
     calibrated = true;
     // A timestamp taken while the GPU has nothing else to do, between two host clock readings.
+    auto& recorder = device.Recorder();
     recorder.EndPass();
-    scheduler.Finish();
+    recorder.Finish();
     recorder.ResetQueries(pool.native, 0, 1);
     recorder.WriteTimestamp(pool.native, 0, true);
     const u64 before = AmdGpu::GetGpuClock64();
-    scheduler.Finish();
+    recorder.Finish();
     const u64 after = AmdGpu::GetGpuClock64();
     u64 ticks = 0;
-    if (!BackendDevice::From(instance).ReadQueryResults(pool.handle, 0, std::span{&ticks, 1},
-                                                        false)) {
+    if (!device.ReadQueryResults(pool.handle, 0, std::span{&ticks, 1}, false)) {
         valid_bits = 0;
         std::printf("GPU: the calibration timestamp was not available: the GPU clock is written "
                     "by the CPU after the GPU\n");
@@ -97,6 +88,7 @@ bool GpuTimestamps::Write(VAddr address, bool end_of_pipe) {
     if (!Supported()) {
         return false;
     }
+    auto& recorder = device.Recorder();
     recorder.EndPass(); // the copy and the dispatch are outside render passes
     // The value is read by the CPU: in place (a VRAM copy would show it a stale one).
     buffer_cache.force_writes_in_place = true;
@@ -116,11 +108,10 @@ bool GpuTimestamps::Write(VAddr address, bool end_of_pipe) {
     recorder.ResetQueries(pool.native, slot, 1);
     // The end of the pipe: after all the work before it; else when the GPU gets here.
     recorder.WriteTimestamp(pool.native, slot, end_of_pipe);
-    recorder.CopyQueryResults(pool.native, slot, 1, ToNative(results->Handle()),
-                              slot * sizeof(u64));
+    recorder.CopyQueryResults(pool.native, slot, 1, results->Native(), slot * sizeof(u64));
     // Everything before before everything after (a few timestamps a frame).
     recorder.Barrier(Use::Any, Use::Any);
-    const std::array buffers{MakeBufferBinding(results->Handle(), 0, NumSlots * sizeof(u64))};
+    const std::array buffers{VideoCore::BindingOf(*results, 0, NumSlots * sizeof(u64))};
     const std::array writes{Backend::SlotWrite{.slot = 0,
                                                .count = 1,
                                                .kind = Backend::BindingKind::StorageBuffer,

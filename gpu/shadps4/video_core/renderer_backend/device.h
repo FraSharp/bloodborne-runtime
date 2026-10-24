@@ -56,6 +56,9 @@ public:
     /// including work prepared before this call and recorded into a later submission. Callers
     /// never wait for the GPU to free something.
     virtual void DeferRelease(Common::UniqueFunction<void>&& release) = 0;
+    /// Runs `work` on another thread as soon as the GPU has finished what was recorded so far
+    /// (reading back what it wrote).
+    virtual void AfterCompletion(Common::UniqueFunction<void>&& work) = 0;
 
     // Thread-safe. Destroy* is deferred like DeferRelease; the handle is stale at once.
     [[nodiscard]] virtual BufferAllocation CreateBuffer(const BufferDesc& desc,

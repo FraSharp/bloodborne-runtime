@@ -38,7 +38,7 @@ enum ImageFlagBits : u32 {
 DECLARE_ENUM_FLAG_OPERATORS(ImageFlagBits)
 
 struct Image {
-    explicit Image(Backend::Device& device, const Vulkan::Instance& instance,
+    explicit Image(Backend::Device& device,
                    VideoCore::Backend::Transfers& runtime, Common::SlotVector<ImageView>& slot_image_views,
                    const ImageInfo& info);
     ~Image();

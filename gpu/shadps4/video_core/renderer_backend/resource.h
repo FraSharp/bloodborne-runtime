@@ -302,6 +302,8 @@ struct Capabilities {
     u32 max_viewport_width{}, max_viewport_height{};
     u32 max_framebuffer_width{}, max_framebuffer_height{};
     u32 max_sampler_allocations{};
+    u32 max_compute_groups[3]{}; ///< workgroups of one dispatch, per dimension
+    bool precise_occlusion{};    ///< occlusion queries count samples (else any or none)
 };
 
 /// The device's memory as the driver reports it.

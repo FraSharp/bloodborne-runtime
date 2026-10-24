@@ -24,10 +24,8 @@
 #include <vector>
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_command_recorder.h"
-#include "video_core/renderer_vulkan/vk_common.h"
-#include "video_core/renderer_vulkan/vk_host_objects.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
+#include "video_core/renderer_backend/commands.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 
 namespace VideoCore {
 class BufferCache;
@@ -36,12 +34,9 @@ struct Buffer;
 
 namespace Vulkan {
 
-class Instance;
-
-class OcclusionQueries final : public Scheduler::CarriedScope {
+class OcclusionQueries final : public VideoCore::Backend::CarriedScope {
 public:
-    OcclusionQueries(const Instance& instance, Scheduler& scheduler,
-                     VideoCore::BufferCache& buffer_cache);
+    OcclusionQueries(VideoCore::Backend::Device& device, VideoCore::BufferCache& buffer_cache);
     ~OcclusionQueries();
 
     /// A ZPASS_DONE event writing the counters of `pairs` depth blocks at `address` (recording
@@ -96,15 +91,14 @@ private:
     /// Outside a render pass: query slots reset ahead of the segments that will use them.
     void ResetAhead();
 
-    const Instance& instance;
-    Scheduler& scheduler;
-    CommandRecorder recorder; ///< the render adapter's
+    VideoCore::Backend::Device& device;
+    VideoCore::Backend::CommandRecorder& recorder; ///< the device's
     VideoCore::BufferCache& buffer_cache;
     std::recursive_mutex mutex;
     VideoCore::Backend::QueryPoolAllocation pool; ///< the device's, destroyed with this
     std::unique_ptr<VideoCore::Buffer> results; ///< segment results copied for the resolve
     std::unique_ptr<VideoCore::Buffer> total;   ///< the running sample count (64-bit)
-    HostPipeline pipeline;
+    VideoCore::Backend::OwnedPipeline pipeline;
     std::vector<Pending> pending;
     u64 begun = 0;       ///< segments begun (the next one uses slot begun % NumSlots)
     u64 resolved = 0;    ///< segments added to the total

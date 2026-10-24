@@ -17,9 +17,7 @@
 #include <utility>
 
 #include "common/types.h"
-#include "video_core/renderer_vulkan/vk_command_recorder.h"
-#include "video_core/renderer_vulkan/vk_common.h"
-#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 
 namespace VideoCore {
 struct Buffer;
@@ -27,12 +25,9 @@ struct Buffer;
 
 namespace Vulkan {
 
-class Instance;
-class Scheduler;
-
 class IndirectGuard {
 public:
-    IndirectGuard(const Instance& instance, Scheduler& scheduler);
+    explicit IndirectGuard(VideoCore::Backend::Device& device);
     ~IndirectGuard();
 
     static bool Enabled();
@@ -47,12 +42,10 @@ private:
 
     void Report();
 
-    const Instance& instance;
-    Scheduler& scheduler;
+    VideoCore::Backend::Device& device;
     std::unique_ptr<VideoCore::Buffer> checked; ///< NumSlots x 16 bytes of group counts
     std::unique_ptr<VideoCore::Buffer> skipped; ///< count and the last skipped counts (host)
-    HostPipeline pipeline;
-    CommandRecorder recorder; ///< the render adapter's
+    VideoCore::Backend::OwnedPipeline pipeline;
     u32 max_count[3]{};
     u32 max_total = 0;
     std::atomic<u32> next_slot{0};

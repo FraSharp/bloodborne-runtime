@@ -8,11 +8,9 @@
 #include "bbport_metal_residency.h"
 #include "common/assert.h"
 #include "video_core/renderer_vulkan/liverpool_to_vk.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
 
@@ -67,7 +65,7 @@ static Backend::ImageType ConvertImageType(AmdGpu::ImageType type) noexcept {
 }
 
 
-Image::Image(Backend::Device& device_, const Vulkan::Instance& instance,
+Image::Image(Backend::Device& device_,
              VideoCore::Backend::Transfers& runtime_, Common::SlotVector<ImageView>& slot_image_views_,
              const ImageInfo& info_)
     : guest_begin{info_.guest_address}, guest_end{info_.guest_address + info_.guest_size},

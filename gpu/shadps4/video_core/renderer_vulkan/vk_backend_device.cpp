@@ -65,6 +65,11 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
     capabilities.max_framebuffer_width = instance.GetMaxFramebufferWidth();
     capabilities.max_framebuffer_height = instance.GetMaxFramebufferHeight();
     capabilities.max_sampler_allocations = instance.GetMaxSamplerAllocationCount();
+    const auto limits = instance.GetPhysicalDevice().getProperties().limits;
+    for (u32 i = 0; i < 3; ++i) {
+        capabilities.max_compute_groups[i] = limits.maxComputeWorkGroupCount[i];
+    }
+    capabilities.precise_occlusion = instance.IsOcclusionQueryPrecise();
     VideoCore::Backend::SelectedApi();
 }
 

@@ -624,12 +624,7 @@ public:
     /// render pass beginning or ending, a segment cut, a direct segment, a submission) and Resume
     /// right after it; `inside_render_pass` tells where the commands they record go. Called on
     /// the recording side, as Record.
-    struct CarriedScope {
-        virtual void Suspend(bool inside_render_pass) = 0;
-        virtual void Resume(bool inside_render_pass) = 0;
-    protected:
-        ~CarriedScope() = default;
-    };
+    using CarriedScope = VideoCore::Backend::CarriedScope;
     void SetCarriedScope(CarriedScope* scope) {
         carried_scope = scope;
     }

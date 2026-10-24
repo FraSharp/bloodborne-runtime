@@ -222,6 +222,14 @@ bool CommandRecorder::InPass() const {
     return scheduler.IsRendering();
 }
 
+const Backend::RenderState& CommandRecorder::CurrentPass() const {
+    return scheduler.GetRenderState();
+}
+
+void CommandRecorder::SetCarriedScope(Backend::CarriedScope* scope) {
+    scheduler.SetCarriedScope(scope);
+}
+
 bool CommandRecorder::InPassWith(const Backend::RenderState& state) const {
     return scheduler.IsRenderingWith(state);
 }

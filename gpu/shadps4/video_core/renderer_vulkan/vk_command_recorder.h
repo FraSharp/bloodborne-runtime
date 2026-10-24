@@ -21,6 +21,8 @@ public:
     void BeginPass(const VideoCore::Backend::RenderState& state) override;
     void EndPass() override;
     [[nodiscard]] bool InPass() const override;
+    [[nodiscard]] const VideoCore::Backend::RenderState& CurrentPass() const override;
+    void SetCarriedScope(VideoCore::Backend::CarriedScope* scope) override;
     [[nodiscard]] bool InPassWith(const VideoCore::Backend::RenderState& state) const override;
     [[nodiscard]] bool WillBeginPass(const VideoCore::Backend::RenderState& state) const override;
     void ForceNewPass() override;

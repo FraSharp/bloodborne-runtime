@@ -312,7 +312,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::LayerBind(VAddr addres
         return !(env && env[0] == '0');
     }();
     if (resolution.kind == Kind::Mirror && vram_allowed && !is_written && volatile_in_place &&
-        scheduler.IsRendering() && layer_volatile.Overlaps(first, end)) {
+        device.Recorder().InPass() && layer_volatile.Overlaps(first, end)) {
         if (const auto in_place = LayerInPlace(address, size, true)) {
             BbStats::bound_in_place_bytes.fetch_add(size, std::memory_order_relaxed);
             layer_volatile_in_pass_bytes += size;
@@ -708,8 +708,9 @@ void BufferCache::LayerDemote(u64 first, u64 end, bool copy_back, int reason) {
 void BufferCache::LayerMaintain() {
     LayerProcessTraps();
     // Retired mirrors the GPU is done with.
+    const u64 completed = device.CompletedTick();
     std::erase_if(layer_retired, [&](const auto& retired) {
-        return scheduler.GetWorkSemaphore()->IsFree(retired.second);
+        return retired.second <= completed;
     });
     static u32 printed = 0;
     const u32 now = BbStats::coarse_second.load(std::memory_order_relaxed);

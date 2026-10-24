@@ -99,6 +99,18 @@ struct DispatchCommand {
     u64 crumb_args_buffer{}, crumb_args_offset{};
 };
 
+/// Work that may not span submissions or passes (occlusion queries). While one is set, Suspend
+/// is called before every boundary (a pass beginning or ending, a submission) and Resume right
+/// after it; `inside_render_pass` tells where the commands they record go. Called on the
+/// recording side.
+struct CarriedScope {
+    virtual void Suspend(bool inside_render_pass) = 0;
+    virtual void Resume(bool inside_render_pass) = 0;
+
+protected:
+    ~CarriedScope() = default;
+};
+
 /// Records commands into the backend's current submission, in order.
 class CommandRecorder {
 public:
@@ -110,6 +122,8 @@ public:
     /// Ends the open pass, if any.
     virtual void EndPass() = 0;
     [[nodiscard]] virtual bool InPass() const = 0;
+    /// The open pass's (or the last pass's) targets.
+    [[nodiscard]] virtual const RenderState& CurrentPass() const = 0;
     /// A pass with `state`'s targets is open (BeginPass would continue it).
     [[nodiscard]] virtual bool InPassWith(const RenderState& state) const = 0;
     /// BeginPass(state) would start a new pass.
@@ -118,6 +132,8 @@ public:
     virtual void ForceNewPass() = 0;
     /// BB_PASS_LABELS=1: the next pass is recorded inside a debug label with this name.
     virtual void SetPassLabel(std::string label) = 0;
+    /// One scope at a time; nullptr removes it.
+    virtual void SetCarriedScope(CarriedScope* scope) = 0;
 
     /// The draw state of the next draws; CommitDrawState records what changed. (The recorder
     /// refers to the backend's stream: const recorders record too.)

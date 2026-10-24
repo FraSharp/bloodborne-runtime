@@ -3,15 +3,13 @@
 
 #include "shader_recompiler/info.h"
 #include "video_core/renderer_vulkan/vk_state.h"
-#include "video_core/renderer_vulkan/vk_host_objects.h"
+#include "video_core/renderer_backend/host_pipeline.h"
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_rasterizer.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_shader_hle.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/host_shaders/buffer_multi_copy_comp.h"
 #include "game_profile.h"
 #include "bbport_toggles.h"
@@ -51,16 +49,8 @@ static bool MultiCopy(Rasterizer& rasterizer, const VideoCore::Buffer* src,
         constexpr Backend::BindingSlot storage{.kind = Backend::BindingKind::StorageBuffer,
                                                .stages = Backend::ShaderStage::Compute};
         constexpr std::array slots{storage, storage, storage};
-        const auto shader = device.CreateShader(BUFFER_MULTI_COPY_COMP, "buffer multi copy");
-        ASSERT_MSG(shader.handle, "Failed to compile the buffer multi copy shader");
-        const auto allocation = device.CreateComputePipeline(
-            {.shader = shader.handle,
-             .layout = {.slots = slots, .push_constant_size = sizeof(u32)},
-             .host_pass = true},
-            "buffer multi copy");
-        device.DestroyShader(shader.handle); // the pipeline holds it
-        ASSERT_MSG(allocation.handle, "Failed to create the buffer multi copy pipeline");
-        return allocation;
+        return Backend::MakeComputeAllocation(device, BUFFER_MULTI_COPY_COMP, slots, sizeof(u32),
+                                              "buffer multi copy");
     }();
 
     // The region table goes into the stream buffer (host writes, visible at submission).
@@ -186,9 +176,9 @@ static bool ExecuteCopyShaderHLE(const Shader::Info& info, const AmdGpu::Compute
     // each batch synchronizes (uploads, marks GPU-modified) its whole range: GPU time of the copy
     // shader 1.5 -> 0.6 ms/frame, GPU busy 85% -> 77%, frame rate no lower.
     // BB_COPY_MERGE_KB overrides it.
-    static const vk::DeviceSize MaxDistanceForMerge = [] {
+    static const u64 MaxDistanceForMerge = [] {
         const char* env = std::getenv("BB_COPY_MERGE_KB");
-        return env ? vk::DeviceSize(std::strtoull(env, nullptr, 10)) * 1024 : vk::DeviceSize(64_KB);
+        return env ? u64(std::strtoull(env, nullptr, 10)) * 1024 : u64(64_KB);
     }();
     u32 batch_start = 0;
     u32 batch_end = 0;

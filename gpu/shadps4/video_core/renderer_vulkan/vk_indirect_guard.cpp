@@ -1,5 +1,4 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
-#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_indirect_guard.h"
 
 #include <array>
@@ -9,9 +8,6 @@
 
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/host_shaders/indirect_guard_comp.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_state.h"
 
 namespace Vulkan {
 
@@ -42,23 +38,18 @@ bool IndirectGuard::Enabled() {
     return enabled;
 }
 
-IndirectGuard::IndirectGuard(const Instance& instance_, Scheduler& scheduler_)
-    : instance{instance_}, scheduler{scheduler_},
-      recorder{scheduler_, BackendDevice::From(instance_).GetDescriptorHeap(),
-               instance_.GetDevice()} {
-    const auto device = instance.GetDevice();
-    checked = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, NumSlots * 16,
+IndirectGuard::IndirectGuard(VideoCore::Backend::Device& device_) : device{device_} {
+    checked = std::make_unique<VideoCore::Buffer>(device, 0, NumSlots * 16,
                                                   VideoCore::MemoryType::DeviceLocal,
                                                   "Indirect dispatch counts");
-    skipped = std::make_unique<VideoCore::Buffer>(BackendDevice::From(instance), 0, sizeof(Skipped),
+    skipped = std::make_unique<VideoCore::Buffer>(device, 0, sizeof(Skipped),
                                                   VideoCore::MemoryType::HostCached,
                                                   "Indirect dispatches skipped");
     std::memset(skipped->mapped_data.data(), 0, sizeof(Skipped));
     skipped->Flush(0, sizeof(Skipped));
 
-    const auto limits = instance.GetPhysicalDevice().getProperties().limits;
     for (u32 i = 0; i < 3; ++i) {
-        max_count[i] = limits.maxComputeWorkGroupCount[i];
+        max_count[i] = device.GetCapabilities().max_compute_groups[i];
     }
     const char* max = std::getenv("BB_INDIRECT_GUARD_MAX");
     max_total = max && *max ? static_cast<u32>(std::strtoul(max, nullptr, 0)) : 1u << 22;
@@ -67,8 +58,8 @@ IndirectGuard::IndirectGuard(const Instance& instance_, Scheduler& scheduler_)
     constexpr Backend::BindingSlot storage{.kind = Backend::BindingKind::StorageBuffer,
                                            .stages = Backend::ShaderStage::Compute};
     constexpr std::array slots{storage, storage, storage};
-    pipeline = MakeHostCompute(BackendDevice::From(instance), INDIRECT_GUARD_COMP, slots,
-                               sizeof(Push), "indirect guard");
+    pipeline = Backend::MakeCompute(device, INDIRECT_GUARD_COMP, slots, sizeof(Push),
+                                    "indirect guard");
     last_report_ns = NowNs();
 }
 
@@ -77,7 +68,7 @@ IndirectGuard::~IndirectGuard() = default;
 std::pair<u64, u64> IndirectGuard::CheckArgs(const VideoCore::Buffer& args, u64 offset) {
     // A storage binding starts at a multiple of the device's alignment: the arguments are
     // `first` dwords into it.
-    const u64 alignment = instance.StorageMinAlignment();
+    const u64 alignment = device.GetCapabilities().storage_min_alignment;
     const u64 bind_offset = offset / alignment * alignment;
     const u32 first = static_cast<u32>((offset - bind_offset) / sizeof(u32));
     const u64 bind_size = (offset - bind_offset) + 3 * sizeof(u32);
@@ -85,11 +76,12 @@ std::pair<u64, u64> IndirectGuard::CheckArgs(const VideoCore::Buffer& args, u64 
     const Push push{{max_count[0], max_count[1], max_count[2]}, first, max_total, slot * 4};
     namespace Backend = VideoCore::Backend;
     using Use = Backend::MemoryUse;
+    auto& recorder = device.Recorder();
     recorder.Barrier(Use::Any, Use::ComputeRead | Use::ComputeWrite);
     const std::array buffers{
-        MakeBufferBinding(args.Handle(), bind_offset, bind_size),
-        MakeBufferBinding(checked->Handle(), 0, NumSlots * 16),
-        MakeBufferBinding(skipped->Handle(), 0, sizeof(Skipped)),
+        VideoCore::BindingOf(args, bind_offset, bind_size),
+        VideoCore::BindingOf(*checked, 0, NumSlots * 16),
+        VideoCore::BindingOf(*skipped, 0, sizeof(Skipped)),
     };
     std::array<Backend::SlotWrite, 3> writes{};
     for (u32 i = 0; i < writes.size(); ++i) {
