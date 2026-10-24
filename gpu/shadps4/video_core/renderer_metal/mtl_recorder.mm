@@ -2,6 +2,7 @@
 // The render adapter's Metal command stream (mtl_recorder.h).
 
 #include <cstdio>
+#include <cstring>
 
 #include <boost/container/static_vector.hpp>
 
@@ -10,6 +11,7 @@
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #include "video_core/renderer_vulkan/vk_breadcrumbs.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
+#include "video_core/renderer_vulkan/vk_resource_backend.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 
 namespace Metal {
@@ -217,7 +219,67 @@ public:
         });
     }
 
+    // Barriers: Metal tracks hazards within the encoders; the Metal frame ends the open encoders
+    // at each one, as for the layer's vkCmdPipelineBarrier.
+    void Barrier(Backend::MemoryUse, Backend::MemoryUse) override {
+        RecordBarrier();
+    }
+    void BufferBarrier(u64, u64, u64, Backend::MemoryUse, Backend::MemoryUse) override {
+        RecordBarrier();
+    }
+    void TransitImage(const Backend::ImageAllocation& image, Backend::ImageAspect aspect,
+                      Backend::ImageAccess access, bool discard) override {
+        // The image's tracked use, as the Vulkan recorder keeps it (later uses read it).
+        auto& state = static_cast<Vulkan::ImageState*>(image.backend_state)->state;
+        state = Vulkan::ImageAccessState(access, Backend::Has(aspect, Backend::ImageAspect::Depth),
+                                         Backend::Has(aspect, Backend::ImageAspect::Stencil), false);
+        (void)discard;
+        RecordBarrier();
+    }
+
+    void ClearImage(const Backend::ImageAllocation& image,
+                    const Backend::ClearColor& value) override {
+        VkClearColorValue clear{};
+        std::memcpy(clear.uint32, value.data(), sizeof(value));
+        scheduler.Record([image = reinterpret_cast<VkImage>(image.native), clear](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                const VkImageSubresourceRange range{VK_IMAGE_ASPECT_COLOR_BIT, 0, 1, 0, 1};
+                MetalFrame::ClearColorImage(o, image, &clear, 1, &range);
+            });
+        });
+    }
+
+    void BlitImage(u64 src, u64 dst, const Backend::ImageBlit& blit) override {
+        const auto aspect = static_cast<VkImageAspectFlags>(blit.aspect);
+        const VkImageBlit region{
+            .srcSubresource = {aspect, blit.src_level, 0, 1},
+            .srcOffsets = {{0, 0, 0}, {s32(blit.src_width), s32(blit.src_height), 1}},
+            .dstSubresource = {aspect, blit.dst_level, 0, 1},
+            .dstOffsets = {{0, 0, 0}, {s32(blit.dst_width), s32(blit.dst_height), 1}},
+        };
+        scheduler.Record([src = reinterpret_cast<VkImage>(src), dst = reinterpret_cast<VkImage>(dst),
+                          region](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::BlitImage(o, src, dst, 1, &region, VK_FILTER_NEAREST);
+            });
+        });
+    }
+
+    void FillBuffer(u64 buffer, u64 offset, u64 size, u32 value) override {
+        scheduler.Record([buffer = AsBuffer(buffer), offset, size, value](vk::CommandBuffer cmd) {
+            Encode(cmd, [&](MetalFrame::Owned& o) {
+                MetalFrame::FillBuffer(o, buffer, offset, size, value);
+            });
+        });
+    }
+
 protected:
+    void RecordBarrier() {
+        scheduler.Record([](vk::CommandBuffer cmd) {
+            Encode(cmd, [](MetalFrame::Owned& o) { MetalFrame::Barrier(o); });
+        });
+    }
+
     void RecordPushConstants(vk::PipelineLayout, vk::ShaderStageFlags,
                              std::span<const u8> data) override {
         scheduler.Record([data](vk::CommandBuffer cmd) {
@@ -367,8 +429,8 @@ public:
 std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(Vulkan::Scheduler& scheduler,
                                                            Vulkan::DescriptorHeap& descriptor_heap,
                                                            vk::Device device) {
-    std::printf("Metal recorder: draws, dispatches, bindings and the draw state are encoded in "
-                "Metal directly\n");
+    std::printf("Metal recorder: draws, dispatches, bindings, the draw state, barriers, clears, "
+                "blits and fills are encoded in Metal directly\n");
     return std::make_unique<FrameRecorder>(scheduler, descriptor_heap, device);
 }
 
