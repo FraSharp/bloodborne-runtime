@@ -99,6 +99,13 @@ struct DispatchCommand {
     u64 crumb_args_buffer{}, crumb_args_offset{};
 };
 
+/// A scaled copy of one level of an image's planes into another's (nearest sampling).
+struct ImageBlit {
+    ImageAspect aspect{ImageAspect::Color};
+    u32 src_level{}, src_width{}, src_height{};
+    u32 dst_level{}, dst_width{}, dst_height{};
+};
+
 /// Work that may not span submissions or passes (occlusion queries). While one is set, Suspend
 /// is called before every boundary (a pass beginning or ending, a submission) and Resume right
 /// after it; `inside_render_pass` tells where the commands they record go. Called on the
@@ -161,6 +168,9 @@ public:
     /// The state value bindings and attachments of `image` carry from its last TransitImage
     /// (RenderAttachment::image_layout, ImageBinding::layout).
     [[nodiscard]] virtual u32 StateOf(const ImageAllocation& image) const = 0;
+    /// Outside passes: `blit` from `src` (TransferSource use) into `dst` (TransferDestination),
+    /// images by NativeHandle (Device::CanBlit for their format).
+    virtual void BlitImage(u64 src, u64 dst, const ImageBlit& blit) = 0;
 
     /// Occlusion queries (`pool`: QueryPoolAllocation::native). `precise`: exact sample counts.
     virtual void BeginQuery(u64 pool, u32 slot, bool precise) = 0;

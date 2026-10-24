@@ -25,6 +25,7 @@ public:
     void ClearImage(const VideoCore::Backend::ImageAllocation& image,
                     const VideoCore::Backend::ClearColor& value) override;
     [[nodiscard]] u32 StateOf(const VideoCore::Backend::ImageAllocation& image) const override;
+    void BlitImage(u64 src, u64 dst, const VideoCore::Backend::ImageBlit& blit) override;
     [[nodiscard]] const VideoCore::Backend::RenderState& CurrentPass() const override;
     void SetCarriedScope(VideoCore::Backend::CarriedScope* scope) override;
     [[nodiscard]] bool InPassWith(const VideoCore::Backend::RenderState& state) const override;

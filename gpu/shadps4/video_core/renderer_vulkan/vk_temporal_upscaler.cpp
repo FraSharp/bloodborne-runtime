@@ -939,9 +939,10 @@ void TemporalUpscaler::OnBlendedSceneDraw() {
     if (reduced) {
         VideoCore::ImageViewInfo ci;
         ci.format = color.info.pixel_format;
-        source = scene_targets.Read(scene_color, ci, vk::PipelineStageFlagBits2::eTransfer,
-                                    vk::AccessFlagBits2::eTransferRead).image;
-        source_layout = vk::ImageLayout::eGeneral;
+        const auto proxy = scene_targets.Read(scene_color, ci,
+                                              VideoCore::Backend::ImageAccess::TransferSource);
+        source = NativeImage(proxy.image);
+        source_layout = vk::ImageLayout(proxy.layout);
     } else {
         runtime.Transit(&color, VideoCore::Backend::ImageAccess::TransferSource);
         runtime.FlushBarriers();
@@ -999,7 +1000,7 @@ void TemporalUpscaler::OnSceneComposite() {
         VideoCore::ImageViewInfo ci;
         ci.format = color.info.pixel_format;
         const auto proxy = scene_targets.Read(scene_color, ci);
-        mask_ready = RecordReactive(proxy.view);
+        mask_ready = RecordReactive(NativeImageView(proxy.view));
         return;
     }
     const auto device = instance.GetDevice();
@@ -1122,10 +1123,10 @@ void TemporalUpscaler::Run() {
         const auto c = scene_targets.Read(scene_color, ci);
         ci.format = depth.info.pixel_format;
         const auto d = scene_targets.Read(camera_motion.Depth(), ci);
-        input_color = c.image;
-        input_depth = d.image;
-        input_color_view = c.view;
-        input_depth_view = d.view;
+        input_color = NativeImage(c.image);
+        input_depth = NativeImage(d.image);
+        input_color_view = NativeImageView(c.view);
+        input_depth_view = NativeImageView(d.view);
     }
     auto cmdbuf = scheduler.CommandBuffer();
     const auto own_barrier = [&](vk::Image image, vk::ImageLayout old_layout,
@@ -1642,10 +1643,9 @@ void TemporalUpscaler::RunUiOnly(VideoCore::ImageId color_id, VideoCore::ImageId
         VideoCore::ImageViewInfo view;
         view.format = color.info.pixel_format;
         const auto proxy = scene_targets.Read(color_id, view,
-                                              vk::PipelineStageFlagBits2::eTransfer,
-                                              vk::AccessFlagBits2::eTransferRead);
-        source = proxy.image;
-        source_layout = proxy.layout;
+                                              VideoCore::Backend::ImageAccess::TransferSource);
+        source = NativeImage(proxy.image);
+        source_layout = vk::ImageLayout(proxy.layout);
         source_width = render_width;
         source_height = render_height;
     } else {
@@ -1725,10 +1725,10 @@ void TemporalUpscaler::RunScaled() {
         di.format = FromVk(depth_format);
         const auto cp = scene_targets.Read(ldr_target, ci);
         const auto dp = scene_targets.Read(camera_motion.Depth(), di);
-        color_image = cp.image;
-        color_view = cp.view;
-        depth_image = dp.image;
-        depth_view = dp.view;
+        color_image = NativeImage(cp.image);
+        color_view = NativeImageView(cp.view);
+        depth_image = NativeImage(dp.image);
+        depth_view = NativeImageView(dp.view);
         source_width = w;
         source_height = h;
     } else {

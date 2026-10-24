@@ -100,6 +100,21 @@ void CommandRecorder::ClearImage(const Backend::ImageAllocation& image,
     });
 }
 
+void CommandRecorder::BlitImage(u64 src, u64 dst, const Backend::ImageBlit& blit) {
+    const vk::ImageBlit region{
+        .srcSubresource = {ToVk(blit.aspect), blit.src_level, 0, 1},
+        .srcOffsets = std::array{vk::Offset3D{},
+                                 vk::Offset3D{s32(blit.src_width), s32(blit.src_height), 1}},
+        .dstSubresource = {ToVk(blit.aspect), blit.dst_level, 0, 1},
+        .dstOffsets = std::array{vk::Offset3D{},
+                                 vk::Offset3D{s32(blit.dst_width), s32(blit.dst_height), 1}},
+    };
+    scheduler.Record([src = NativeImage(src), dst = NativeImage(dst), region](vk::CommandBuffer cmd) {
+        cmd.blitImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
+                      vk::ImageLayout::eTransferDstOptimal, region, vk::Filter::eNearest);
+    });
+}
+
 u32 CommandRecorder::StateOf(const Backend::ImageAllocation& image) const {
     return static_cast<u32>(static_cast<const ImageState*>(image.backend_state)->state.layout);
 }

@@ -304,6 +304,30 @@ Backend::Format BackendDevice::SupportedFormat(Backend::Format format, Backend::
     return FromVk(instance.GetSupportedFormat(ToVk(format), FormatFeatureFlags(ToVk(usage))));
 }
 
+bool BackendDevice::CanBlit(Backend::Format format) {
+    // Asked for every attachment of every draw (scene resolution): the driver query was ~5% of
+    // the GPU thread, so answers are kept.
+    const u32 index = static_cast<u32>(format);
+    if (index < blit_table.size() && blit_table[index]) {
+        return blit_table[index] == 2;
+    }
+    if (index >= blit_table.size()) {
+        if (const auto it = blit_formats.find(index); it != blit_formats.end()) {
+            return it->second;
+        }
+    }
+    const auto features =
+        instance.GetPhysicalDevice().getFormatProperties(ToVk(format)).optimalTilingFeatures;
+    const auto required = vk::FormatFeatureFlagBits::eBlitSrc | vk::FormatFeatureFlagBits::eBlitDst;
+    const bool blittable = (features & required) == required;
+    if (index < blit_table.size()) {
+        blit_table[index] = blittable ? 2 : 1;
+    } else {
+        blit_formats.emplace(index, blittable);
+    }
+    return blittable;
+}
+
 u32 BackendDevice::SupportedSampleCounts(const Backend::ImageDesc& desc) {
     const vk::ImageCreateInfo ci = ImageCreateInfo(desc);
     const vk::PhysicalDeviceImageFormatInfo2 format_info{

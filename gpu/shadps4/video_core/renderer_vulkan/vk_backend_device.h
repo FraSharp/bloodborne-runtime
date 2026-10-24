@@ -3,8 +3,10 @@
 
 #pragma once
 
+#include <array>
 #include <memory>
 #include <mutex>
+#include <unordered_map>
 #include <boost/container/static_vector.hpp>
 
 #include "video_core/renderer_backend/device.h"
@@ -88,6 +90,7 @@ public:
     [[nodiscard]] VideoCore::Backend::Format SupportedFormat(
         VideoCore::Backend::Format format, VideoCore::Backend::ImageUse usage) override;
     [[nodiscard]] u32 SupportedSampleCounts(const VideoCore::Backend::ImageDesc& desc) override;
+    [[nodiscard]] bool CanBlit(VideoCore::Backend::Format format) override;
     [[nodiscard]] VideoCore::Backend::ImageAllocation CreateImage(
         const VideoCore::Backend::ImageDesc& desc, std::string_view name) override;
     void DestroyImage(VideoCore::Backend::ImageHandle image) override;
@@ -158,6 +161,9 @@ public:
     }
 
 private:
+    // CanBlit: core formats index a flat table; extension formats (large values) use the map.
+    std::array<u8, 256> blit_table{}; ///< 0 unknown, 1 no, 2 yes
+    std::unordered_map<u32, bool> blit_formats;
     Instance instance;
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;

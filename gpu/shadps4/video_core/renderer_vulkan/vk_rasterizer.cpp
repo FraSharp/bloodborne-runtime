@@ -129,7 +129,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
         &device);
     // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
-    scene_targets = std::make_unique<SceneTargets>(instance, scheduler, runtime_, texture_cache);
+    scene_targets = std::make_unique<SceneTargets>(device, runtime_, texture_cache);
     // Object motion first: it fixes the buffer addresses the motion shader variants embed.
     object_motion = std::make_unique<ObjectMotion>(device);
     camera_motion = std::make_unique<CameraMotion>(device, texture_cache, runtime_);

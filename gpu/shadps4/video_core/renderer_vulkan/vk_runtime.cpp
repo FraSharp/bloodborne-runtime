@@ -15,7 +15,7 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
-#include "video_core/renderer_vulkan/vk_scene_resolution.h"
+#include "video_core/renderer_vulkan/vk_depth_resampler.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/blit_helper.h"
 #include "video_core/texture_cache/image.h"
@@ -108,6 +108,7 @@ static u32 BufferImageCopySize(const vk::BufferImageCopy& copy, const vk::Format
 Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
     : instance{instance_}, scheduler{scheduler_}, staging_pool{instance_, scheduler_} {
     blit_helper = std::make_unique<VideoCore::BlitHelper>(instance, scheduler);
+    depth_resampler = std::make_unique<DepthResampler>(instance, scheduler);
 
     memory_barrier.dstStageMask = vk::PipelineStageFlagBits2::eAllCommands;
     memory_barrier.dstAccessMask =
@@ -537,7 +538,13 @@ bool Runtime::Transit(VideoCore::Image* image, vk::ImageLayout dst_layout,
                                 : ClearResolveReason::OtherAccess;
         ResolvePendingClear(image, reason);
     }
-    if (scene_targets) scene_targets->NativeAccess(*image, dst_access);
+    if (native_access_hook) {
+        constexpr auto writes =
+            vk::AccessFlagBits2::eShaderWrite | vk::AccessFlagBits2::eTransferWrite |
+            vk::AccessFlagBits2::eColorAttachmentWrite |
+            vk::AccessFlagBits2::eDepthStencilAttachmentWrite | vk::AccessFlagBits2::eMemoryWrite;
+        native_access_hook(native_access_context, *image, bool(dst_access & writes));
+    }
     const size_t prev_num_barriers = static_cast<size_t>(image_barriers.size());
     ImageBarriers(*image, dst_layout, dst_access, dst_stage, subres_range);
     return image_barriers.size() != prev_num_barriers;
@@ -565,6 +572,41 @@ Runtime::TransferMark::~TransferMark() {
     if (profiler && resume) {
         profiler->Resume(resume);
     }
+}
+
+u64 Runtime::BeginTransferMark(const char* what, const VideoCore::Image& image) {
+    auto* profiler = GpuProfiler::Get();
+    if (!profiler || !profiler->Records(&scheduler)) {
+        return 0;
+    }
+    const u64 resume = profiler->Current();
+    const auto& info = image.info;
+    const u64 key = (u64(reinterpret_cast<uintptr_t>(what)) << 20) ^
+                    (u64(info.pixel_format) << 40) ^ (u64(info.size.width) << 16) ^
+                    info.size.height ^ 0x7A5Full;
+    profiler->Mark(key, [&] {
+        return fmt::format("{} {} {}x{}", what, Backend::FormatName(info.pixel_format),
+                           info.size.width, info.size.height);
+    });
+    return resume;
+}
+
+void Runtime::EndTransferMark(u64 mark) {
+    if (auto* profiler = GpuProfiler::Get(); profiler && mark) {
+        profiler->Resume(mark);
+    }
+}
+
+void Runtime::ResampleDepth(u64 src, u32 src_state, u64 dst, u32 dst_state,
+                            VideoCore::Backend::Format format, bool stencil, u32 width,
+                            u32 height) {
+    depth_resampler->Resample(NativeImage(src), vk::ImageLayout(src_state), NativeImage(dst),
+                              vk::ImageLayout(dst_state), ToVk(format), stencil,
+                              vk::Extent2D{width, height});
+}
+
+bool Runtime::CanResampleDepth(VideoCore::Backend::Format format, bool stencil) {
+    return depth_resampler->Supported(ToVk(format), stencil);
 }
 
 void Runtime::UploadImage(VideoCore::Image* dst, const VideoCore::Buffer* src,

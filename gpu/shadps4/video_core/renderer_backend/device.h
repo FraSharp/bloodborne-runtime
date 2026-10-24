@@ -81,6 +81,8 @@ public:
     [[nodiscard]] virtual Format SupportedFormat(Format format, ImageUse usage) = 0;
     /// The sample counts `desc` can have, as a mask of counts (bit n: 2^n samples).
     [[nodiscard]] virtual u32 SupportedSampleCounts(const ImageDesc& desc) = 0;
+    /// Images of `format` can be blitted (CommandRecorder::BlitImage). Cheap: asked per draw.
+    [[nodiscard]] virtual bool CanBlit(Format format) = 0;
     [[nodiscard]] virtual ImageAllocation CreateImage(const ImageDesc& desc,
                                                       std::string_view name) = 0;
     virtual void DestroyImage(ImageHandle image) = 0;

@@ -51,6 +51,13 @@ public:
     virtual void CopyDepthStencil(Image* src, Image* dst, const SubresourceRange& range) = 0;
     virtual void ResolveImage(Image* src, Image* dst, const SubresourceRange& src_range,
                               const SubresourceRange& dst_range) = 0;
+    /// Depth (and stencil) of `src` drawn into `dst` at `width` x `height`, for formats without
+    /// blits (CanResampleDepth): single-level images by NativeHandle, `src` in Sampled use and
+    /// `dst` in DepthAttachment use, with their state values (CommandRecorder::StateOf,
+    /// BindingLayout).
+    virtual void ResampleDepth(u64 src, u32 src_state, u64 dst, u32 dst_state, Format format,
+                               bool stencil, u32 width, u32 height) = 0;
+    [[nodiscard]] virtual bool CanResampleDepth(Format format, bool stencil) = 0;
 
     /// BB_DEFER_CLEARS: a clear is noted on the image; a pass that draws into the whole range
     /// takes it as its load action (TakePendingClear), any other use records it first.
@@ -83,12 +90,39 @@ public:
     /// RenderAttachment::image_layout): the backend's own state of its current backing.
     [[nodiscard]] virtual u32 BindingLayout(const Image& image) const = 0;
 
+    /// Runs on every declared use of an image (Transit), before its barrier: scene resolution
+    /// writes back a reduced proxy first. `writes`: the use writes the image.
+    virtual void SetNativeAccessHook(void (*hook)(void*, Image&, bool writes), void* context) = 0;
+
+    /// BB_GPU_PROFILE: a profiler segment for a transfer of `image` until EndTransferMark with
+    /// the returned value (0: no profiler); the segment it interrupted continues afterwards.
+    [[nodiscard]] virtual u64 BeginTransferMark(const char* what, const Image& image) = 0;
+    virtual void EndTransferMark(u64 mark) = 0;
+
     /// Runs before this thread changes image state (the rasterizer's texture binding helper).
     virtual void SetImageAccessHook(void (*hook)(void*), void* context) = 0;
     virtual void BeforeImageAccess() = 0;
 
     virtual void TickFrame() = 0;
     [[nodiscard]] virtual Vulkan::StagingBufferPool& GetStagingPool() = 0;
+};
+
+/// A Transfers::BeginTransferMark segment while it lives.
+class ScopedTransferMark {
+public:
+    ScopedTransferMark(Transfers& transfers_, const char* what, const Image& image)
+        : transfers{transfers_}, mark{transfers_.BeginTransferMark(what, image)} {}
+    ~ScopedTransferMark() {
+        if (mark) {
+            transfers.EndTransferMark(mark);
+        }
+    }
+    ScopedTransferMark(const ScopedTransferMark&) = delete;
+    ScopedTransferMark& operator=(const ScopedTransferMark&) = delete;
+
+private:
+    Transfers& transfers;
+    u64 mark;
 };
 
 } // namespace VideoCore::Backend

@@ -17,8 +17,8 @@ class BlitHelper;
 
 namespace Vulkan {
 
+class DepthResampler;
 class GpuProfiler;
-class SceneTargets;
 
 class Instance;
 class Scheduler;
@@ -42,7 +42,6 @@ public:
     }
 
     void TickFrame() override;
-    SceneTargets* scene_targets = nullptr;
 
     // The render adapter's regions (docs/RENDER_ADAPTER.md, A3), converted where recorded.
     void CopyBuffer(const VideoCore::Buffer* src, const VideoCore::Buffer* dst,
@@ -117,6 +116,16 @@ public:
     void ResolveImage(VideoCore::Image* src, VideoCore::Image* dst,
                       const VideoCore::SubresourceRange& src_range,
                       const VideoCore::SubresourceRange& dst_range) override;
+    void ResampleDepth(u64 src, u32 src_state, u64 dst, u32 dst_state,
+                       VideoCore::Backend::Format format, bool stencil, u32 width,
+                       u32 height) override;
+    [[nodiscard]] bool CanResampleDepth(VideoCore::Backend::Format format, bool stencil) override;
+    void SetNativeAccessHook(void (*hook)(void*, VideoCore::Image&, bool), void* context) override {
+        native_access_hook = hook;
+        native_access_context = context;
+    }
+    [[nodiscard]] u64 BeginTransferMark(const char* what, const VideoCore::Image& image) override;
+    void EndTransferMark(u64 mark) override;
     void ClearImage(VideoCore::Image* dst, const VideoCore::SubresourceRange& range,
                     const VideoCore::Backend::ClearColor& clear_value) override;
     /// bbport BB_DEFER_CLEARS (default on, =0 to disable): ClearImage notes the clear on the
@@ -169,6 +178,9 @@ private:
                      const VideoCore::Backend::ClearColor& value);
     void (*image_access_hook)(void*) = nullptr;
     void* image_access_context = nullptr;
+    void (*native_access_hook)(void*, VideoCore::Image&, bool) = nullptr;
+    void* native_access_context = nullptr;
+    std::unique_ptr<DepthResampler> depth_resampler;
     const Instance& instance;
     Scheduler& scheduler;
     std::unique_ptr<VideoCore::BlitHelper> blit_helper;
