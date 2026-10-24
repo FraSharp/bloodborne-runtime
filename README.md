@@ -21,6 +21,8 @@ or as recompiled native code it generates.
 
 **Players:** download the app from [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac/releases/latest).
 
+**Community:** the project's [Discord](https://discord.gg/EyyQ23sTBg) (`#bloodborne-runtime` for this repository).
+
 ## Build and run
 
 ```bash
