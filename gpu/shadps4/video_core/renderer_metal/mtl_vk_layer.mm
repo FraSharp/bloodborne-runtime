@@ -584,6 +584,25 @@ bool FrameEnabled() {
     return frame_enabled;
 }
 
+void* MetalOnlyPipeline(const void* graphics_info, const void* compute_info) {
+    const VkPipeline pipeline = PlaceholderPipeline();
+    @autoreleasepool {
+        if (const auto* info = static_cast<const VkGraphicsPipelineCreateInfo*>(graphics_info)) {
+            bool geometry = false;
+            for (uint32_t st = 0; st < info->stageCount; ++st) {
+                geometry |= info->pStages[st].stage == VK_SHADER_STAGE_GEOMETRY_BIT;
+            }
+            if (!geometry) {
+                MetalShadow::GraphicsCreated(info, pipeline);
+            }
+        } else if (const auto* info =
+                       static_cast<const VkComputePipelineCreateInfo*>(compute_info)) {
+            MetalShadow::ComputeCreated(info, pipeline);
+        }
+    }
+    return pipeline;
+}
+
 MetalFrame::Owned* OwnedFor(void* command_buffer) {
     return FindOwned(static_cast<VkCommandBuffer>(command_buffer));
 }

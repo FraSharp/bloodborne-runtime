@@ -32,6 +32,13 @@ bool FrameEnabled();
 /// render adapter's Metal recorder (mtl_recorder.mm), which encodes without Vulkan calls.
 MetalFrame::Owned* OwnedFor(void* command_buffer);
 
+/// With the Metal frame: a pipeline only Metal builds (MoltenVK never sees it). Returns a
+/// placeholder VkPipeline the Metal frame finds the Metal pipeline by: built here from the
+/// create info (a VkGraphicsPipelineCreateInfo or VkComputePipelineCreateInfo; one is null),
+/// except for game pipelines (built by the pipeline cache with their keys, GameBuildScope) and
+/// geometry-shader ones (likewise).
+void* MetalOnlyPipeline(const void* graphics_info, const void* compute_info);
+
 /// The id<MTLCommandBuffer> an owned command buffer is encoded into, with every encoder ended,
 /// for work encoded outside the layer in order (MetalFX); null when it is not owned.
 void* MetalCommandBuffer(void* command_buffer);

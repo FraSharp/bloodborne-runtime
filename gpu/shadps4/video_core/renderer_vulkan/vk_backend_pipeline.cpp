@@ -10,6 +10,9 @@
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_backend_readback.h"
 #include "video_core/renderer_vulkan/vk_state.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 namespace Vulkan {
 
@@ -304,6 +307,16 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
         .pDynamicState = &dynamic_info,
         .layout = *record->layout,
     };
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame draws with the Metal pipeline alone: MoltenVK does not build one too.
+        record->pipeline = vk::UniquePipeline{
+            vk::Pipeline{static_cast<VkPipeline>(MetalLayer::MetalOnlyPipeline(
+                &static_cast<const VkGraphicsPipelineCreateInfo&>(pipeline_ci), nullptr))},
+            device};
+        return InsertPipeline(std::move(record));
+    }
+#endif
     auto [result, pipeline] = device.createGraphicsPipelineUnique({}, pipeline_ci);
     if (result != vk::Result::eSuccess) {
         // bbport: Metal (MoltenVK) rejects some pipelines Vulkan drivers accept, such as fragment
@@ -359,6 +372,15 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
             },
         .layout = *record->layout,
     };
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        record->pipeline = vk::UniquePipeline{
+            vk::Pipeline{static_cast<VkPipeline>(MetalLayer::MetalOnlyPipeline(
+                nullptr, &static_cast<const VkComputePipelineCreateInfo&>(pipeline_ci)))},
+            device};
+        return InsertPipeline(std::move(record));
+    }
+#endif
     auto [result, pipeline] = device.createComputePipelineUnique({}, pipeline_ci);
     if (result != vk::Result::eSuccess) {
         LOG_ERROR(Render_Vulkan, "Failed to create compute pipeline {}: {}", name,
