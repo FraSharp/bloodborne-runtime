@@ -219,6 +219,9 @@ void ClearDepthStencilImage(Owned& o, VkImage image, const VkClearDepthStencilVa
 void BlitImage(Owned& o, VkImage src, VkImage dst, u32 count, const VkImageBlit* regions,
                VkFilter filter);
 
+/// The Metal texture of a Vulkan image (exported from MoltenVK, or the one it was made from).
+id<MTLTexture> ImageTexture(VkImage image);
+
 /// Buffers declared on every encoder (device-address use), for the reports.
 size_t AddressBufferCount();
 

@@ -583,6 +583,16 @@ void Presenter::GrabScreen(Scheduler& scheduler, vk::CommandBuffer cmdbuf, vk::I
     if (!trigger || std::remove(trigger) != 0) {
         return;
     }
+    if (swapchain.IsMetal()) {
+        // The drawable itself, after the present's copy (the window's picture through Metal).
+        static int index = 0;
+        const char* dir = std::getenv("BB_DUMP_DIR");
+        char path[512];
+        std::snprintf(path, sizeof(path), "%s/m%03d_screen_%ux%u_bgra.raw",
+                      dir && dir[0] ? dir : "out/dump", index++, extent.width, extent.height);
+        swapchain.DumpNextPresent(path);
+        return;
+    }
     const vk::ImageSubresourceRange range{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1};
     const auto transition = [&](vk::ImageLayout from, vk::ImageLayout to, vk::AccessFlags src,
                                 vk::AccessFlags dst) {
@@ -791,9 +801,14 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
         draw_scheduler.WaitSubmitted(frame->ready_tick);
     }
     SubmitInfo info{};
-    info.AddWait(swapchain.GetImageAcquiredSemaphore());
+    // (No swapchain semaphores with the Metal frame: its present is ordered on the queue.)
+    if (const auto acquired = swapchain.GetImageAcquiredSemaphore()) {
+        info.AddWait(acquired);
+    }
     info.AddWait(frame->ready_semaphore, frame->ready_tick);
-    info.AddSignal(swapchain.GetPresentReadySemaphore());
+    if (const auto ready = swapchain.GetPresentReadySemaphore()) {
+        info.AddSignal(ready);
+    }
     info.AddSignal(frame->present_done);
     scheduler.Flush(info);
 

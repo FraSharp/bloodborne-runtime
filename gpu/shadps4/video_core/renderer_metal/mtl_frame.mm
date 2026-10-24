@@ -640,6 +640,10 @@ void BufferImageCopy(Owned& o, BufferRef buffer, id<MTLTexture> texture,
 
 } // namespace
 
+id<MTLTexture> ImageTexture(VkImage image) {
+    return TextureOfImage(image);
+}
+
 Stats& GetStats() {
     return stats;
 }
