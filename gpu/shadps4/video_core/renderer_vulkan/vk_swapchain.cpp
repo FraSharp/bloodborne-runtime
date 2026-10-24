@@ -10,7 +10,6 @@
 #include "sdl_window.h"
 #include "video_core/renderer_vulkan/vk_format.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_swapchain.h"
 #if BB_METAL_BACKEND
 #include "video_core/renderer_metal/mtl_present.h"
@@ -52,8 +51,7 @@ Swapchain::Swapchain(const Instance& instance_, const Frontend::WindowSDL& windo
 
 Swapchain::~Swapchain() {
     if (metal_layer) {
-        DestroyMetal();
-        return;
+        return; // the window owns its layer
     }
     Destroy();
     instance.GetInstance().destroySurfaceKHR(surface);
@@ -151,7 +149,7 @@ void Swapchain::SetHDR(bool hdr) {
 
 bool Swapchain::AcquireNextImage() {
     if (metal_layer) {
-        return AcquireMetal();
+        return !zero_extent; // the drawable is taken when the frame is presented
     }
     vk::Device device = instance.GetDevice();
     vk::Result result =
@@ -183,7 +181,7 @@ VideoCore::Backend::Format Swapchain::ImageFormat() const {
 
 bool Swapchain::Present() {
     if (metal_layer) {
-        return PresentMetal();
+        return true; // presented by PresentFrame
     }
     const vk::PresentInfoKHR present_info = {
         .waitSemaphoreCount = 1,
@@ -399,9 +397,9 @@ void Swapchain::SetupImages() {
 
 void Swapchain::CreateMetal() {
 #if BB_METAL_BACKEND
-    DestroyMetal();
     const auto [pixel_width, pixel_height] = MetalPresent::FitDrawableSize(metal_layer);
     extent = vk::Extent2D{pixel_width, pixel_height};
+    image_count = 3; // the layer's drawables
     if (pixel_width == 0 || pixel_height == 0) {
         zero_extent = true; // minimised (issue #31): presents are skipped until it is back
         needs_recreation = true;
@@ -411,83 +409,30 @@ void Swapchain::CreateMetal() {
     MetalPresent::Configure(metal_layer,
                             {.hdr = needs_hdr,
                              .display_sync = present_mode != vk::PresentModeKHR::eImmediate,
-                             .max_drawables = u32(presenting.size())});
-    // The presenter draws into these as it drew into the swapchain's images.
-    auto& device = *instance.GetBackendDevice();
-    namespace Backend = VideoCore::Backend;
-    const auto format = FromVk(needs_hdr ? SURFACE_FORMAT_HDR.format : surface_format.format);
-    const auto usage = Backend::ImageUse::ColorAttachment | Backend::ImageUse::TransferSource |
-                       Backend::ImageUse::TransferDestination;
-    image_count = u32(presenting.size());
-    images.clear();
-    images_view.clear();
-    for (u32 i = 0; i < image_count; ++i) {
-        MetalImage image;
-        image.image = device.CreateImage({.format = format,
-                                          .width = extent.width,
-                                          .height = extent.height,
-                                          .usage = usage,
-                                          .mutable_format = false},
-                                         "Metal swapchain image");
-        ASSERT_MSG(image.image.handle, "Metal swapchain: image creation failed");
-        image.view = device.CreateImageView(image.image.handle, {.format = format, .usage = usage},
-                                            "Metal swapchain view");
-        images.push_back(::Vulkan::NativeImage(image.image.native));
-        images_view.push_back(vk::ImageView{reinterpret_cast<VkImageView>(image.view.native)});
-        metal_images.push_back(image);
-    }
-    image_index = frame_index = 0;
+                             .max_drawables = image_count});
 #endif
 }
 
-void Swapchain::DestroyMetal() {
-    {
-        // Presents still reading the images finish first.
-        std::unique_lock lock{present_mutex};
-        present_cv.wait(lock, [this] {
-            return std::ranges::none_of(presenting, [](bool busy) { return busy; });
-        });
-    }
-    // The presenter's work with them may still be queued: the device defers each destruction.
-    auto* device = instance.GetBackendDevice();
-    for (const auto& image : metal_images) {
-        device->DestroyImageView(image.view.handle);
-        device->DestroyImage(image.image.handle);
-    }
-    metal_images.clear();
-    images.clear();
-    images_view.clear();
-}
-
-bool Swapchain::AcquireMetal() {
-    if (zero_extent || images.empty()) {
-        return false;
-    }
-    image_index = frame_index;
-    // The present before last of this image may still be copying it.
-    std::unique_lock lock{present_mutex};
-    present_cv.wait(lock, [this] { return !presenting[image_index]; });
-    return true;
-}
-
-bool Swapchain::PresentMetal() {
+bool Swapchain::PresentFrame(vk::Image frame, const vk::ImageBlit& fit,
+                             std::function<void(void*, void*, u32, u32)> overlay,
+                             std::function<void()> done) {
 #if BB_METAL_BACKEND
-    const u32 index = image_index;
-    {
-        std::scoped_lock lock{present_mutex};
-        presenting[index] = true;
+    const s32 x0 = std::min(fit.dstOffsets[0].x, fit.dstOffsets[1].x);
+    const s32 y0 = std::min(fit.dstOffsets[0].y, fit.dstOffsets[1].y);
+    const s32 x1 = std::max(fit.dstOffsets[0].x, fit.dstOffsets[1].x);
+    const s32 y1 = std::max(fit.dstOffsets[0].y, fit.dstOffsets[1].y);
+    return MetalPresent::Present(
+        metal_layer, {.frame = static_cast<VkImage>(frame),
+                      .fit = {x0, y0, u32(x1 - x0), u32(y1 - y0)},
+                      .overlay = std::move(overlay),
+                      .done = std::move(done),
+                      .dump_path = std::exchange(dump_path, {})});
+#else
+    if (done) {
+        done();
     }
-    MetalPresent::Present(
-        metal_layer, static_cast<VkImage>(images[index]), extent.width, extent.height,
-        [this, index] {
-            std::scoped_lock lock{present_mutex};
-            presenting[index] = false;
-            present_cv.notify_all();
-        },
-        std::exchange(dump_path, {}));
+    return false;
 #endif
-    frame_index = (frame_index + 1) % image_count;
-    return true;
 }
 
 } // namespace Vulkan

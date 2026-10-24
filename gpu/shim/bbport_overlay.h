@@ -38,6 +38,9 @@ bool Visible();
 
 /// Present thread: draws into `view` (layout ColorAttachmentOptimal).
 void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent);
+/// The same with the Metal frame: draws into `target` (id<MTLTexture>, width x height) on
+/// `command_buffer` (id<MTLCommandBuffer>). Called every frame (timing and live effects).
+void RenderMetal(void* command_buffer, void* target, u32 width, u32 height);
 
 /// The menu or the text dialog is open: the game's input is held neutral.
 bool CapturesInput();

@@ -262,6 +262,14 @@ if (APPLE)
     file(GLOB METAL_SOURCES CONFIGURE_DEPENDS shadps4/video_core/renderer_metal/*.cpp
          shadps4/video_core/renderer_metal/*.mm)
     target_sources(bbgpu PRIVATE ${METAL_SOURCES})
+    # The settings overlay on the Metal frame: Dear ImGui's Metal backend (private, like the rest
+    # of Dear ImGui) and its use (shim/bbport_overlay_metal.mm).
+    target_sources(bbgpu PRIVATE third_party/imgui/backends/imgui_impl_metal.mm
+        shim/bbport_overlay_metal.mm)
+    set_source_files_properties(third_party/imgui/backends/imgui_impl_metal.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc;-fvisibility=hidden;-fvisibility-inlines-hidden")
+    set_source_files_properties(shim/bbport_overlay_metal.mm PROPERTIES
+        COMPILE_OPTIONS "-fobjc-arc")
     foreach(source IN LISTS METAL_SOURCES)
         if (source MATCHES "\\.mm$")
             set_source_files_properties(${source} PROPERTIES COMPILE_OPTIONS

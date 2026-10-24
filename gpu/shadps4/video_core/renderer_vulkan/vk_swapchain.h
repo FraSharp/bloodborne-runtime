@@ -3,13 +3,11 @@
 
 #pragma once
 
-#include <array>
-#include <condition_variable>
+#include <functional>
 #include <mutex>
 #include <string>
 #include <vector>
 #include "common/types.h"
-#include "video_core/renderer_backend/resource.h"
 #include "video_core/renderer_backend/swapchain.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 
@@ -24,9 +22,8 @@ class Scheduler;
 
 /// The render adapter's swapchain on Vulkan; the semaphores stay Vulkan's (the presenter's
 /// submissions wait on them). With the Metal frame (BB_METAL_FRAME=1) the window's CAMetalLayer
-/// is presented through Metal instead (renderer_metal/mtl_present.h): the images are offscreen
-/// ones the device makes, each present copies one into the layer's next drawable, and there are
-/// no semaphores (the copy is ordered on the queue).
+/// is presented through Metal instead (renderer_metal/mtl_present.h, PresentFrame): no images
+/// of its own and no semaphores (the present is ordered on the queue).
 class Swapchain final : public VideoCore::Backend::Swapchain {
 public:
     explicit Swapchain(const Instance& instance, const Frontend::WindowSDL& window);
@@ -95,10 +92,16 @@ public:
     void DumpNextPresent(std::string path) {
         dump_path = std::move(path);
     }
+    /// With the Metal frame: draws `frame` into the window's next drawable where `fit` puts it
+    /// (its destination offsets), `overlay` over it, and presents it, after the frame's work on
+    /// the queue; `done` once the GPU has read the frame. False when nothing was shown.
+    bool PresentFrame(vk::Image frame, const vk::ImageBlit& fit,
+                      std::function<void(void*, void*, u32, u32)> overlay,
+                      std::function<void()> done);
 
     /// bbport: false while the window is minimised (0x0 surface): frames are not presented.
     bool IsPresentable() const override {
-        return !zero_extent && (swapchain || !images.empty());
+        return !zero_extent && (swapchain || metal_layer);
     }
 
     u32 GetWidth() const {
@@ -159,11 +162,8 @@ private:
     /// Creates the image acquired and present ready semaphores
     void RefreshSemaphores();
 
-    // The Metal frame's presents (metal_layer set).
+    // The Metal frame's layer (metal_layer set).
     void CreateMetal();
-    void DestroyMetal();
-    bool AcquireMetal();
-    bool PresentMetal();
 
 private:
     const Instance& instance;
@@ -192,14 +192,6 @@ private:
 
     void* metal_layer{}; ///< the window's CAMetalLayer, with the Metal frame
     std::string dump_path; ///< DumpNextPresent
-    struct MetalImage {
-        VideoCore::Backend::ImageAllocation image;
-        VideoCore::Backend::ImageViewAllocation view;
-    };
-    std::vector<MetalImage> metal_images;
-    std::mutex present_mutex;
-    std::condition_variable present_cv;
-    std::array<bool, 3> presenting{}; ///< a present still reads the image
 };
 
 } // namespace Vulkan

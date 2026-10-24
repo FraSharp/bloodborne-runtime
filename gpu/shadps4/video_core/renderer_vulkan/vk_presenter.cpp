@@ -672,6 +672,15 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     ASSERT_MSG(reset_result == vk::Result::eSuccess,
                "Unexpected error resetting present done fence: {}", vk::to_string(reset_result));
 
+    if (swapchain.IsMetal()) {
+        PresentMetal(frame, is_game_frame);
+        free_frame();
+        if (!is_reusing_frame && is_game_frame) {
+            DebugState.IncFlipFrameNum();
+        }
+        return;
+    }
+
     // bbport: the game frame is blitted (letterboxed) straight into the swapchain image.
     const vk::Image swapchain_image = swapchain.Image();
     auto& scheduler = present_scheduler;
@@ -826,6 +835,50 @@ void Presenter::Present(Frame* frame, bool is_reusing_frame, bool is_game_frame)
     }
 }
 
+// The Metal frame's present (docs/RENDER_ADAPTER.md, M2 step 4): the frame letterboxed into the
+// window's drawable and the overlay over it, encoded in Metal after the frame's own work on the
+// queue. The present scheduler's submission stays, empty but for the diagnostics' copies, for
+// the frame's fence (Metal submissions replace it later).
+void Presenter::PresentMetal(Frame* frame, bool is_game_frame) {
+    (void)is_game_frame;
+    auto& scheduler = present_scheduler;
+    const auto cmdbuf = scheduler.CommandBuffer();
+    DumpFinalFrameIfDue(instance, scheduler, cmdbuf, frame->image, frame->width, frame->height,
+                        swapchain.GetSurfaceFormat().format);
+    const vk::Extent2D extent = swapchain.GetExtent();
+    SetExpectedGameSize(s32(extent.width), s32(extent.height));
+    GrabFrame(scheduler, cmdbuf, frame);
+    GrabScreen(scheduler, cmdbuf, {}, extent); // the drawable, with the present (Metal frame)
+    BbGameMenu::Poll(); // the port's pages in the game's System menu
+
+    // The frame's work is on the queue before its present.
+    if (frame->ready_semaphore == draw_scheduler.GetWorkSemaphore()->Handle()) {
+        draw_scheduler.WaitSubmitted(frame->ready_tick);
+    }
+    {
+        std::scoped_lock lock{metal_present_mutex};
+        metal_presenting.insert(frame);
+    }
+    const auto fit = MakeImageBlitFit(frame->width, frame->height, extent.width, extent.height);
+    {
+        std::scoped_lock submit_lock{Scheduler::submit_mutex};
+        swapchain.PresentFrame(
+            frame->image, fit,
+            [](void* command_buffer, void* target, u32 width, u32 height) {
+                BbOverlay::RenderMetal(command_buffer, target, width, height);
+            },
+            [this, frame] {
+                std::scoped_lock lock{metal_present_mutex};
+                metal_presenting.erase(frame);
+                metal_present_cv.notify_all();
+            });
+    }
+    SubmitInfo info{};
+    info.AddWait(frame->ready_semaphore, frame->ready_tick);
+    info.AddSignal(frame->present_done);
+    scheduler.Flush(info);
+}
+
 Frame* Presenter::GetRenderFrame() {
     // Wait for free presentation frames
     Frame* frame;
@@ -858,6 +911,12 @@ Frame* Presenter::GetRenderFrame() {
         if (result == vk::Result::eTimeout) {
             continue;
         }
+    }
+
+    if (swapchain.IsMetal()) {
+        // Its last Metal present may still be drawing it into the window.
+        std::unique_lock lock{metal_present_mutex};
+        metal_present_cv.wait(lock, [&] { return !metal_presenting.contains(frame); });
     }
 
     if (frame->width != expected_frame_width || frame->height != expected_frame_height ||

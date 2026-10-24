@@ -20,6 +20,7 @@
 #include "bbport_text.h"
 #include "bbport_trophy_queue.h"
 #ifdef BB_METAL_BACKEND
+#include "bbport_overlay_metal.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
 #include "imgui.h"
@@ -1662,6 +1663,19 @@ void Init(const Vulkan::Instance& instance, vk::Format format, u32 image_count) 
     add_cjk();
     io.FontDefault = font_text;
 
+#ifdef BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The Metal frame's presenter draws the overlay with ImGui's Metal backend.
+        if (!MetalBackend::Init(MetalLayer::MtlDevice())) {
+            std::printf("Overlay: ImGui Metal backend init failed\n");
+            ImGui::DestroyContext();
+            return;
+        }
+        initialized = true;
+        std::printf("Overlay: menu ready (F1 or L3+R3), drawn through Metal\n");
+        return;
+    }
+#endif
     const vk::Instance vk_instance = instance.GetInstance();
     ImGui_ImplVulkan_LoadFunctions(
         instance.ApiVersion(),
@@ -1866,11 +1880,13 @@ bool CapturesInput() {
     return menu_open || prompt_active;
 }
 
-void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
-
+namespace {
+/// Every frame: the present interval for the FPS readout (measured also while nothing is drawn),
+/// scripted keys and the live effects. Whether anything is drawn.
+bool BeginFrame(float& ms, std::chrono::steady_clock::time_point& now) {
     // Present interval for the FPS readout (measured also while nothing is drawn).
-    const auto now = std::chrono::steady_clock::now();
-    const float ms = std::chrono::duration<float, std::milli>(now - last_present).count();
+    now = std::chrono::steady_clock::now();
+    ms = std::chrono::duration<float, std::milli>(now - last_present).count();
     last_present = now;
     if (ms > 0.0f && ms < 1000.0f) {
         frame_ms_avg = frame_ms_avg == 0.0f ? ms : frame_ms_avg * 0.95f + ms * 0.05f;
@@ -1883,28 +1899,31 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     // Effects changed in the menu or by the launcher reach the game (bbport 0.6's live effects).
     BbGameHooks::ApplyGameEffects();
-    if (!Visible()) {
-        return;
-    }
-    std::scoped_lock lock{imgui_mutex};
+    return Visible();
+}
+
+/// Under imgui_mutex: the display size and scale, saving changes.
+void SetupFrame(float ms, std::chrono::steady_clock::time_point now, u32 width, u32 height) {
     // Changes are saved 0.3 s after the last one (and on close): a crash keeps them.
     if (dirty && now - dirty_since > std::chrono::milliseconds(300)) {
         dirty = false;
         BbSettings::Save();
     }
     ImGuiIO& io = ImGui::GetIO();
-    io.DisplaySize = ImVec2(float(extent.width), float(extent.height));
+    io.DisplaySize = ImVec2(float(width), float(height));
     io.DeltaTime = ms > 0.0f && ms < 1000.0f ? ms / 1000.0f : 1.0f / 60.0f;
     // UI scale follows the display height (1080p = 1).
-    const float scale = std::max(float(extent.height) / 1080.0f, 0.75f);
+    const float scale = std::max(float(height) / 1080.0f, 0.75f);
     if (std::abs(scale - base_scale) > 0.01f) {
         ImGuiStyle& style = ImGui::GetStyle();
         style.ScaleAllSizes(scale / base_scale);
         style.FontScaleMain = scale;
         base_scale = scale;
     }
+}
 
-    ImGui_ImplVulkan_NewFrame();
+/// Under imgui_mutex, after the backend's new frame: the menu, FPS counter, prompt and notices.
+void BuildUi(std::chrono::steady_clock::time_point now) {
     ImGui::NewFrame();
     if (menu_open) {
         Menu();
@@ -1918,6 +1937,19 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     TrophyToast(now);
     ImGui::Render();
+}
+} // namespace
+
+void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
+    float ms{};
+    std::chrono::steady_clock::time_point now;
+    if (!BeginFrame(ms, now)) {
+        return;
+    }
+    std::scoped_lock lock{imgui_mutex};
+    SetupFrame(ms, now, extent.width, extent.height);
+    ImGui_ImplVulkan_NewFrame();
+    BuildUi(now);
 
     const vk::RenderingAttachmentInfo attachment{
         .imageView = view,
@@ -1938,5 +1970,18 @@ void Render(vk::CommandBuffer cmdbuf, vk::ImageView view, vk::Extent2D extent) {
     }
     cmdbuf.endRendering();
 }
+
+#ifdef BB_METAL_BACKEND
+void RenderMetal(void* command_buffer, void* target, u32 width, u32 height) {
+    float ms{};
+    std::chrono::steady_clock::time_point now;
+    if (!BeginFrame(ms, now) || !initialized) {
+        return;
+    }
+    std::scoped_lock lock{imgui_mutex};
+    SetupFrame(ms, now, width, height);
+    MetalBackend::Frame(command_buffer, target, [now] { BuildUi(now); });
+}
+#endif
 
 } // namespace BbOverlay

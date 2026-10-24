@@ -7,6 +7,7 @@
 
 #include <condition_variable>
 #include <mutex>
+#include <unordered_set>
 
 #include "core/libraries/videoout/buffer.h"
 #include "video_core/renderer_vulkan/host_passes/fsr_pass.h"
@@ -112,6 +113,8 @@ private:
 
     void RecreateFrame(Frame* frame, u32 width, u32 height);
     void GrabFrame(Scheduler& scheduler, vk::CommandBuffer cmdbuf, const Frame* frame);
+    /// The Metal frame's present of `frame` into the window (Present's tail).
+    void PresentMetal(Frame* frame, bool is_game_frame);
     void GrabScreen(Scheduler& scheduler, vk::CommandBuffer cmdbuf, vk::Image image,
                     vk::Extent2D extent);
 
@@ -136,6 +139,10 @@ private:
     Scheduler present_scheduler;
     Scheduler flip_scheduler;
     Swapchain swapchain;
+    /// The Metal frame's presents still reading their frames (PresentMetal).
+    std::mutex metal_present_mutex;
+    std::condition_variable metal_present_cv;
+    std::unordered_set<const Frame*> metal_presenting;
     Runtime runtime;
     std::unique_ptr<Rasterizer> rasterizer;
     VideoCore::TextureCache& texture_cache;
