@@ -10,11 +10,15 @@
 #include <memory>
 
 #include "video_core/renderer_vulkan/vk_command_recorder.h"
+#include "video_core/renderer_vulkan/vk_transfer_encoder.h"
 
 namespace Metal {
 
 /// The recorder the device uses with the Metal frame.
 [[nodiscard]] std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(
     Vulkan::Scheduler& scheduler, Vulkan::DescriptorHeap& descriptor_heap, vk::Device device);
+
+/// The Vulkan runtime's transfers encoded by the Metal frame.
+[[nodiscard]] const Vulkan::TransferEncoder& FrameTransferEncoder();
 
 } // namespace Metal

@@ -424,13 +424,76 @@ public:
     }
 };
 
+/// The runtime's transfers, encoded as the layer encodes the Vulkan commands they replace.
+class FrameTransfers final : public Vulkan::TransferEncoder {
+public:
+    void CopyBuffer(vk::CommandBuffer cmd, vk::Buffer src, vk::Buffer dst,
+                    std::span<const vk::BufferCopy> regions) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::CopyBuffer(o, src, dst, u32(regions.size()),
+                                   reinterpret_cast<const VkBufferCopy*>(regions.data()));
+        });
+    }
+    void FillBuffer(vk::CommandBuffer cmd, vk::Buffer dst, u64 offset, u64 size,
+                    u32 value) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) { MetalFrame::FillBuffer(o, dst, offset, size, value); });
+    }
+    void UpdateBuffer(vk::CommandBuffer cmd, vk::Buffer dst, u64 offset,
+                      std::span<const u8> data) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::UpdateBuffer(o, dst, offset, data.size_bytes(), data.data());
+        });
+    }
+    void CopyBufferToImage(vk::CommandBuffer cmd, vk::Buffer src, vk::Image dst,
+                           std::span<const vk::BufferImageCopy> regions) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::CopyBufferToImage(o, src, dst, u32(regions.size()),
+                                          reinterpret_cast<const VkBufferImageCopy*>(regions.data()));
+        });
+    }
+    void CopyImageToBuffer(vk::CommandBuffer cmd, vk::Image src, vk::Buffer dst,
+                           std::span<const vk::BufferImageCopy> regions) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::CopyImageToBuffer(o, src, dst, u32(regions.size()),
+                                          reinterpret_cast<const VkBufferImageCopy*>(regions.data()));
+        });
+    }
+    void CopyImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
+                   std::span<const vk::ImageCopy> regions) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::CopyImage(o, src, dst, u32(regions.size()),
+                                  reinterpret_cast<const VkImageCopy*>(regions.data()));
+        });
+    }
+    void ResolveImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
+                      const vk::ImageResolve& region) const override {
+        // Not encoded by the Metal frame (counted as unsupported there): the layer's way.
+        Vulkan::VulkanTransferEncoder().ResolveImage(cmd, src, dst, region);
+    }
+    void ClearColorImage(vk::CommandBuffer cmd, vk::Image image, const vk::ClearColorValue& color,
+                         const vk::ImageSubresourceRange& range) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::ClearColorImage(o, image, reinterpret_cast<const VkClearColorValue*>(&color),
+                                        1, reinterpret_cast<const VkImageSubresourceRange*>(&range));
+        });
+    }
+    void Barrier(vk::CommandBuffer cmd, const vk::DependencyInfo&) const override {
+        Encode(cmd, [](MetalFrame::Owned& o) { MetalFrame::Barrier(o); });
+    }
+};
+
 } // namespace
+
+const Vulkan::TransferEncoder& FrameTransferEncoder() {
+    static const FrameTransfers encoder;
+    return encoder;
+}
 
 std::unique_ptr<Vulkan::CommandRecorder> MakeFrameRecorder(Vulkan::Scheduler& scheduler,
                                                            Vulkan::DescriptorHeap& descriptor_heap,
                                                            vk::Device device) {
     std::printf("Metal recorder: draws, dispatches, bindings, the draw state, barriers, clears, "
-                "blits and fills are encoded in Metal directly\n");
+                "blits, fills and the runtime's transfers are encoded in Metal directly\n");
     return std::make_unique<FrameRecorder>(scheduler, descriptor_heap, device);
 }
 
