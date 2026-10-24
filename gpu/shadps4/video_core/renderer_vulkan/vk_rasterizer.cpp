@@ -112,7 +112,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
                        Scheduler& scheduler_, Runtime& runtime_, AmdGpu::Liverpool* liverpool_)
     : device{device}, instance{instance_}, scheduler{scheduler_}, recorder{device.Recorder()}, runtime{runtime_}, page_manager{this},
       buffer_cache{device, instance, scheduler, runtime, liverpool_, texture_cache, page_manager},
-      texture_cache{device, instance, scheduler, runtime, liverpool_, buffer_cache, page_manager},
+      texture_cache{device, runtime, liverpool_, buffer_cache, page_manager},
       liverpool{liverpool_}, memory{Core::Memory::Instance()},
       pipeline_cache{instance, scheduler, liverpool, buffer_cache.GetSparsePageShift()},
       host_markers_enabled{EmulatorSettings.IsVkHostMarkersEnabled()},

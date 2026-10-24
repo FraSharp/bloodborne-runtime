@@ -558,7 +558,7 @@ BufferCache::BufferCache(Backend::Device& device_, const Vulkan::Instance& insta
       staging_pool{runtime_.GetStagingPool()}, liverpool{liverpool_},
       memory{Core::Memory::Instance()}, texture_cache{texture_cache_},
       memory_tracker{std::make_unique<MemoryTracker>(tracker)},
-      stream_buffer{device, scheduler, MemoryType::Stream, STREAM_BUFFER_SIZE},
+      stream_buffer{device, MemoryType::Stream, STREAM_BUFFER_SIZE},
       gds_buffer{device, 0, GDS_BUFFER_SIZE, MemoryType::Stream, "GDS Buffer"},
       memory_semaphore{instance} {
     integrated_gpu = device.GetCapabilities().integrated;
@@ -740,7 +740,7 @@ void BufferCache::RunGuestCopy(const BbCopy::Item& item) {
 // idle most of the time); PoolSmallCopies (toggle 524288) batches them for the copy threads.
 // Each source is noted once the copy is queued (a WaitHostCopies started after the note covers it).
 void BufferCache::SmallGuestCopy(const BbCopy::Item& item) {
-    if (!scheduler.IsRecordingDeferred()) {
+    if (!device.Recorder().DefersRecording()) {
         // bbport: commands recorded on this thread (direct mode: the draw or dispatch after the
         // upscaler's passes; or BB_VK_RECORD_THREAD=0): the copy runs now, before the commands
         // that read it. In this thread's copy batch it ran at the next submission at the
@@ -2621,7 +2621,7 @@ std::optional<std::pair<const Buffer*, u64>> BufferCache::ShadowCopy(VAddr addr,
         return std::nullopt;
     }
     if (!shadow_buffer) {
-        shadow_buffer = std::make_unique<StreamBuffer>(device, scheduler, MemoryType::DeviceLocal,
+        shadow_buffer = std::make_unique<StreamBuffer>(device, MemoryType::DeviceLocal,
                                                        ShadowRing);
     }
     const auto offset = shadow_buffer->Reserve(size, device.GetCapabilities().storage_min_alignment);

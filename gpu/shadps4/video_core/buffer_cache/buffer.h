@@ -172,8 +172,7 @@ private:
 }
 
 struct StreamBuffer : public Buffer {
-    explicit StreamBuffer(Backend::Device& device, Vulkan::Scheduler& scheduler,
-                          MemoryType mem_type, u64 size_bytes);
+    explicit StreamBuffer(Backend::Device& device, MemoryType mem_type, u64 size_bytes);
 
     /// Reserves a region of memory from the stream buffer. Must be followed by Commit().
     std::pair<u8*, u64> Map(u64 size, u64 alignment = 0, bool allow_wait = true);
@@ -218,7 +217,7 @@ private:
     bool WaitPendingOperations(u64 requested_upper_bound, bool allow_wait);
 
 private:
-    Vulkan::Scheduler& scheduler;
+    Backend::Device& ticks; ///< the device whose submissions use the regions
     vk::DeviceSize non_coherent_atom_size{};
     u64 offset{};
     u64 mapped_size{};

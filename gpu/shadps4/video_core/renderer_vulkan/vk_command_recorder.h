@@ -21,6 +21,7 @@ public:
     void BeginPass(const VideoCore::Backend::RenderState& state) override;
     void EndPass() override;
     [[nodiscard]] bool InPass() const override;
+    [[nodiscard]] bool DefersRecording() const override;
     void ClearImage(const VideoCore::Backend::ImageAllocation& image,
                     const VideoCore::Backend::ClearColor& value) override;
     [[nodiscard]] u32 StateOf(const VideoCore::Backend::ImageAllocation& image) const override;

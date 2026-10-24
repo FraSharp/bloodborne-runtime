@@ -114,6 +114,8 @@ Runtime::Runtime(const Instance& instance_, Scheduler& scheduler_)
         vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
 }
 
+Runtime::~Runtime() = default;
+
 void Runtime::TickFrame() {
     staging_pool.TickFrame();
 }

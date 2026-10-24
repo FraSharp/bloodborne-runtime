@@ -122,6 +122,9 @@ public:
     /// Ends the open pass, if any.
     virtual void EndPass() = 0;
     [[nodiscard]] virtual bool InPass() const = 0;
+    /// Commands recorded now are encoded later on another thread (copies a command reads must
+    /// be queued in stream order, not run at once).
+    [[nodiscard]] virtual bool DefersRecording() const = 0;
     /// The open pass's (or the last pass's) targets.
     [[nodiscard]] virtual const RenderState& CurrentPass() const = 0;
     /// A pass with `state`'s targets is open (BeginPass would continue it).

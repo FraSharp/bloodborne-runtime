@@ -238,6 +238,10 @@ bool CommandRecorder::InPass() const {
     return scheduler.IsRendering();
 }
 
+bool CommandRecorder::DefersRecording() const {
+    return scheduler.IsRecordingDeferred();
+}
+
 const Backend::RenderState& CommandRecorder::CurrentPass() const {
     return scheduler.GetRenderState();
 }

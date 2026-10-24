@@ -1,12 +1,8 @@
 // SPDX-FileCopyrightText: Copyright 2024 shadPS4 Emulator Project
 // SPDX-License-Identifier: GPL-2.0-or-later
 
-#include "video_core/renderer_vulkan/vk_instance.h"
-#include "video_core/renderer_vulkan/vk_runtime.h"
-#include "video_core/renderer_vulkan/vk_backend_device.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
-#include "video_core/renderer_vulkan/vk_state.h"
-#include "video_core/renderer_vulkan/vk_shader_util.h"
+#include "common/logging/log.h"
+#include "video_core/renderer_vulkan/vk_staging_buffer_pool.h"
 #include "video_core/texture_cache/image.h"
 #include "video_core/texture_cache/image_info.h"
 #include "video_core/texture_cache/image_view.h"
@@ -26,7 +22,6 @@
 #include "video_core/host_shaders/tiling_micro_96_comp.h"
 
 #include <magic_enum/magic_enum.hpp>
-#include <vk_mem_alloc.h>
 
 namespace VideoCore {
 
@@ -37,16 +32,13 @@ struct TilingInfo {
     std::array<ImageInfo::MipInfo, 16> mips;
 };
 
-TileManager::TileManager(const Vulkan::Instance& instance_, Vulkan::Scheduler& scheduler_,
-                         VideoCore::Backend::Transfers& runtime_, StreamBuffer& stream_buffer_)
-    : instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, stream_buffer{stream_buffer_},
-      recorder{scheduler_, Vulkan::BackendDevice::From(instance_).GetDescriptorHeap(),
-               instance_.GetDevice()} {
-}
+TileManager::TileManager(Backend::Device& device_, VideoCore::Backend::Transfers& runtime_,
+                         StreamBuffer& stream_buffer_)
+    : device{device_}, runtime{runtime_}, stream_buffer{stream_buffer_} {}
 
 TileManager::~TileManager() = default;
 
-const Vulkan::HostPipeline& TileManager::GetTilingPipeline(const ImageInfo& info, bool is_tiler) {
+const Backend::OwnedPipeline& TileManager::GetTilingPipeline(const ImageInfo& info, bool is_tiler) {
     const TilingKey key{
         .tile_mode = info.tile_mode,
         .num_bits = info.num_bits,
@@ -123,21 +115,17 @@ const Vulkan::HostPipeline& TileManager::GetTilingPipeline(const ImageInfo& info
                              .stages = Backend::ShaderStage::Compute},
     };
     const auto [it, _] = tiling_pipelines.emplace(
-        key, Vulkan::MakeHostCompute(Vulkan::BackendDevice::From(instance), code, slots, 0,
-                                     module_name, std::span{spec_data.data(), spec_count}));
+        key, Backend::MakeCompute(device, code, slots, 0, module_name,
+                                  std::span{spec_data.data(), spec_count}));
     return it->second;
 }
 
-void TileManager::RecordTilingDispatch(const Vulkan::HostPipeline& pipeline,
-                                       const vk::DescriptorBufferInfo& tiled,
-                                       const vk::DescriptorBufferInfo& linear,
-                                       const vk::DescriptorBufferInfo& params, u32 dim_x) {
-    namespace Backend = VideoCore::Backend;
-    const std::array buffers{
-        Vulkan::MakeBufferBinding(tiled.buffer, tiled.offset, tiled.range),
-        Vulkan::MakeBufferBinding(linear.buffer, linear.offset, linear.range),
-        Vulkan::MakeBufferBinding(params.buffer, params.offset, params.range),
-    };
+void TileManager::RecordTilingDispatch(const Backend::OwnedPipeline& pipeline,
+                                       const Backend::BufferBinding& tiled,
+                                       const Backend::BufferBinding& linear,
+                                       const Backend::BufferBinding& params, u32 dim_x) {
+    const std::array buffers{tiled, linear, params};
+    auto& recorder = device.Recorder();
     const std::array writes{
         Backend::SlotWrite{.slot = 0, .count = 1, .kind = Backend::BindingKind::StorageBuffer,
                            .buffers = &buffers[0]},
@@ -171,27 +159,19 @@ std::pair<const Buffer*, u64> TileManager::DetileImage(const VideoCore::Buffer* 
         }
     }
 
-    const vk::DescriptorBufferInfo params_buffer_info{
-        .buffer = stream_buffer.Handle(),
-        .offset = stream_buffer.Copy(&params, sizeof(params), instance.UniformMinAlignment()),
-        .range = sizeof(params),
-    };
+    const auto params_buffer_info = BindingOf(
+        stream_buffer,
+        stream_buffer.Copy(&params, sizeof(params),
+                           device.GetCapabilities().uniform_min_alignment),
+        sizeof(params));
 
     const auto staging = runtime.GetStagingPool().Request(info.guest_size, MemoryType::DeviceLocal);
 
-    recorder.EndPass();
+    device.Recorder().EndPass();
     runtime.FlushBarriers();
 
-    const vk::DescriptorBufferInfo tiled_buffer_info{
-        .buffer = in_buffer->Handle(),
-        .offset = in_offset,
-        .range = info.guest_size,
-    };
-    const vk::DescriptorBufferInfo linear_buffer_info{
-        .buffer = staging.buffer->Handle(),
-        .offset = staging.offset,
-        .range = info.guest_size,
-    };
+    const auto tiled_buffer_info = BindingOf(*in_buffer, in_offset, info.guest_size);
+    const auto linear_buffer_info = BindingOf(*staging.buffer, staging.offset, info.guest_size);
     const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, false), tiled_buffer_info, linear_buffer_info,
@@ -231,11 +211,11 @@ void TileManager::TileImage(Image& in_image, std::span<Backend::BufferImageCopy>
         }
     }
 
-    const vk::DescriptorBufferInfo params_buffer_info{
-        .buffer = stream_buffer.Handle(),
-        .offset = stream_buffer.Copy(&params, sizeof(params), instance.UniformMinAlignment()),
-        .range = sizeof(params),
-    };
+    const auto params_buffer_info = BindingOf(
+        stream_buffer,
+        stream_buffer.Copy(&params, sizeof(params),
+                           device.GetCapabilities().uniform_min_alignment),
+        sizeof(params));
 
     const auto staging = runtime.GetStagingPool().Request(info.guest_size, MemoryType::DeviceLocal);
     for (auto& copy : buffer_copies) {
@@ -245,16 +225,8 @@ void TileManager::TileImage(Image& in_image, std::span<Backend::BufferImageCopy>
     runtime.DownloadImage(&in_image, staging.buffer, buffer_copies);
     runtime.FlushBarriers();
 
-    const vk::DescriptorBufferInfo tiled_buffer_info{
-        .buffer = out_buffer->Handle(),
-        .offset = out_offset,
-        .range = info.guest_size,
-    };
-    const vk::DescriptorBufferInfo linear_buffer_info{
-        .buffer = staging.buffer->Handle(),
-        .offset = staging.offset,
-        .range = info.guest_size,
-    };
+    const auto tiled_buffer_info = BindingOf(*out_buffer, out_offset, info.guest_size);
+    const auto linear_buffer_info = BindingOf(*staging.buffer, staging.offset, info.guest_size);
     const auto dim_x = static_cast<u32>((info.guest_size / (info.num_bits / 8)) / 64);
     // bbport: recorded with copies of the descriptor infos (threaded recording).
     RecordTilingDispatch(GetTilingPipeline(info, true), tiled_buffer_info, linear_buffer_info,

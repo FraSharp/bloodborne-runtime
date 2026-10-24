@@ -20,9 +20,7 @@
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "video_core/page_manager.h"
 #include "video_core/renderer_vulkan/vk_state.h"
-#include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_runtime.h"
-#include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/host_compatibility.h"
 #include "video_core/texture_cache/texture_cache.h"
 #include "video_core/texture_cache/tile_manager.h"
@@ -114,13 +112,12 @@ u64 HashUploadGuestMemory(VAddr address, u64 size, bool shared) {
 }
 } // namespace
 
-TextureCache::TextureCache(Backend::Device& device_, const Vulkan::Instance& instance_,
-                           Vulkan::Scheduler& scheduler_, VideoCore::Backend::Transfers& runtime_,
+TextureCache::TextureCache(Backend::Device& device_, VideoCore::Backend::Transfers& runtime_,
                            AmdGpu::Liverpool* liverpool_, BufferCache& buffer_cache_,
                            PageManager& tracker_)
-    : device{device_}, instance{instance_}, scheduler{scheduler_}, runtime{runtime_}, liverpool{liverpool_},
-      buffer_cache{buffer_cache_}, tracker{tracker_}, blit_helper{instance, scheduler},
-      tile_manager{instance, scheduler, runtime, buffer_cache.GetStreamBuffer()},
+    : device{device_}, runtime{runtime_}, liverpool{liverpool_},
+      buffer_cache{buffer_cache_}, tracker{tracker_},
+      tile_manager{device, runtime, buffer_cache.GetStreamBuffer()},
       readback_linear_images{EmulatorSettings.IsReadbackLinearImagesEnabled()} {
     std::printf("Texture upload baselines: %s\n", UploadBaselinesEnabled() ? "on" : "off");
     u32 max_samplers = device.GetCapabilities().max_sampler_allocations;
