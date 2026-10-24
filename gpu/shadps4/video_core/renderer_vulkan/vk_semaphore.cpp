@@ -7,19 +7,33 @@
 #include "video_core/renderer_vulkan/vk_semaphore.h"
 
 #include "common/assert.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 namespace Vulkan {
 
 constexpr u64 WAIT_TIMEOUT = std::numeric_limits<u64>::max();
 
 Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
-    const vk::StructureChain semaphore_chain = {
+    vk::StructureChain semaphore_chain = {
         vk::SemaphoreCreateInfo{},
         vk::SemaphoreTypeCreateInfo{
             .semaphoreType = vk::SemaphoreType::eTimeline,
             .initialValue = 0,
         },
+#if BB_METAL_BACKEND && defined(VK_USE_PLATFORM_METAL_EXT)
+        // The Metal frame signals the tick on its MTLSharedEvent itself (Metal submissions).
+        vk::ExportMetalObjectCreateInfoEXT{
+            .exportObjectType = vk::ExportMetalObjectTypeFlagBitsEXT::eMetalSharedEvent,
+        },
+#endif
     };
+#if BB_METAL_BACKEND && defined(VK_USE_PLATFORM_METAL_EXT)
+    if (!MetalLayer::FrameEnabled()) {
+        semaphore_chain.unlink<vk::ExportMetalObjectCreateInfoEXT>();
+    }
+#endif
     auto [semaphore_result, sem] =
         instance.GetDevice().createSemaphoreUnique(semaphore_chain.get());
     ASSERT_MSG(semaphore_result == vk::Result::eSuccess, "Failed to create master semaphore: {}",

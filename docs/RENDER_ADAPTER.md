@@ -6,11 +6,11 @@
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
 M2 is in progress: step 1, the command stream, is done (everything both backends run records
 through the adapter); in step 2, the Metal recorder encodes every command the shared code
-records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
-ticks) still goes through MoltenVK, to be replaced once nothing else submits through Vulkan
-(after step 4). Step 3 is done: with the Metal frame, shaders and pipelines are Metal's only.
-In step 4 the window is presented through Metal, the present is drawn in Metal, and the
-upscaler's own passes are encoded in Metal; Metal submissions are next.
+records into the Metal frame directly. Step 3 is done: with the Metal frame, shaders and
+pipelines are Metal's only. In step 4 the window is presented through Metal, the present is
+drawn in Metal, and the upscaler's own passes are encoded in Metal. The stream's skeleton is
+in progress: the frame's submissions are committed in Metal; the presenter's fenced
+submission, command buffers' begin and end, and debug labels still go through MoltenVK.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -608,6 +608,18 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   the upscaler: FSR 3.1 (FidelityFX's library) and DLSS. Measured with the Metal frame: TAA
   30.2 against 30.4 FPS, FSR 3.1 32.6 both, MetalFX at Quality 29.8 against 30.3 (new
   second each); MoltenVK as before; frames correct.
+- **M2, the skeleton: submissions committed in Metal:** with the Metal frame the layer commits
+  the owned command buffers of a submission itself (`SubmitInMetal` in `mtl_vk_layer.mm`)
+  instead of handing it to MoltenVK. Timeline semaphores (the scheduler's ticks) are created
+  with their Metal shared event exported, and a submission's signals are encoded on its last
+  command buffer (`encodeSignalEvent`); a submission with no command buffers commits an empty
+  one for them. Its waits are already ordered by the single queue, so a submission goes to
+  MoltenVK only when it has a fence, a binary semaphore, a semaphore without a shared event,
+  or waits for a value not yet committed. `BB_METAL_SUBMIT=0` hands every submission to
+  MoltenVK. Measured with the Metal frame: 36.3 FPS both (new second); ~335 submissions a
+  second committed in Metal, ~35 through MoltenVK (the presenter's, which waits on a fence);
+  the GPU thread's 4.20–4.37 µs per draw against 4.19–5.19; Metal API validation clean; the
+  drawable grab correct.
 
 ## Decisions
 

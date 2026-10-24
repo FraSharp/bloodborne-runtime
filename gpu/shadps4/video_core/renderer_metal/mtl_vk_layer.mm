@@ -59,6 +59,7 @@ using MetalFrame::Owned;
     X(vkCmdBeginDebugUtilsLabelEXT) X(vkCmdEndDebugUtilsLabelEXT) X(vkCmdInsertDebugUtilsLabelEXT) \
     X(vkCmdWriteTimestamp) X(vkCmdWriteTimestamp2) X(vkCmdWriteBufferMarkerAMD)                    \
     X(vkCreateSampler) X(vkDestroySampler) X(vkDestroyImageView) X(vkDestroyPipeline)              \
+    X(vkDestroySemaphore)                                                                          \
     X(vkGetBufferDeviceAddress) X(vkGetBufferDeviceAddressKHR) X(vkCreateShaderModule)            \
     X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkCreateImageView)               \
     X(vkSetDebugUtilsObjectNameEXT) X(vkUpdateDescriptorSets) X(vkGetDeviceProcAddr)             \
@@ -81,6 +82,7 @@ bool present_enabled; ///< BB_METAL_PRESENT=1: the present pass (step B)
 bool frame_enabled;   ///< BB_METAL_FRAME=1: every command buffer (step C)
 std::array<std::atomic<unsigned long long>, Count> calls{};
 std::chrono::steady_clock::time_point since = std::chrono::steady_clock::now();
+std::atomic<unsigned long long> metal_submits{0}, vulkan_submits{0}; ///< SubmitInMetal
 std::mutex report_mutex;
 id<MTLCommandQueue> queue;
 
@@ -106,6 +108,9 @@ void Report() {
                     s.skipped_emulated.exchange(0) / seconds, s.skipped_discard.exchange(0) / seconds,
                     s.unsupported.exchange(0) / seconds, MetalFrame::AddressBufferCount(),
                     s.tess_draws.exchange(0) / seconds, s.tess_after_tess.exchange(0) / seconds);
+        std::printf("Metal layer: per second: %.0f submits committed in Metal, %.0f through "
+                    "MoltenVK\n",
+                    metal_submits.exchange(0) / seconds, vulkan_submits.exchange(0) / seconds);
     }
     if (!trace) {
         return;
@@ -222,14 +227,43 @@ void Unsupported(unsigned id) {
     }
 }
 
+/// A timeline value to signal on a semaphore's MTLSharedEvent (Metal submissions).
+struct EventSignal {
+    id<MTLSharedEvent> event;
+    uint64_t value;
+};
+
 /// Commits the Metal command buffers of the owned command buffers in `buffers`, in order, and
 /// releases them; MoltenVK then gets the submit unchanged (its copies of them are empty). With
 /// MoltenVK's single-queue semaphores ("Metal implicit guarantees within a single queue") order
-/// on the queue is what synchronizes, and ours comes first.
+/// on the queue is what synchronizes, and ours comes first. `signals`, when the submit does not
+/// go to MoltenVK (SubmitInMetal): encoded on the last one (or a command buffer of their own).
 template <typename Get>
-void CommitOwned(uint32_t count, Get&& get) {
-    if (owned_count.load(std::memory_order_acquire) == 0) {
+void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* signals = nullptr) {
+    const bool signal = signals && !signals->empty();
+    if (owned_count.load(std::memory_order_acquire) == 0 && !signal) {
         return;
+    }
+    // The last owned command buffer of the submit carries the signals.
+    uint32_t last = count;
+    if (signal) {
+        for (uint32_t i = count; i-- > 0;) {
+            if (FindOwned(get(i))) {
+                last = i;
+                break;
+            }
+        }
+        if (last == count) {
+            @autoreleasepool {
+                id<MTLCommandBuffer> cmd = [queue commandBuffer];
+                cmd.label = @"bbport Metal submit signal";
+                for (const auto& s : *signals) {
+                    [cmd encodeSignalEvent:s.event value:s.value];
+                }
+                [cmd commit];
+            }
+            return;
+        }
     }
     for (uint32_t i = 0; i < count; ++i) {
         const VkCommandBuffer cb = get(i);
@@ -247,6 +281,11 @@ void CommitOwned(uint32_t count, Get&& get) {
         }
         @autoreleasepool {
         MetalFrame::EndEncoders(*o);
+        if (signal && i == last) {
+            for (const auto& s : *signals) {
+                [o->cmd encodeSignalEvent:s.event value:s.value];
+            }
+        }
         MetalFrame::ReturnScratchWhenDone(*o);
         if (!o->keep.empty()) {
             // Our temporary buffers live until the GPU is done with them.
@@ -267,6 +306,111 @@ void CommitOwned(uint32_t count, Get&& get) {
     }
 }
 
+// ---- Metal submissions (the skeleton, docs/RENDER_ADAPTER.md M2 step 4) ----
+// A submit whose command buffers the Metal frame owns is committed in Metal alone: the timeline
+// semaphores it signals advance on their MTLSharedEvents (MoltenVK's own, exported), so Vulkan's
+// reads and waits of them (the scheduler's ticks, MoltenVK's waits) see the values; it waits on
+// nothing but queue order (everything is on one Metal queue). Not taken (MoltenVK submits it as
+// before): a fence, a binary semaphore, a semaphore without a shared event, or a wait for a
+// value not committed yet. BB_METAL_SUBMIT=0: every submit goes to MoltenVK.
+PFN_vkExportMetalObjectsEXT export_fn;
+VkDevice layer_device;
+std::mutex event_mutex;
+std::unordered_map<VkSemaphore, id<MTLSharedEvent>> events; ///< nil: not exportable
+std::unordered_map<VkSemaphore, uint64_t> committed_values; ///< highest value committed in Metal
+
+id<MTLSharedEvent> EventOfLocked(VkSemaphore semaphore) {
+    if (auto it = events.find(semaphore); it != events.end()) {
+        return it->second;
+    }
+    VkExportMetalSharedEventInfoEXT event{VK_STRUCTURE_TYPE_EXPORT_METAL_SHARED_EVENT_INFO_EXT};
+    event.semaphore = semaphore;
+    VkExportMetalObjectsInfoEXT info{VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT, &event};
+    export_fn(layer_device, &info);
+    id<MTLSharedEvent> shared = event.mtlSharedEvent;
+    events[semaphore] = shared;
+    return shared;
+}
+
+void ForgetSemaphore(VkSemaphore semaphore) {
+    std::scoped_lock lock{event_mutex};
+    events.erase(semaphore);
+    committed_values.erase(semaphore);
+}
+
+const VkTimelineSemaphoreSubmitInfo* TimelineInfo(const VkSubmitInfo& submit) {
+    for (auto* next = static_cast<const VkBaseInStructure*>(submit.pNext); next;
+         next = next->pNext) {
+        if (next->sType == VK_STRUCTURE_TYPE_TIMELINE_SEMAPHORE_SUBMIT_INFO) {
+            return reinterpret_cast<const VkTimelineSemaphoreSubmitInfo*>(next);
+        }
+    }
+    return nullptr;
+}
+
+bool SubmitInMetal(uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
+    static const bool enabled = [] {
+        const char* env = std::getenv("BB_METAL_SUBMIT");
+        const bool on = !(env && env[0] == '0');
+        std::printf("Metal layer: submissions %s\n",
+                    on ? "committed in Metal (no MoltenVK submit for the frame's work)"
+                       : "through MoltenVK (BB_METAL_SUBMIT=0)");
+        return on;
+    }();
+    if (!enabled || fence || !export_fn) {
+        return false;
+    }
+    // One at a time: a submit's values are committed before another can count on them.
+    static std::mutex submit_mutex;
+    std::scoped_lock submit_lock{submit_mutex};
+    std::vector<std::vector<EventSignal>> signals(count);
+    {
+        std::scoped_lock lock{event_mutex};
+        for (uint32_t s = 0; s < count; ++s) {
+            const VkSubmitInfo& submit = submits[s];
+            for (uint32_t i = 0; i < submit.commandBufferCount; ++i) {
+                if (!FindOwned(submit.pCommandBuffers[i])) {
+                    return false;
+                }
+            }
+            const auto* timeline = TimelineInfo(submit);
+            if ((submit.waitSemaphoreCount || submit.signalSemaphoreCount) && !timeline) {
+                return false; // binary semaphores
+            }
+            for (uint32_t i = 0; i < submit.waitSemaphoreCount; ++i) {
+                const VkSemaphore semaphore = submit.pWaitSemaphores[i];
+                id<MTLSharedEvent> event = EventOfLocked(semaphore);
+                if (!event || i >= timeline->waitSemaphoreValueCount) {
+                    return false;
+                }
+                const uint64_t value = timeline->pWaitSemaphoreValues[i];
+                if (event.signaledValue < value && committed_values[semaphore] < value) {
+                    return false; // its signal is not on the queue yet
+                }
+            }
+            for (uint32_t i = 0; i < submit.signalSemaphoreCount; ++i) {
+                id<MTLSharedEvent> event = EventOfLocked(submit.pSignalSemaphores[i]);
+                if (!event || i >= timeline->signalSemaphoreValueCount) {
+                    return false;
+                }
+                signals[s].push_back({event, timeline->pSignalSemaphoreValues[i]});
+            }
+        }
+        for (uint32_t s = 0; s < count; ++s) {
+            for (uint32_t i = 0; i < submits[s].signalSemaphoreCount; ++i) {
+                auto& value = committed_values[submits[s].pSignalSemaphores[i]];
+                value = std::max(value, TimelineInfo(submits[s])->pSignalSemaphoreValues[i]);
+            }
+        }
+    }
+    for (uint32_t s = 0; s < count; ++s) {
+        CommitOwned(submits[s].commandBufferCount,
+                    [&](uint32_t i) { return submits[s].pCommandBuffers[i]; }, &signals[s]);
+    }
+    ++metal_submits;
+    return true;
+}
+
 /// One forwarding function per dispatcher member: counts, encodes Metal for an owned command
 /// buffer, else calls MoltenVK.
 template <unsigned I, typename F>
@@ -282,6 +426,10 @@ struct Hook<I, R (*)(A...)> {
         if constexpr (I == Id_vkQueueSubmit) {
             Report();
             const auto [vkqueue, count, submits, fence] = std::tuple{args...};
+            if (frame_enabled && SubmitInMetal(count, submits, fence)) {
+                return VK_SUCCESS;
+            }
+            ++vulkan_submits;
             for (uint32_t s = 0; s < count; ++s) {
                 CommitOwned(submits[s].commandBufferCount,
                             [&](uint32_t i) { return submits[s].pCommandBuffers[i]; });
@@ -400,6 +548,11 @@ struct Hook<I, R (*)(A...)> {
         } else if constexpr (I == Id_vkDestroySampler) {
             if (present_enabled || frame_enabled) {
                 MetalFrame::SamplerDestroyed(std::get<1>(std::tuple{args...}));
+            }
+            return original(args...);
+        } else if constexpr (I == Id_vkDestroySemaphore) {
+            if (frame_enabled) {
+                ForgetSemaphore(std::get<1>(std::tuple{args...}));
             }
             return original(args...);
         } else if constexpr (I == Id_vkDestroyImageView) {
@@ -655,6 +808,8 @@ void SetDevice(void* device, void* vkqueue) {
                            : reinterpret_cast<PFN_vkGetBufferDeviceAddress>(
                                  VULKAN_HPP_DEFAULT_DISPATCHER.vkGetBufferDeviceAddress);
     MetalFrame::Init(vk_device, queue, export_objects, get_address);
+    export_fn = export_objects;
+    layer_device = vk_device;
     std::printf("Metal layer: %s encoded in Metal on %s\n",
                 frame_enabled ? "every command buffer is (BB_METAL_FRAME=1)"
                               : "the present pass is (BB_METAL_PRESENT=1)",
