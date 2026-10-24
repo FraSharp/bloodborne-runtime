@@ -206,7 +206,7 @@ private:
     /// Records FSR 4 into output_image; on a permanent failure FSR 3 takes over.
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
-    void RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color, vk::ImageView depth);
+    void RecordTaa(vk::ImageView color, vk::ImageView depth);
     /// bbport: MetalFX is selected, available and has not failed (macOS, vk_metalfx).
     [[nodiscard]] bool UseMetalFx() const;
     /// MetalFX into output_image. Ends the submission: callers fetch CommandBuffer() again.

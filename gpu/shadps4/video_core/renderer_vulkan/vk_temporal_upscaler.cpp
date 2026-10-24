@@ -711,47 +711,31 @@ void TemporalUpscaler::CreatePipelines() {
         "taa");
 }
 
-void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
-                                vk::ImageView depth) {
+void TemporalUpscaler::RecordTaa(vk::ImageView color, vk::ImageView depth) {
+    namespace Backend = VideoCore::Backend;
+    using Use = Backend::MemoryUse;
+    // Recorded through the render adapter: the Metal frame encodes it in Metal directly.
+    auto& recorder = BackendDevice::From(instance).Recorder();
     // Make scene writes and the last storage-image history writes visible to sampled reads.
-    const vk::MemoryBarrier2 inputs{
-        .srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-        .srcAccessMask = vk::AccessFlagBits2::eMemoryWrite |
-                         vk::AccessFlagBits2::eShaderStorageWrite,
-        .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-        .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead |
-                         vk::AccessFlagBits2::eShaderStorageWrite,
-    };
-    cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1,.pMemoryBarriers = &inputs});
+    recorder.Barrier(Use::Any, Use::ComputeRead | Use::ComputeWrite);
     // Histories alternate between reads and writes. Queue ordering plus this dependency
     // protects both the previous write and a reused destination's previous read.
-    std::array<vk::ImageMemoryBarrier2, 2> barriers{};
-    for (u32 i = 0; i < barriers.size(); ++i) {
-        barriers[i] = {.srcStageMask = vk::PipelineStageFlagBits2::eAllCommands,
-            .srcAccessMask = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite |
-                             vk::AccessFlagBits2::eShaderStorageWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderSampledRead |
-                             vk::AccessFlagBits2::eShaderStorageWrite,
-            .oldLayout = reset ? vk::ImageLayout::eUndefined : vk::ImageLayout::eGeneral,
-            .newLayout = vk::ImageLayout::eGeneral,
-            .image = vk::Image(taa_history[i]),
-            .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+    for (auto& history : taa_history) {
+        recorder.TransitImage(history.Allocation(), Backend::ImageAspect::Color,
+                              Backend::ImageAccess::ComputeReadWrite, reset);
     }
-    cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = u32(barriers.size()),
-                             .pImageMemoryBarriers = barriers.data()});
     const std::array<vk::ImageView, 7> views{
         color, depth, *motion_view, *taa_history_views[1 - taa_next],
         *output_view, *taa_history_views[taa_next], *opaque_view};
-    std::array<vk::DescriptorImageInfo, 7> infos{};
-    std::array<vk::WriteDescriptorSet, 7> writes{};
-    for (u32 i = 0; i < infos.size(); ++i) {
-        infos[i] = {.sampler = i < 4 ? *taa_sampler : vk::Sampler{},
-                    .imageView = views[i], .imageLayout = vk::ImageLayout::eGeneral};
-        writes[i] = {.dstBinding = i, .descriptorCount = 1,
-            .descriptorType = i < 4 ? vk::DescriptorType::eCombinedImageSampler
-                                    : vk::DescriptorType::eStorageImage,
-            .pImageInfo = &infos[i]};
+    std::array<Backend::ImageBinding, 7> images{};
+    std::array<Backend::SlotWrite, 7> writes{};
+    for (u32 i = 0; i < images.size(); ++i) {
+        images[i] = MakeImageBinding(i < 4 ? *taa_sampler : vk::Sampler{}, views[i],
+                                     vk::ImageLayout::eGeneral);
+        writes[i] = {.slot = i, .count = 1,
+                     .kind = i < 4 ? Backend::BindingKind::CombinedImageSampler
+                                   : Backend::BindingKind::StorageImage,
+                     .images = &images[i]};
     }
     struct Params {
         std::array<float, 2> jitter;
@@ -769,40 +753,39 @@ void TemporalUpscaler::RecordTaa(vk::CommandBuffer cmdbuf, vk::ImageView color,
                   (BbToggle::Disabled(BbToggle::TaaVariance) ? 4u << 8 : 0u) |
                   (BbToggle::Disabled(BbToggle::TaaFilter) ? 8u << 8 : 0u) |
                   (BbToggle::Disabled(BbToggle::TaaKeepNearerHistory) ? 16u << 8 : 0u);
-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *taa_pipeline);
     if (params.pad & 0xffu) {
         static u32 diagnostic_frames = 0;
         if (diagnostic_frames++ < 16)
             std::printf("TAA diagnostic: reset=%u jitter=%.6f,%.6f mode=%u\n",
                         params.reset, jitter[0], jitter[1], params.pad);
     }
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, taa_pipeline.Layout(), 0, writes);
-    cmdbuf.pushConstants(taa_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
-                         sizeof(params), &params);
-    cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
+    const u32 groups_x = (out_width + 7) / 8, groups_y = (out_height + 7) / 8;
+    recorder.BindResources(taa_pipeline.Allocation(), writes,
+                           {reinterpret_cast<const u8*>(&params), sizeof(params)}, images, {});
+    recorder.Dispatch({.pipeline = taa_pipeline.Allocation().native,
+                       .groups = {groups_x, groups_y, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch, .name = "TAA",
+                       .count = {groups_x, groups_y, 1}});
     const auto& settings = BbSettings::Get();
     const float strength = std::clamp(settings.sharpness.load(), 0.0f, 2.0f);
     if (settings.sharpen && strength > 0.0f && !(params.pad & 0xffu)) {
-        const vk::MemoryBarrier2 resolved{
-            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
-            .dstStageMask = vk::PipelineStageFlagBits2::eComputeShader,
-            .dstAccessMask = vk::AccessFlagBits2::eShaderStorageRead |
-                             vk::AccessFlagBits2::eShaderStorageWrite};
-        cmdbuf.pipelineBarrier2({.memoryBarrierCount = 1, .pMemoryBarriers = &resolved});
-        const std::array<vk::DescriptorImageInfo, 2> sharpen_infos{{
-            {.imageView = *taa_history_views[taa_next], .imageLayout = vk::ImageLayout::eGeneral},
-            {.imageView = *output_view, .imageLayout = vk::ImageLayout::eGeneral}}};
-        std::array<vk::WriteDescriptorSet, 2> sharpen_writes{};
-        for (u32 i = 0; i < sharpen_writes.size(); ++i)
-            sharpen_writes[i] = {.dstBinding = i, .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &sharpen_infos[i]};
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *taa_sharpen_pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                    taa_sharpen_pipeline.Layout(), 0, sharpen_writes);
-        cmdbuf.pushConstants(taa_sharpen_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute,
-                             0, sizeof(strength), &strength);
-        cmdbuf.dispatch((out_width + 7) / 8, (out_height + 7) / 8, 1);
+        recorder.Barrier(Use::ComputeWrite, Use::ComputeRead | Use::ComputeWrite);
+        const std::array sharpen_images{
+            MakeImageBinding({}, *taa_history_views[taa_next], vk::ImageLayout::eGeneral),
+            MakeImageBinding({}, *output_view, vk::ImageLayout::eGeneral)};
+        std::array<Backend::SlotWrite, 2> sharpen_writes{};
+        for (u32 i = 0; i < sharpen_writes.size(); ++i) {
+            sharpen_writes[i] = {.slot = i, .count = 1,
+                                 .kind = Backend::BindingKind::StorageImage,
+                                 .images = &sharpen_images[i]};
+        }
+        recorder.BindResources(taa_sharpen_pipeline.Allocation(), sharpen_writes,
+                               {reinterpret_cast<const u8*>(&strength), sizeof(strength)},
+                               sharpen_images, {});
+        recorder.Dispatch({.pipeline = taa_sharpen_pipeline.Allocation().native,
+                           .groups = {groups_x, groups_y, 1}},
+                          {.kind = Backend::CrumbKind::Dispatch, .name = "TAA sharpen",
+                           .count = {groups_x, groups_y, 1}});
     }
     taa_next = 1 - taa_next;
 }
@@ -1177,7 +1160,7 @@ void TemporalUpscaler::Run() {
     last_frame = now;
 
     if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
-        RecordTaa(cmdbuf, input_color_view, input_depth_view);
+        RecordTaa(input_color_view, input_depth_view);
         dispatched = true;
     } else if (UseFsr4()) {
         dispatched = RecordFsr4(cmdbuf, {input_color, input_color_view, w, h},
@@ -1795,7 +1778,7 @@ void TemporalUpscaler::RunScaled() {
                 vk::ImageLayout::eGeneral, all, rw);
         bool ok4 = true;
         if (BbSettings::Get().upscaler == BbSettings::UpscalerTaa) {
-            RecordTaa(cmdbuf, color_view, depth_view);
+            RecordTaa(color_view, depth_view);
         } else if (use_metalfx) {
             ok4 = RecordMetalFx({color_image, ToVk(color.info.pixel_format),
                                  vk::ImageAspectFlagBits::eColor},
