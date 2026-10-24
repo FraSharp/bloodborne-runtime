@@ -10,6 +10,10 @@
 #include "bbport_guest_memory.h"
 #include "bbport_metal_residency.h"
 #include "video_core/renderer_metal/mtl_resources.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_recorder.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_backend_device.h"
 #include "video_core/renderer_vulkan/vk_backend_readback.h"
 #include "video_core/renderer_vulkan/vk_gpu_profiler.h"
@@ -36,8 +40,15 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
                              bool enable_validation, bool enable_crash_diagnostic)
     : instance{window, physical_device_index, enable_validation, enable_crash_diagnostic},
       scheduler{instance, true}, capabilities{QueryResourceCapabilities(instance)},
-      descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes},
-      recorder{scheduler, descriptor_heap, instance.GetDevice()} {
+      descriptor_heap{instance, scheduler.GetWorkSemaphore(), DescriptorHeapSizes} {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        recorder = Metal::MakeFrameRecorder(scheduler, descriptor_heap, instance.GetDevice());
+    }
+#endif
+    if (!recorder) {
+        recorder = std::make_unique<CommandRecorder>(scheduler, descriptor_heap, instance.GetDevice());
+    }
     instance.SetBackendDevice(this);
     MetalResources::Init(static_cast<VkDevice>(instance.GetDevice()));
     capabilities.non_coherent_atom_size = instance.NonCoherentAtomSize();

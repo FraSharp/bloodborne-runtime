@@ -12,8 +12,9 @@ class Scheduler;
 class DescriptorHeap;
 
 /// Records into the scheduler's current submission; each draw or dispatch is one recorded
-/// command with its pipeline bind, as before the adapter.
-class CommandRecorder final : public VideoCore::Backend::CommandRecorder {
+/// command with its pipeline bind, as before the adapter. On macOS with the Metal frame
+/// (BB_METAL_FRAME=1), renderer_metal/mtl_recorder.mm encodes some commands in Metal itself.
+class CommandRecorder : public VideoCore::Backend::CommandRecorder {
 public:
     CommandRecorder(Scheduler& scheduler, DescriptorHeap& descriptor_heap, vk::Device device)
         : scheduler{scheduler}, descriptor_heap{descriptor_heap}, device{device} {}
@@ -86,7 +87,7 @@ public:
         buffer_markers = enabled;
     }
 
-private:
+protected:
     Scheduler& scheduler;
     DescriptorHeap& descriptor_heap;
     vk::Device device;

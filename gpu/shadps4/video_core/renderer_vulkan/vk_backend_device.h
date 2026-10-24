@@ -65,7 +65,7 @@ public:
         scheduler.Wait(tick);
     }
     [[nodiscard]] CommandRecorder& Recorder() noexcept override {
-        return recorder;
+        return *recorder;
     }
 
     void DeferRelease(Common::UniqueFunction<void>&& release) override {
@@ -169,7 +169,8 @@ private:
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;
     DescriptorHeap descriptor_heap;
-    CommandRecorder recorder; ///< the draw scheduler's command stream
+    /// The draw scheduler's command stream (the Metal recorder with the Metal frame).
+    std::unique_ptr<CommandRecorder> recorder;
 
     VideoCore::Backend::BufferAllocation Insert(UniqueBuffer&& buffer, bool sparse);
     VideoCore::Backend::QueryPoolAllocation CreateQueries(vk::QueryType type, u32 count,

@@ -8,6 +8,10 @@
 
 #pragma once
 
+namespace MetalFrame {
+struct Owned;
+}
+
 namespace MetalLayer {
 
 /// `dispatcher`: VULKAN_HPP_DEFAULT_DISPATCHER, right after its init(device). Installs only when
@@ -23,6 +27,10 @@ void* MtlQueue();
 
 /// Step C (BB_METAL_FRAME=1): every command buffer is encoded in Metal.
 bool FrameEnabled();
+
+/// The Metal encoding state of an owned command buffer (a VkCommandBuffer), or null: for the
+/// render adapter's Metal recorder (mtl_recorder.mm), which encodes without Vulkan calls.
+MetalFrame::Owned* OwnedFor(void* command_buffer);
 
 /// The id<MTLCommandBuffer> an owned command buffer is encoded into, with every encoder ended,
 /// for work encoded outside the layer in order (MetalFX); null when it is not owned.

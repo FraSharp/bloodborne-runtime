@@ -584,6 +584,10 @@ bool FrameEnabled() {
     return frame_enabled;
 }
 
+MetalFrame::Owned* OwnedFor(void* command_buffer) {
+    return FindOwned(static_cast<VkCommandBuffer>(command_buffer));
+}
+
 void* MetalCommandBuffer(void* command_buffer) {
     Owned* o = FindOwned(static_cast<VkCommandBuffer>(command_buffer));
     if (!o) {
