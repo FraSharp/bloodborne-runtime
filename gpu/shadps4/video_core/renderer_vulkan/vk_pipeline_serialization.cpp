@@ -11,7 +11,6 @@
 #include "shader_recompiler/info.h"
 #include "video_core/cache_storage.h"
 #include "video_core/renderer_vulkan/vk_backend_device.h"
-#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_pipeline_cache.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
@@ -177,15 +176,8 @@ bool PipelineCache::LoadComputePipeline(Serialization::Archive& ar) {
 
     // bbport: built before it is inserted: a pipeline the driver rejects while preloading throws
     // (Serialization::CorruptData) and leaves no empty entry behind.
-    std::unique_ptr<ComputePipeline> pipeline;
-    {
-        MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<ComputePipeline>(device, profile, compute_key, *sel.infos[0],
-                                                     sel.modules[0], sdata, true);
-    }
-    if (MetalShadow::Enabled()) {
-        MetalShadow::Compute(compute_key, NativeModule(sel.modules[0]), pipeline->Handle());
-    }
+    auto pipeline = std::make_unique<ComputePipeline>(device, profile, compute_key, *sel.infos[0],
+                                                      sel.modules[0], sdata, true);
     const auto [it, is_new] = compute_pipelines.try_emplace(compute_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);
@@ -269,16 +261,9 @@ bool PipelineCache::LoadGraphicsPipeline(Serialization::Archive& ar) {
         }
     }
 
-    std::unique_ptr<GraphicsPipeline> pipeline;
-    {
-        MetalShadow::GameBuildScope game_build;
-        pipeline = std::make_unique<GraphicsPipeline>(
-            device, profile, sel.graphics_key, sel.infos,
-            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
-    }
-    MetalShadow::GraphicsFromVulkan(sel.graphics_key, NativeModules(sel.modules), sel.infos,
-                                    sel.runtime_infos,
-                                    sdata, pipeline);
+    auto pipeline = std::make_unique<GraphicsPipeline>(
+        device, profile, sel.graphics_key, sel.infos,
+        sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, true);
     const auto [it, is_new] = graphics_pipelines.try_emplace(sel.graphics_key);
     ASSERT(is_new);
     it.value() = std::move(pipeline);

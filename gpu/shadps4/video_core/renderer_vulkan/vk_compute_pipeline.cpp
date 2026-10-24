@@ -18,8 +18,11 @@ ComputePipeline::ComputePipeline(VideoCore::Backend::Device& device, const Shade
     stages[int(Shader::SwStage::Compute)] = &info_;
     BindingSlots slots;
     AppendBindingSlots(info_, VideoCore::Backend::ShaderStage::Compute, slots);
+    const VideoCore::Backend::GuestCompute guest{.key = &compute_key};
     const auto created = device.CreateComputePipeline(
-        {.shader = shader, .layout = {.slots = slots, .push_constant_size = sizeof(Shader::PushData)}},
+        {.shader = shader,
+         .layout = {.slots = slots, .push_constant_size = sizeof(Shader::PushData)},
+         .guest = &guest},
         GetDebugString());
     if (preloading && !created.handle) {
         // bbport: a pipeline from the cache the driver rejects is a damaged cache entry: the

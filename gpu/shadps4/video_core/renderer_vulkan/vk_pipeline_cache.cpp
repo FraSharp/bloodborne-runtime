@@ -33,7 +33,6 @@
 #include "video_core/renderer_vulkan/vk_pipeline_serialization.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_shader_util.h"
-#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/buffer_cache/buffer_cache.h"
 #include "bbport_guest_memory.h"
@@ -543,12 +542,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
                           runtime_infos = sel.runtime_infos, fetch = sel.fetch_shader,
                           modules = sel.modules]() mutable {
             GraphicsPipeline::SerializationSupport sdata{};
-            MetalShadow::GameBuildScope game_build;
             auto pipeline = std::make_unique<GraphicsPipeline>(
                 device, profile, key, infos, runtime_infos, fetch,
                 modules, sdata, false);
-            MetalShadow::GraphicsFromVulkan(key, NativeModules(modules), infos, runtime_infos,
-                                            sdata, pipeline);
             std::scoped_lock lk{job->mutex};
             job->pipeline = std::move(pipeline);
             job->sdata = std::move(sdata);
@@ -565,14 +561,9 @@ const GraphicsPipeline* PipelineCache::GetGraphicsPipeline(const DrawIndirectPar
         CompileTimer timer;
 
         GraphicsPipeline::SerializationSupport sdata{};
-        {
-            MetalShadow::GameBuildScope game_build;
-            it.value() = std::make_unique<GraphicsPipeline>(
-                device, profile, sel.graphics_key, sel.infos,
-                sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
-        }
-        MetalShadow::GraphicsFromVulkan(sel.graphics_key, NativeModules(sel.modules), sel.infos,
-                                        sel.runtime_infos, sdata, it.value());
+        it.value() = std::make_unique<GraphicsPipeline>(
+            device, profile, sel.graphics_key, sel.infos,
+            sel.runtime_infos, sel.fetch_shader, sel.modules, sdata, false);
 
         // MoltenVK can reject a pipeline even when its shaders compiled. Never persist its key:
         // preloading that key would reject it again and discard the entire shader cache.
@@ -677,15 +668,9 @@ const ComputePipeline* PipelineCache::GetComputePipeline() {
         CompileTimer timer;
 
         ComputePipeline::SerializationSupport sdata{};
-        {
-            MetalShadow::GameBuildScope game_build;
-            it.value() = std::make_unique<ComputePipeline>(
-                device, profile, compute_key, *sel.infos[0],
-                sel.modules[0], sdata, false);
-        }
-        if (MetalShadow::Enabled()) {
-            MetalShadow::Compute(compute_key, NativeModule(sel.modules[0]), it.value()->Handle());
-        }
+        it.value() = std::make_unique<ComputePipeline>(
+            device, profile, compute_key, *sel.infos[0],
+            sel.modules[0], sdata, false);
         RegisterPipelineData(compute_key, sdata);
         ++num_new_pipelines;
 
@@ -1412,15 +1397,6 @@ vk::ShaderModule PipelineCache::NativeModule(VideoCore::Backend::ShaderHandle mo
     return module ? vk::ShaderModule{reinterpret_cast<VkShaderModule>(
                         device.NativeHandle(module))}
                   : vk::ShaderModule{};
-}
-
-std::array<vk::ShaderModule, MaxShaderStages> PipelineCache::NativeModules(
-    std::span<const VideoCore::Backend::ShaderHandle> modules) {
-    std::array<vk::ShaderModule, MaxShaderStages> natives{};
-    for (size_t i = 0; i < modules.size() && i < natives.size(); ++i) {
-        natives[i] = NativeModule(modules[i]);
-    }
-    return natives;
 }
 
 std::optional<VideoCore::Backend::ShaderHandle> PipelineCache::ReplaceShader(

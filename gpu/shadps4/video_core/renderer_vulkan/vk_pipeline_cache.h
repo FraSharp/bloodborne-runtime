@@ -215,9 +215,7 @@ public:
                                                 std::string_view name);
     /// Releases a shader made by MakeShader (pipelines made with it keep it).
     void ReleaseShader(VideoCore::Backend::ShaderHandle module);
-    /// The Vulkan modules of `modules`, for the Metal shadow and the shader collector.
-    std::array<vk::ShaderModule, MaxShaderStages> NativeModules(
-        std::span<const VideoCore::Backend::ShaderHandle> modules);
+    /// The backend module of `module`, for the shader collector.
     vk::ShaderModule NativeModule(VideoCore::Backend::ShaderHandle module);
 
 private:

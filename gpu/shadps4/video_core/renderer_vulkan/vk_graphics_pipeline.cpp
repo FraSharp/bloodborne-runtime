@@ -284,6 +284,19 @@ GraphicsPipeline::GraphicsPipeline(
     const auto depth_format =
         device.SupportedFormat(LiverpoolToVK::DepthFormat(key.z_format, key.stencil_format),
                                Backend::ImageUse::DepthStencilAttachment);
+    // The guest's own description, for a backend that builds from it (Metal).
+    std::array<Backend::ShaderHandle, MaxShaderStages> guest_shaders{};
+    for (u32 i = 0; i < MaxShaderStages && i < shaders.size(); ++i) {
+        if (infos[i]) {
+            guest_shaders[i] = shaders[i];
+        }
+    }
+    constexpr u32 fragment = u32(Shader::SwStage::Fragment);
+    const Backend::GuestGraphics guest{
+        .key = &key,
+        .stage_shaders = guest_shaders,
+        .aux_fragment = !infos[fragment] && runtime_infos[fragment].hw.fs.clip_distance_emulation,
+    };
     const Backend::GraphicsPipelineDesc desc{
         .stages = pipeline_stages,
         .layout = {.slots = slots, .push_constant_size = sizeof(Shader::PushData)},
@@ -309,6 +322,7 @@ GraphicsPipeline::GraphicsPipeline(
             key.depth_samples, vk::SampleCountFlags{caps.depth_sample_counts})),
         .logic_op_enable = key.logic_op != AmdGpu::ColorControl::LogicOp::Copy,
         .logic_op = LiverpoolToVK::LogicOp(key.logic_op),
+        .guest = &guest,
     };
     const auto debug_str = GetDebugString();
     const auto created = device.CreateGraphicsPipeline(desc, debug_str);
