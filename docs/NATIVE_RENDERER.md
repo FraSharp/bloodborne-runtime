@@ -30,7 +30,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N2 · shaders ahead of time | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: inventory the shader variants |
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
 | N4 · render adapter | 100% `████████████████████` | [Specification](RENDER_ADAPTER.md) approved; A0–A6 done: the renderer runs on the adapter with the Vulkan backend; the Metal backend continues as N5 (M1–M4) |
-| N5 · Metal backend | 45% `█████████░░░░░░░░░░░` | The frame draws through Metal behind an option; resources are made in Metal (`BB_GFX_BACKEND=metal`, M1); next: M2, recording in Metal |
+| N5 · Metal backend | 50% `██████████░░░░░░░░░░` | The frame draws through Metal behind an option; resources are made in Metal (`BB_GFX_BACKEND=metal`, M1); M2 step 1 done (all shared recording through the adapter); next: a Metal command stream |
 | N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
 
 ## What was measured (N0, N1)

@@ -4,8 +4,8 @@
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
-M2 is in progress: the command stream (passes, barriers and the host dispatches through the
-recorder).
+M2 is in progress: step 1, the command stream, is done (everything both backends run records
+through the adapter); step 2, a Metal command stream, is next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -476,10 +476,62 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   Measured: 400 pipelines built, 0 failed, the stale count as the base build's (59); new
   build second 4.68 µs per draw against 4.48, reversed 4.31 against 4.52; frame correct.
 
-  Left in shared code for the Vulkan backend: the buffer cache's sparse guest arena (sparse
-  buffers, Linux only; guarded by the capability) and the guest-memory chunks used in place
-  (`BB_GUEST_IN_PLACE`, Linux). They move behind the device before M4 drops Vulkan from the
-  Mac build.
+- **M2, capabilities and memory:** the device's limits and features the renderer asks for
+  (binding alignments, an integrated GPU, tessellation, geometry shaders, primitive restart,
+  null descriptors, sample-count mixing, depth range and clip control, buffer markers,
+  viewport, framebuffer and sampler limits, workgroup counts, exact occlusion counts, vertex
+  shader stores) are `Capabilities`; `Device::ReportMemory` gives usage, budget and total from
+  one driver query, and `Capabilities::memory_report` says whether it can. The first version
+  asked `ReportMemory().available` on every guest submission (four driver queries where there
+  had been one) and cost 5% of the GPU thread's time per draw in both orders (4.24 against
+  4.49 µs, 4.03 against 4.23); with the capability, 4.08 against 4.14 (new second). The
+  rasterizer records through `Device::Recorder`, and the copy shader's copies hoisted before a
+  pass are `Transfers::CopyBufferBeforePass`.
+- **M2, the renderer's own passes:** `renderer_backend/host_pipeline.h` makes a host pass's
+  compute pipeline on any device (`MakeCompute`, `OwnedPipeline`). The indirect-argument
+  guard, the constant ring, GPU timestamps, occlusion queries, the tile manager and the copy
+  shader's multi-copy use it and the device's recorder. Work that may not span passes or
+  submissions registers as the recorder's `CarriedScope` (occlusion queries; Metal's visibility
+  results end with each encoder too). `Device::AfterCompletion` runs the texture cache's
+  downloads once the GPU is done. Measured: pairs read 3–6% apart in both orders and a build
+  without the per-draw changes the same, while the same new build alone read like the base
+  (4.06–4.14 against 4.05–4.09 µs): the spread was between runs.
+- **M2, null stand-ins and motion vectors:** the null-descriptor stand-ins, object motion and
+  camera motion (its pass and the `BB_DEBUG_MOTION` overlay) are made by the device and record
+  through the recorder (`ClearImage`, `StateOf` for a device-made image's state value). The
+  overlay made two image views a frame and freed them after its dispatch; through the
+  recorder the dispatch can land in a later command buffer, and Metal API validation found 78
+  views destroyed while still required. It uses the texture cache's views now: none. Measured
+  (new second): 4.00–4.04 against 4.08–4.15 µs; with MetalFX, object motion and the overlay,
+  25.5 against 25.3 FPS and the same frame.
+- **M2, the caches:** the texture cache takes no Vulkan object; stream buffers wait on the
+  device's ticks; the recorder says whether it records later on another thread
+  (`DefersRecording`). The texture cache's unused blit helper is gone; the Vulkan runtime keeps
+  its own for multisample copies (part of its transfers). Measured: 4.04–4.17 µs both.
+- **M2, scene resolution:** reduced proxies are device-made images and views, moved between
+  uses with `TransitImage` and copied with `CommandRecorder::BlitImage` (nearest, whole
+  levels). Depth formats without blits are resampled by `Transfers::ResampleDepth` (the Vulkan
+  runtime's `DepthResampler`, the former fullscreen draw). `Device::CanBlit` keeps its answers
+  (asked for every attachment of every draw). Transfers gives scene resolution its hook on
+  native accesses and the GPU profiler's transfer marks. Measured with MetalFX at Quality
+  (1280x720): 4.36–4.49 against 4.41–4.49 µs, 24.8 against 24.7 FPS; Metal API validation
+  clean.
+- **M2, pipelines and stream waits:** guest pipelines and the pipeline cache take the device;
+  the rasterizer's host-copy waits and deferred signals go through the recorder; the buffer
+  cache sets the submit hook (pending barriers, its sparse binds); the GPU profiler starts with
+  the Vulkan device; `Device::InstallGuestMemory` sets up guest memory used in place. Measured
+  (new second): 4.05–4.20 against 4.02–4.13 µs.
+- **M2, step 1 done:** everything both backends run records through the adapter. Measured
+  against M1 (`4ca9561`, M1 first): 4.04–4.17 against 4.05–5.01 µs per draw, 29.8 against 29.9
+  FPS.
+
+  Left in shared code for the Vulkan backend: the buffer cache's sparse guest arena and its
+  fault manager (sparse buffers, Linux only; guarded by the capability), the guest-memory
+  chunks used in place (`BB_GUEST_IN_PLACE`, Linux), the staging pool's type in the transfers
+  interface, and the Vulkan flags `VideoCore::Image` keeps (aspects, usage, format features).
+  The rasterizer holds the Vulkan instance and scheduler only to make the Vulkan backend's
+  parts (the sparse arena, the upscaler). These move behind the device before M4 drops Vulkan
+  from the Mac build.
 
 ## Decisions
 
