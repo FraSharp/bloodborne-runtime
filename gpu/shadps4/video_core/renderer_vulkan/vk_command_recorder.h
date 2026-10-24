@@ -21,6 +21,9 @@ public:
     void BeginPass(const VideoCore::Backend::RenderState& state) override;
     void EndPass() override;
     [[nodiscard]] bool InPass() const override;
+    void ClearImage(const VideoCore::Backend::ImageAllocation& image,
+                    const VideoCore::Backend::ClearColor& value) override;
+    [[nodiscard]] u32 StateOf(const VideoCore::Backend::ImageAllocation& image) const override;
     [[nodiscard]] const VideoCore::Backend::RenderState& CurrentPass() const override;
     void SetCarriedScope(VideoCore::Backend::CarriedScope* scope) override;
     [[nodiscard]] bool InPassWith(const VideoCore::Backend::RenderState& state) const override;

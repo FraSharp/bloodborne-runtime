@@ -70,6 +70,8 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
         capabilities.max_compute_groups[i] = limits.maxComputeWorkGroupCount[i];
     }
     capabilities.precise_occlusion = instance.IsOcclusionQueryPrecise();
+    capabilities.vertex_stores =
+        instance.GetPhysicalDevice().getFeatures().vertexPipelineStoresAndAtomics;
     VideoCore::Backend::SelectedApi();
 }
 

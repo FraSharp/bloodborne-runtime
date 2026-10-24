@@ -152,6 +152,12 @@ public:
     /// Whole images of one level and layer; `aspect` the planes used.
     virtual void TransitImage(const ImageAllocation& image, ImageAspect aspect, ImageAccess access,
                               bool discard = false) = 0;
+    /// Outside passes: the colour image (its first level and layer) set to `value`; it is in
+    /// TransferDestination use (TransitImage).
+    virtual void ClearImage(const ImageAllocation& image, const ClearColor& value) = 0;
+    /// The state value bindings and attachments of `image` carry from its last TransitImage
+    /// (RenderAttachment::image_layout, ImageBinding::layout).
+    [[nodiscard]] virtual u32 StateOf(const ImageAllocation& image) const = 0;
 
     /// Occlusion queries (`pool`: QueryPoolAllocation::native). `precise`: exact sample counts.
     virtual void BeginQuery(u64 pool, u32 slot, bool precise) = 0;

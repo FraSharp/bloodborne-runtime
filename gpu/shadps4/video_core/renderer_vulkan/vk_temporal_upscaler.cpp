@@ -1161,7 +1161,7 @@ void TemporalUpscaler::Run() {
     own_barrier(vk::Image(output_image), vk::ImageLayout::eUndefined, all,
                 vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral, all, rw);
 
-    camera_motion.RecordMotion(input_depth_view, *motion_view, w, h);
+    camera_motion.RecordMotion(ToNative(input_depth_view), ToNative(*motion_view), w, h);
     own_barrier(vk::Image(motion_image), vk::ImageLayout::eGeneral,
                 vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
                 vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
@@ -1298,7 +1298,7 @@ void TemporalUpscaler::Run() {
                         {vk::Image(output_image), ow, oh, 8, "output", "rgba16f"}});
             DumpImages(instance, scheduler, cmdbuf, dump,
                        {{input_depth, w, h, 4, "depth", "f32", vk::ImageAspectFlagBits::eDepth}});
-            if (const auto object = camera_motion.ObjectMotionImage(w, h); object) {
+            if (const auto object = NativeImage(camera_motion.ObjectMotionImage(w, h)); object) {
                 DumpImages(instance, scheduler, cmdbuf, dump,
                            {{object, w, h, 16, "objects", "rgba32f"}});
             }
@@ -1316,7 +1316,7 @@ void TemporalUpscaler::Run() {
         const vk::DescriptorImageInfo mask_info{.imageView = *reactive_view,
                                                 .imageLayout = vk::ImageLayout::eGeneral};
         // Sampled for the debug view only; the object image falls back to the motion image.
-        const vk::ImageView objects = camera_motion.ObjectMotionView();
+        const vk::ImageView objects = NativeImageView(camera_motion.ObjectMotionView());
         const vk::DescriptorImageInfo motion_info{.imageView = *motion_view,
                                                   .imageLayout = vk::ImageLayout::eGeneral};
         const vk::DescriptorImageInfo objects_info{
@@ -1772,7 +1772,7 @@ void TemporalUpscaler::RunScaled() {
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eUndefined,
             all, vk::AccessFlagBits2::eNone, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite);
-    camera_motion.RecordMotion(depth_view, *motion_view, w, h);
+    camera_motion.RecordMotion(ToNative(depth_view), ToNative(*motion_view), w, h);
     barrier(vk::Image(motion_image), vk::ImageAspectFlagBits::eColor, vk::ImageLayout::eGeneral,
             vk::PipelineStageFlagBits2::eComputeShader, vk::AccessFlagBits2::eShaderWrite,
             vk::ImageLayout::eGeneral, all, vk::AccessFlagBits2::eShaderRead);
@@ -1955,7 +1955,7 @@ void TemporalUpscaler::RunScaled() {
                 }
                 // ObjectMotion's attachment can be in a different resolution from the FSR
                 // inputs: only dump it when it matches, to avoid an out-of-bounds GPU copy.
-                if (const auto object = camera_motion.ObjectMotionImage(w, h); object) {
+                if (const auto object = NativeImage(camera_motion.ObjectMotionImage(w, h)); object) {
                     DumpImages(instance, scheduler, cmdbuf, dump,
                                {{object, w, h, 16, "objects", "rgba32f"}});
                 }

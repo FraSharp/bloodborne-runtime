@@ -213,6 +213,11 @@ private:
     return vk::Image{reinterpret_cast<VkImage>(native)};
 }
 
+/// An image view's NativeHandle as the Vulkan object.
+[[nodiscard]] inline vk::ImageView NativeImageView(u64 native) noexcept {
+    return vk::ImageView{reinterpret_cast<VkImageView>(native)};
+}
+
 /// A sampler's NativeHandle as the Vulkan object.
 [[nodiscard]] inline vk::Sampler NativeSampler(u64 native) noexcept {
     return vk::Sampler{reinterpret_cast<VkSampler>(native)};

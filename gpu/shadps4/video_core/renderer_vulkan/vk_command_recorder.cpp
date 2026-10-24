@@ -11,6 +11,7 @@
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/renderer_vulkan/vk_state.h"
 
+#include <cstring>
 #include <memory>
 
 namespace Vulkan {
@@ -86,6 +87,21 @@ void CommandRecorder::TransitImage(const Backend::ImageAllocation& image, Backen
     scheduler.Record([barrier](vk::CommandBuffer cmdbuf) {
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &barrier});
     });
+}
+
+void CommandRecorder::ClearImage(const Backend::ImageAllocation& image,
+                                 const Backend::ClearColor& value) {
+    const auto layout = static_cast<ImageState*>(image.backend_state)->state.layout;
+    vk::ClearColorValue clear{};
+    std::memcpy(clear.uint32.data(), value.data(), sizeof(value));
+    scheduler.Record([image = NativeImage(image.native), layout, clear](vk::CommandBuffer cmdbuf) {
+        cmdbuf.clearColorImage(image, layout, clear,
+                               vk::ImageSubresourceRange{vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1});
+    });
+}
+
+u32 CommandRecorder::StateOf(const Backend::ImageAllocation& image) const {
+    return static_cast<u32>(static_cast<const ImageState*>(image.backend_state)->state.layout);
 }
 
 namespace {

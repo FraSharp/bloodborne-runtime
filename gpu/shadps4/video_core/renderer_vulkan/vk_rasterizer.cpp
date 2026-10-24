@@ -131,13 +131,13 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
     scene_targets = std::make_unique<SceneTargets>(instance, scheduler, runtime_, texture_cache);
     // Object motion first: it fixes the buffer addresses the motion shader variants embed.
-    object_motion = std::make_unique<ObjectMotion>(instance, scheduler);
-    camera_motion = std::make_unique<CameraMotion>(instance, scheduler, texture_cache, runtime_);
+    object_motion = std::make_unique<ObjectMotion>(device);
+    camera_motion = std::make_unique<CameraMotion>(device, texture_cache, runtime_);
     camera_motion->SetObjectMotion(object_motion.get());
     upscaler = std::make_unique<TemporalUpscaler>(instance, scheduler, texture_cache, runtime_,
                                                   *camera_motion, *scene_targets);
     if (!device.GetCapabilities().null_descriptor) {
-        null_resources = std::make_unique<NullResources>(instance, scheduler);
+        null_resources = std::make_unique<NullResources>(device);
     }
     if (!EmulatorSettings.IsNullGPU()) {
         liverpool->BindRasterizer(this);
