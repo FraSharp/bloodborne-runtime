@@ -9,7 +9,8 @@ through the adapter); in step 2, the Metal recorder encodes every command the sh
 records into the Metal frame directly; the stream's skeleton (command buffers, submissions,
 ticks) still goes through MoltenVK, to be replaced once nothing else submits through Vulkan
 (after step 4). Step 3 is done: with the Metal frame, shaders and pipelines are Metal's only.
-Step 4, the presenter and upscalers on Metal, is next.
+In step 4 the window is presented through Metal; the presenter's and upscalers' own passes
+are next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -573,6 +574,21 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   against 36.3); 400 shaders with 6.7 MiB of SPIR-V no longer copied into MoltenVK modules.
   The pipeline cache keeps its programs for the session, so no shader is released early in
   play.
+- **M2 step 4, the window through Metal:** with the Metal frame the swapchain presents the
+  window's `CAMetalLayer` itself (`renderer_metal/mtl_present.mm`), with no MoltenVK surface or
+  swapchain. Its images are offscreen ones the device makes; the presenter draws into them as
+  before (the letterboxed frame, the settings overlay, the FPS counter), and each present
+  copies one into the layer's next drawable on MoltenVK's queue, after the presenter's
+  submission, and presents it. No swapchain semaphores (the copy is ordered on the queue); an
+  image is reused once its present's copy completed; vsync unless the present mode is
+  Immediate; HDR10 as the Vulkan swapchain had it. A screen grab (`tools/grab.sh --screen`)
+  writes the drawable as presented. Measured with the Metal frame: 36.4 against 37.9 FPS (new
+  second), 36.5 against 36.6 (new first); the GPU thread's time per draw read higher for the
+  new build in both orders (4.26–5.19 against 4.10–4.28 µs new first), unexplained (nothing in
+  the change runs on that thread). Metal API validation clean; the drawable grab shows the
+  frame letterboxed with the FPS counter. Not yet tried: window resizing, full screen,
+  minimising, HDR output and Immediate mode. The extra full-screen copy goes when the presenter
+  draws into the drawable itself.
 
 ## Decisions
 
