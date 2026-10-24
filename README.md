@@ -1,5 +1,7 @@
 # bloodborne-runtime
 
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/EyyQ23sTBg)
+
 What runs Bloodborne (PS4, CUSA03173 1.09) outside a PS4: it loads the game's executable, provides
 the PS4 system libraries the game calls (threads, memory, files, saves, pad, audio, video out),
 and draws its graphics through Vulkan with a renderer derived from shadPS4, with temporal
@@ -20,8 +22,6 @@ or as recompiled native code it generates.
 | [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac) | Packages the launcher as the macOS app, with releases and player guides |
 
 **Players:** download the app from [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac/releases/latest).
-
-**Community:** the project's [Discord](https://discord.gg/EyyQ23sTBg) (`#bloodborne-runtime` for this repository).
 
 ## Build and run
 
