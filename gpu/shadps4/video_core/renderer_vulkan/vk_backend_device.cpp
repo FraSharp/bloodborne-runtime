@@ -45,6 +45,7 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
 #if BB_METAL_BACKEND
     if (MetalLayer::FrameEnabled()) {
         scheduler.SetEncoder(Metal::FrameStreamEncoder());
+        SetActiveStreamEncoder(Metal::FrameStreamEncoder());
         recorder = Metal::MakeFrameRecorder(scheduler, descriptor_heap, instance.GetDevice());
     }
 #endif

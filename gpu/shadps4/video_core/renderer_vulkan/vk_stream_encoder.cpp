@@ -26,14 +26,25 @@ public:
                               regions.data());
     }
     void CopyImageToBuffer(vk::CommandBuffer cmd, vk::Image src, vk::Buffer dst,
-                           std::span<const vk::BufferImageCopy> regions) const override {
-        cmd.copyImageToBuffer(src, vk::ImageLayout::eTransferSrcOptimal, dst, u32(regions.size()),
-                              regions.data());
+                           std::span<const vk::BufferImageCopy> regions,
+                           vk::ImageLayout src_layout) const override {
+        cmd.copyImageToBuffer(src, src_layout, dst, u32(regions.size()), regions.data());
     }
     void CopyImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
-                   std::span<const vk::ImageCopy> regions) const override {
-        cmd.copyImage(src, vk::ImageLayout::eTransferSrcOptimal, dst,
-                      vk::ImageLayout::eTransferDstOptimal, u32(regions.size()), regions.data());
+                   std::span<const vk::ImageCopy> regions, vk::ImageLayout src_layout,
+                   vk::ImageLayout dst_layout) const override {
+        cmd.copyImage(src, src_layout, dst, dst_layout, u32(regions.size()), regions.data());
+    }
+    void BlitImage(vk::CommandBuffer cmd, vk::Image src, vk::ImageLayout src_layout, vk::Image dst,
+                   vk::ImageLayout dst_layout, std::span<const vk::ImageBlit> regions,
+                   vk::Filter filter) const override {
+        cmd.blitImage(src, src_layout, dst, dst_layout, u32(regions.size()), regions.data(),
+                      filter);
+    }
+    void ClearDepthStencilImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout layout,
+                                const vk::ClearDepthStencilValue& value,
+                                const vk::ImageSubresourceRange& range) const override {
+        cmd.clearDepthStencilImage(image, layout, value, range);
     }
     void ResolveImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
                       const vk::ImageResolve& region) const override {
@@ -60,6 +71,18 @@ public:
 const StreamEncoder& VulkanStreamEncoder() {
     static const VulkanEncoder encoder;
     return encoder;
+}
+
+namespace {
+const StreamEncoder* active_encoder{};
+}
+
+const StreamEncoder& ActiveStreamEncoder() {
+    return active_encoder ? *active_encoder : VulkanStreamEncoder();
+}
+
+void SetActiveStreamEncoder(const StreamEncoder& encoder) {
+    active_encoder = &encoder;
 }
 
 } // namespace Vulkan

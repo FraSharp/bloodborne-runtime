@@ -29,9 +29,18 @@ public:
     virtual void CopyBufferToImage(vk::CommandBuffer cmd, vk::Buffer src, vk::Image dst,
                                    std::span<const vk::BufferImageCopy> regions) const = 0;
     virtual void CopyImageToBuffer(vk::CommandBuffer cmd, vk::Image src, vk::Buffer dst,
-                                   std::span<const vk::BufferImageCopy> regions) const = 0;
+                                   std::span<const vk::BufferImageCopy> regions,
+                                   vk::ImageLayout src_layout) const = 0;
     virtual void CopyImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
-                           std::span<const vk::ImageCopy> regions) const = 0;
+                           std::span<const vk::ImageCopy> regions, vk::ImageLayout src_layout,
+                           vk::ImageLayout dst_layout) const = 0;
+    virtual void BlitImage(vk::CommandBuffer cmd, vk::Image src, vk::ImageLayout src_layout,
+                           vk::Image dst, vk::ImageLayout dst_layout,
+                           std::span<const vk::ImageBlit> regions, vk::Filter filter) const = 0;
+    virtual void ClearDepthStencilImage(vk::CommandBuffer cmd, vk::Image image,
+                                        vk::ImageLayout layout,
+                                        const vk::ClearDepthStencilValue& value,
+                                        const vk::ImageSubresourceRange& range) const = 0;
     virtual void ResolveImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
                               const vk::ImageResolve& region) const = 0;
     virtual void ClearColorImage(vk::CommandBuffer cmd, vk::Image image,
@@ -44,5 +53,10 @@ public:
 
 /// The Vulkan commands themselves.
 [[nodiscard]] const StreamEncoder& VulkanStreamEncoder();
+
+/// The device's encoder (the Metal frame's, or the Vulkan commands), for the Vulkan backend's
+/// own passes that record on a command buffer (the upscaler). Set once, when the device is made.
+[[nodiscard]] const StreamEncoder& ActiveStreamEncoder();
+void SetActiveStreamEncoder(const StreamEncoder& encoder);
 
 } // namespace Vulkan

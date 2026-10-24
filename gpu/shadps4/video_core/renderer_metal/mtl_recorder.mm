@@ -471,17 +471,37 @@ public:
         });
     }
     void CopyImageToBuffer(vk::CommandBuffer cmd, vk::Image src, vk::Buffer dst,
-                           std::span<const vk::BufferImageCopy> regions) const override {
+                           std::span<const vk::BufferImageCopy> regions,
+                           vk::ImageLayout) const override {
         Encode(cmd, [&](MetalFrame::Owned& o) {
             MetalFrame::CopyImageToBuffer(o, src, dst, u32(regions.size()),
                                           reinterpret_cast<const VkBufferImageCopy*>(regions.data()));
         });
     }
     void CopyImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
-                   std::span<const vk::ImageCopy> regions) const override {
+                   std::span<const vk::ImageCopy> regions, vk::ImageLayout,
+                   vk::ImageLayout) const override {
         Encode(cmd, [&](MetalFrame::Owned& o) {
             MetalFrame::CopyImage(o, src, dst, u32(regions.size()),
                                   reinterpret_cast<const VkImageCopy*>(regions.data()));
+        });
+    }
+    void BlitImage(vk::CommandBuffer cmd, vk::Image src, vk::ImageLayout, vk::Image dst,
+                   vk::ImageLayout, std::span<const vk::ImageBlit> regions,
+                   vk::Filter filter) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::BlitImage(o, src, dst, u32(regions.size()),
+                                  reinterpret_cast<const VkImageBlit*>(regions.data()),
+                                  static_cast<VkFilter>(filter));
+        });
+    }
+    void ClearDepthStencilImage(vk::CommandBuffer cmd, vk::Image image, vk::ImageLayout,
+                                const vk::ClearDepthStencilValue& value,
+                                const vk::ImageSubresourceRange& range) const override {
+        Encode(cmd, [&](MetalFrame::Owned& o) {
+            MetalFrame::ClearDepthStencilImage(
+                o, image, reinterpret_cast<const VkClearDepthStencilValue*>(&value), 1,
+                reinterpret_cast<const VkImageSubresourceRange*>(&range));
         });
     }
     void ResolveImage(vk::CommandBuffer cmd, vk::Image src, vk::Image dst,
