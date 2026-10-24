@@ -77,8 +77,11 @@ synchronization should be owned:
 
 ## The Metal backend today (N5)
 
-Adapted from Wooloomooloo2/bloodborne_mac_port (`0b50589`, `78b59f5`; partly from
-Huax-1839/bloodborne-macos), not merged: their renderer is Metal only.
+The shader compiler, shader rewrites, pipeline cache and format/state tables originated in
+[Huax-1839/bloodborne-macos](https://github.com/Huax-1839/bloodborne-macos/commit/0f0cf54).
+They reached us through Wooloomooloo2/bloodborne_mac_port (`0b50589`, `78b59f5`), which further
+developed the Metal command layer and frame encoder. We adapted these parts into the shared
+renderer; both source renderers are Metal only.
 
 - **Shaders and pipelines:** SPIR-V to MSL with SPIRV-Cross (direct buffer, texture and sampler
   slots); rect lists rewritten as triangles; tessellation as compute kernels plus Metal's

@@ -30,13 +30,17 @@ project it is based on.
 
 Changes taken from other ports of bbport, with thanks:
 
+- [**Huax-1839/bloodborne-macos**](https://github.com/Huax-1839/bloodborne-macos/commit/0f0cf54)
+  (GPL-2.0-or-later): Huax-1839 published the direct Metal renderer that supplied the SPIR-V to
+  MSL shader compiler, rect-list, tessellation and geometry-shader rewrites, pipeline-state cache
+  and Vulkan-to-Metal format/state tables in `video_core/renderer_metal/`. We adapted these
+  components through Wooloomooloo2's port. `0f0cf54` is Huax-1839's first public code snapshot;
+  the previously cited `ee3120a` changed documentation, not these renderer files.
 - [**Wooloomooloo2/bloodborne_mac_port**](https://github.com/Wooloomooloo2/bloodborne_mac_port)
-  (GPL-2.0-or-later, `0b50589`) and [**Huax-1839/bloodborne-macos**](https://github.com/Huax-1839/bloodborne-macos)
-  (GPL-2.0-or-later, `ee3120a`, through the former): the Metal backend's shader compiler, shader
-  rewrites, pipeline-state cache and Vulkan-to-Metal tables (`video_core/renderer_metal/`), the
-  pipeline-key split, the shared blend rules, the shadow check, the Vulkan-to-Metal command layer
-  and frame encoder ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated
-  draws drawn one instance at a time.
+  (GPL-2.0-or-later): integrated and developed that Metal code further, including the pipeline-key
+  split, shared blend rules, shadow check, Vulkan-to-Metal command layer and frame encoder
+  ([Native renderer](NATIVE_RENDERER.md)); from `4565225`, instanced tessellated draws one
+  instance at a time. Our imported snapshot is `0b50589`, with `78b59f5` also adapted.
 
 - [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/commit/79d44f0eecc2eed45c1e33b48996e53626adca48)
   (GPL-2.0-or-later, `79d44f0`, authored by Ambrose): the per-user trophy event persistence

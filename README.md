@@ -37,8 +37,11 @@ BB_GAME_DIR=/path/to/your/game bash run.sh     # your own dump, with the 1.09 up
 
 The loader, the PS4 runtime, the renderer's extensions, the upscalers and the game-specific fixes
 come from [bbport](https://github.com/deadinside28/bloodborne_pc); the video core and shader
-recompiler from [shadPS4](https://github.com/shadps4-emu/shadPS4). The macOS platform layer,
-the Metal/MoltenVK work and the arm64 path were added here. Full list:
+recompiler from [shadPS4](https://github.com/shadps4-emu/shadPS4). The Metal backend adapts
+shader and pipeline work from [Huax-1839/bloodborne-macos](https://github.com/Huax-1839/bloodborne-macos)
+through [Wooloomooloo2/bloodborne_mac_port](https://github.com/Wooloomooloo2/bloodborne_mac_port),
+which developed the command layer and frame encoder further. The macOS platform layer and arm64
+path were added here. Full list:
 [Credits and licenses](docs/CREDITS.md).
 
 Licensed under the [GNU GPL v2 or later](LICENSE). Not affiliated with shadPS4, Sony Interactive
