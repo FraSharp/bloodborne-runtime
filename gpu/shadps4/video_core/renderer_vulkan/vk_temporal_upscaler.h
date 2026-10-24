@@ -207,6 +207,10 @@ private:
     bool RecordFsr4(vk::CommandBuffer cmdbuf, Fsr4Upscaler::Image color, Fsr4Upscaler::Image depth,
                     u32 w, u32 h, u32 ow, u32 oh, float frame_ms);
     void RecordTaa(vk::ImageView color, vk::ImageView depth);
+    /// Binds `pipeline` with `writes` (image slots) and `push`, and dispatches 8x8 groups over
+    /// width x height, through the device's recorder (the Metal frame encodes it directly).
+    void DispatchHost(const HostPipeline& pipeline, std::span<const vk::WriteDescriptorSet> writes,
+                      std::span<const u8> push, u32 width, u32 height, const char* name);
     /// bbport: MetalFX is selected, available and has not failed (macOS, vk_metalfx).
     [[nodiscard]] bool UseMetalFx() const;
     /// MetalFX into output_image. Ends the submission: callers fetch CommandBuffer() again.

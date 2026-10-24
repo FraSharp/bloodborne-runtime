@@ -306,12 +306,9 @@ void TemporalUpscaler::RecordFsr4Reactive(vk::CommandBuffer cmdbuf, vk::ImageVie
          .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out},
     }};
     const std::array<float, 5> push{float(w), float(h), jitter[0], jitter[1], 1.0f};
-    cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_reactive_pipeline);
-    cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, fsr4_reactive_pipeline.Layout(), 0,
-                                writes);
-    cmdbuf.pushConstants(fsr4_reactive_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
-                         sizeof(push), push.data());
-    cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+    DispatchHost(fsr4_reactive_pipeline, writes,
+                 {reinterpret_cast<const u8*>(push.data()), sizeof(push)}, ow, oh,
+                 "FSR 4 reactive");
     const vk::MemoryBarrier2 after{
         .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
         .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
@@ -711,6 +708,33 @@ void TemporalUpscaler::CreatePipelines() {
         "taa");
 }
 
+void TemporalUpscaler::DispatchHost(const HostPipeline& pipeline,
+                                    std::span<const vk::WriteDescriptorSet> writes,
+                                    std::span<const u8> push, u32 width, u32 height,
+                                    const char* name) {
+    namespace Backend = VideoCore::Backend;
+    // The image writes in the adapter's terms (ImageBinding is laid out like
+    // VkDescriptorImageInfo, BindingKind numbered like VkDescriptorType).
+    boost::container::static_vector<Backend::ImageBinding, 16> images;
+    boost::container::static_vector<Backend::SlotWrite, 8> slots;
+    for (const auto& write : writes) {
+        const size_t first = images.size();
+        for (u32 i = 0; i < write.descriptorCount; ++i) {
+            images.push_back(reinterpret_cast<const Backend::ImageBinding&>(write.pImageInfo[i]));
+        }
+        slots.push_back({.slot = write.dstBinding,
+                         .count = write.descriptorCount,
+                         .kind = static_cast<Backend::BindingKind>(write.descriptorType),
+                         .images = images.data() + first});
+    }
+    auto& recorder = BackendDevice::From(instance).Recorder();
+    const u32 groups_x = (width + 7) / 8, groups_y = (height + 7) / 8;
+    recorder.BindResources(pipeline.Allocation(), slots, push, images, {});
+    recorder.Dispatch({.pipeline = pipeline.Allocation().native, .groups = {groups_x, groups_y, 1}},
+                      {.kind = Backend::CrumbKind::Dispatch, .name = name,
+                       .count = {groups_x, groups_y, 1}});
+}
+
 void TemporalUpscaler::RecordTaa(vk::ImageView color, vk::ImageView depth) {
     namespace Backend = VideoCore::Backend;
     using Use = Backend::MemoryUse;
@@ -837,10 +861,10 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, fl
         target_view = *ui_storage_view;
     }
     // bbport: the commands are recorded through the scheduler (a recording thread for FSR 3).
+    static constexpr auto all = vk::PipelineStageFlagBits2::eAllCommands;
+    static constexpr auto rw = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
     scheduler.RecordCrumb({.name = "TAA extra sharpen"}, [target, copy = vk::Image(extra_sharpen_image),
-                      copy_view = *extra_sharpen_view, target_view, extra, w, h,
-                      pipeline = ldr ? *taa_sharpen_ldr_pipeline : *taa_sharpen_pipeline,
-                      layout = taa_sharpen_pipeline.Layout()](vk::CommandBuffer cmdbuf) {
+                      w, h](vk::CommandBuffer cmdbuf) {
         const auto image_barrier = [&](vk::Image image, vk::ImageLayout old_layout,
                                        vk::PipelineStageFlags2 src, vk::AccessFlags2 src_access,
                                        vk::PipelineStageFlags2 dst, vk::AccessFlags2 dst_access) {
@@ -851,8 +875,6 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, fl
                 .image = image, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
             cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
         };
-        constexpr auto all = vk::PipelineStageFlagBits2::eAllCommands;
-        constexpr auto rw = vk::AccessFlagBits2::eMemoryRead | vk::AccessFlagBits2::eMemoryWrite;
         image_barrier(target, vk::ImageLayout::eGeneral, all, rw,
                       vk::PipelineStageFlagBits2::eBlit, vk::AccessFlagBits2::eTransferRead);
         image_barrier(copy, vk::ImageLayout::eUndefined, all, rw,
@@ -873,20 +895,25 @@ void TemporalUpscaler::ExtraSharpen(vk::Image target, bool ldr, u32 w, u32 h, fl
                       vk::AccessFlagBits2::eTransferRead,
                       vk::PipelineStageFlagBits2::eComputeShader,
                       vk::AccessFlagBits2::eShaderStorageWrite);
-        const std::array<vk::DescriptorImageInfo, 2> infos{{
-            {.imageView = copy_view, .imageLayout = vk::ImageLayout::eGeneral},
-            {.imageView = target_view, .imageLayout = vk::ImageLayout::eGeneral}}};
-        std::array<vk::WriteDescriptorSet, 2> writes{};
-        for (u32 i = 0; i < writes.size(); ++i)
-            writes[i] = {.dstBinding = i, .descriptorCount = 1,
-                .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &infos[i]};
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, layout, 0, writes);
-        cmdbuf.pushConstants(layout, vk::ShaderStageFlagBits::eCompute, 0, sizeof(extra), &extra);
-        cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
-        image_barrier(target, vk::ImageLayout::eGeneral,
-                      vk::PipelineStageFlagBits2::eComputeShader,
-                      vk::AccessFlagBits2::eShaderStorageWrite, all, rw);
+    });
+    const std::array<vk::DescriptorImageInfo, 2> infos{{
+        {.imageView = *extra_sharpen_view, .imageLayout = vk::ImageLayout::eGeneral},
+        {.imageView = target_view, .imageLayout = vk::ImageLayout::eGeneral}}};
+    std::array<vk::WriteDescriptorSet, 2> writes{};
+    for (u32 i = 0; i < writes.size(); ++i) {
+        writes[i] = {.dstBinding = i, .descriptorCount = 1,
+                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &infos[i]};
+    }
+    DispatchHost(ldr ? taa_sharpen_ldr_pipeline : taa_sharpen_pipeline, writes,
+                 {reinterpret_cast<const u8*>(&extra), sizeof(extra)}, w, h, "TAA extra sharpen");
+    scheduler.Record([target](vk::CommandBuffer cmdbuf) {
+        const vk::ImageMemoryBarrier2 b{
+            .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
+            .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
+            .dstStageMask = all, .dstAccessMask = rw,
+            .oldLayout = vk::ImageLayout::eGeneral, .newLayout = vk::ImageLayout::eGeneral,
+            .image = target, .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1}};
+        cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &b});
     });
 }
 
@@ -1005,8 +1032,6 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
     }
     const vk::Image reactive = vk::Image(reactive_image);
     const vk::ImageView opaque = *opaque_view, mask = *reactive_view;
-    const vk::Pipeline pipeline = *reactive_pipeline;
-    const vk::PipelineLayout layout = reactive_pipeline.Layout();
     const u32 w = width, h = height;
     // Relative color change times the scale (default 1), zero below the threshold (0.2), at
     // most the maximum (0.9, never fully reactive) — the defaults of AMD's mask generator.
@@ -1025,32 +1050,25 @@ bool TemporalUpscaler::RecordReactive(vk::ImageView color_view) {
             .subresourceRange = {vk::ImageAspectFlagBits::eColor, 0, 1, 0, 1},
         };
         cmdbuf.pipelineBarrier2({.imageMemoryBarrierCount = 1, .pImageMemoryBarriers = &to_write});
-        const vk::DescriptorImageInfo opaque_info{.imageView = opaque,
-                                                  .imageLayout = vk::ImageLayout::eGeneral};
-        const vk::DescriptorImageInfo scene_info{.imageView = color_view,
-                                                 .imageLayout = vk::ImageLayout::eGeneral};
-        const vk::DescriptorImageInfo mask_info{.imageView = mask,
-                                                .imageLayout = vk::ImageLayout::eGeneral};
-        const std::array<vk::WriteDescriptorSet, 3> writes = {{
-            {.dstBinding = 0,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eStorageImage,
-             .pImageInfo = &opaque_info},
-            {.dstBinding = 1,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eStorageImage,
-             .pImageInfo = &scene_info},
-            {.dstBinding = 2,
-             .descriptorCount = 1,
-             .descriptorType = vk::DescriptorType::eStorageImage,
-             .pImageInfo = &mask_info},
-        }};
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, layout, 0,
-                                    writes);
-        cmdbuf.pushConstants(layout, vk::ShaderStageFlagBits::eCompute, 0,
-                             sizeof(params), params.data());
-        cmdbuf.dispatch((w + 7) / 8, (h + 7) / 8, 1);
+    });
+    const vk::DescriptorImageInfo opaque_info{.imageView = opaque,
+                                              .imageLayout = vk::ImageLayout::eGeneral};
+    const vk::DescriptorImageInfo scene_info{.imageView = color_view,
+                                             .imageLayout = vk::ImageLayout::eGeneral};
+    const vk::DescriptorImageInfo mask_info{.imageView = mask,
+                                            .imageLayout = vk::ImageLayout::eGeneral};
+    const std::array<vk::WriteDescriptorSet, 3> writes = {{
+        {.dstBinding = 0, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &opaque_info},
+        {.dstBinding = 1, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &scene_info},
+        {.dstBinding = 2, .descriptorCount = 1,
+         .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &mask_info},
+    }};
+    DispatchHost(reactive_pipeline, writes,
+                 {reinterpret_cast<const u8*>(params.data()), sizeof(params)}, w, h,
+                 "TAA reactive mask");
+    scheduler.Record([=](vk::CommandBuffer cmdbuf) {
         const vk::ImageMemoryBarrier2 to_read{
             .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
             .srcAccessMask = vk::AccessFlagBits2::eShaderWrite,
@@ -1336,12 +1354,8 @@ void TemporalUpscaler::Run() {
                              ? 1
                          : debug_view == BbSettings::DebugMotion ? 2
                                                                  : 0;
-        cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *merge_pipeline);
-        cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute, merge_pipeline.Layout(), 0,
-                                    writes);
-        cmdbuf.pushConstants(merge_pipeline.Layout(), vk::ShaderStageFlagBits::eCompute, 0,
-                             sizeof(mode), &mode);
-        cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+        DispatchHost(merge_pipeline, writes, {reinterpret_cast<const u8*>(&mode), sizeof(mode)},
+                     ow, oh, "upscale merge");
     }
 }
 
@@ -1842,12 +1856,9 @@ void TemporalUpscaler::RunScaled() {
                      .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &dst},
                 }};
                 const u32 unused = 0;
-                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_decode_pipeline);
-                cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            fsr4_decode_pipeline.Layout(), 0, writes);
-                cmdbuf.pushConstants(fsr4_decode_pipeline.Layout(),
-                                     vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
-                cmdbuf.dispatch((source_width + 7) / 8, (source_height + 7) / 8, 1);
+                DispatchHost(fsr4_decode_pipeline, writes,
+                             {reinterpret_cast<const u8*>(&unused), sizeof(unused)}, source_width,
+                             source_height, "FSR 4 decode");
                 const vk::MemoryBarrier2 decoded{
                     .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
                     .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
@@ -1874,12 +1885,9 @@ void TemporalUpscaler::RunScaled() {
                 const vk::WriteDescriptorSet write{.dstBinding = 0, .descriptorCount = 1,
                     .descriptorType = vk::DescriptorType::eStorageImage, .pImageInfo = &out};
                 const u32 unused = 0;
-                cmdbuf.bindPipeline(vk::PipelineBindPoint::eCompute, *fsr4_encode_pipeline);
-                cmdbuf.pushDescriptorSetKHR(vk::PipelineBindPoint::eCompute,
-                                            fsr4_encode_pipeline.Layout(), 0, write);
-                cmdbuf.pushConstants(fsr4_encode_pipeline.Layout(),
-                                     vk::ShaderStageFlagBits::eCompute, 0, sizeof(unused), &unused);
-                cmdbuf.dispatch((ow + 7) / 8, (oh + 7) / 8, 1);
+                DispatchHost(fsr4_encode_pipeline, {&write, 1},
+                             {reinterpret_cast<const u8*>(&unused), sizeof(unused)}, ow, oh,
+                             "FSR 4 encode");
                 const vk::MemoryBarrier2 encoded{
                     .srcStageMask = vk::PipelineStageFlagBits2::eComputeShader,
                     .srcAccessMask = vk::AccessFlagBits2::eShaderStorageWrite,
