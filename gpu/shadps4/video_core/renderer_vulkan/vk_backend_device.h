@@ -184,8 +184,13 @@ private:
 
     /// A shader and its holders: the caller until DestroyShader, and each pipeline made with it.
     struct ShaderRecord {
-        vk::UniqueShaderModule module;
+        vk::UniqueShaderModule module; ///< none with the Metal frame (Metal builds its pipelines)
+        u64 native{};                  ///< the module, or the Metal frame's placeholder for it
         u32 holders{1};
+
+        [[nodiscard]] vk::ShaderModule Module() const noexcept {
+            return vk::ShaderModule{reinterpret_cast<VkShaderModule>(native)};
+        }
     };
     /// Drops a holder of `shader`; under objects_mutex. The module, when it was the last.
     [[nodiscard]] vk::UniqueShaderModule ReleaseShaderLocked(VideoCore::Backend::ShaderHandle shader);

@@ -33,6 +33,9 @@ struct VertexInput {
 bool Enabled();
 /// The SPIR-V a Vulkan shader module was made from (CompileSPV).
 void RegisterModule(vk::ShaderModule module, std::span<const u32> spirv);
+/// The module is gone: its SPIR-V by handle goes (the compiled forms stay with the content
+/// cache, which the Metal pipelines point into).
+void ForgetModule(vk::ShaderModule module);
 /// A graphics pipeline the Vulkan path built; `modules`/`has_stage` are indexed by SwStage.
 /// `pipeline`: the Vulkan pipeline, so the Metal frame path finds the Metal one for it.
 void Graphics(const Vulkan::GraphicsPipelineKey& key, std::span<const vk::ShaderModule> modules,
@@ -50,6 +53,7 @@ inline bool Enabled() {
     return false;
 }
 inline void RegisterModule(vk::ShaderModule, std::span<const u32>) {}
+inline void ForgetModule(vk::ShaderModule) {}
 inline void Graphics(const Vulkan::GraphicsPipelineKey&, std::span<const vk::ShaderModule>,
                      std::span<const bool>, std::span<const VertexInput>, bool, vk::Pipeline) {}
 inline void Compute(const Vulkan::ComputePipelineKey&, vk::ShaderModule, vk::Pipeline) {}

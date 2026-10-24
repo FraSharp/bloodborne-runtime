@@ -1,5 +1,6 @@
 // SPDX-License-Identifier: GPL-2.0-or-later
 
+#include <atomic>
 #include <bit>
 #include <cstdlib>
 #include <mutex>
@@ -480,6 +481,28 @@ u64 BackendDevice::NativeHandle(Backend::ImageViewHandle view) {
 
 Backend::ShaderAllocation BackendDevice::CreateShader(std::span<const u32> spirv,
                                                       std::string_view name) {
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // Only Metal builds pipelines (MetalOnlyPipeline): the shader is its SPIR-V, registered
+        // under a placeholder handle MoltenVK never sees, and no MoltenVK module holds a copy.
+        static std::atomic<u64> next_placeholder{1};
+        static std::atomic<u64> spirv_bytes{0};
+        const u64 count = next_placeholder++;
+        const u64 native = 0xBC00000000000000ull | count;
+        const u64 bytes = spirv_bytes += spirv.size_bytes();
+        if (count % 200 == 0) {
+            std::printf("Metal frame: %llu shaders made, %.1f MiB of SPIR-V (no MoltenVK module "
+                        "copies)\n",
+                        static_cast<unsigned long long>(count), double(bytes) / (1 << 20));
+        }
+        MetalShadow::RegisterModule(vk::ShaderModule{reinterpret_cast<VkShaderModule>(native)},
+                                    spirv);
+        Backend::ShaderAllocation allocation{.native = native};
+        std::scoped_lock lock{objects_mutex};
+        allocation.handle = shaders.Insert(ShaderRecord{.native = native});
+        return allocation;
+    }
+#endif
     auto [result, module] = instance.GetDevice().createShaderModuleUnique(
         {.codeSize = spirv.size_bytes(), .pCode = spirv.data()});
     if (result != vk::Result::eSuccess) {
@@ -492,11 +515,10 @@ Backend::ShaderAllocation BackendDevice::CreateShader(std::span<const u32> spirv
     if (!name.empty()) {
         SetObjectName(instance.GetDevice(), *module, name);
     }
-    Backend::ShaderAllocation allocation{
-        .native = reinterpret_cast<u64>(static_cast<VkShaderModule>(*module)),
-    };
+    const u64 native = reinterpret_cast<u64>(static_cast<VkShaderModule>(*module));
+    Backend::ShaderAllocation allocation{.native = native};
     std::scoped_lock lock{objects_mutex};
-    allocation.handle = shaders.Insert(ShaderRecord{.module = std::move(module)});
+    allocation.handle = shaders.Insert(ShaderRecord{.module = std::move(module), .native = native});
     return allocation;
 }
 
@@ -520,6 +542,11 @@ vk::UniqueShaderModule BackendDevice::ReleaseShaderLocked(Backend::ShaderHandle 
         return {};
     }
     vk::UniqueShaderModule object = std::move(entry->module);
+    if (!object && MetalShadow::Enabled()) {
+        // The Metal frame's placeholder: its SPIR-V goes (pipelines made from it hold their
+        // compiled forms).
+        MetalShadow::ForgetModule(entry->Module());
+    }
     shaders.Erase(shader);
     return object;
 }
@@ -527,7 +554,7 @@ vk::UniqueShaderModule BackendDevice::ReleaseShaderLocked(Backend::ShaderHandle 
 u64 BackendDevice::NativeHandle(Backend::ShaderHandle shader) {
     std::scoped_lock lock{objects_mutex};
     const ShaderRecord* entry = shaders.Get(shader);
-    return entry ? reinterpret_cast<u64>(static_cast<VkShaderModule>(*entry->module)) : 0;
+    return entry ? entry->native : 0;
 }
 
 Backend::QueryPoolAllocation BackendDevice::CreateOcclusionQueries(u32 count,

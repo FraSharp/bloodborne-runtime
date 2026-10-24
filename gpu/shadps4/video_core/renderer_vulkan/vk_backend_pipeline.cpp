@@ -233,7 +233,7 @@ Backend::PipelineAllocation BackendDevice::CreateGraphicsPipeline(
                 .pNext = !host && instance.IsSubgroupSize64Supported() ? &subgroup_size_ci
                                                                        : nullptr,
                 .stage = vk::ShaderStageFlagBits(u32(stage.stage)),
-                .module = *shader->module,
+                .module = shader->Module(),
                 .pName = "main",
             });
         }
@@ -344,7 +344,7 @@ Backend::PipelineAllocation BackendDevice::CreateComputePipeline(
         ASSERT_MSG(shader, "A compute pipeline's shader is stale");
         ++shader->holders;
         record->shaders.push_back(desc.shader);
-        module = *shader->module;
+        module = shader->Module();
     }
     const vk::PipelineShaderStageRequiredSubgroupSizeCreateInfo subgroup_size_ci = {
         .requiredSubgroupSize = 64,
