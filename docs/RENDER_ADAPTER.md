@@ -621,5 +621,8 @@ Taken by the maintainer on 2026-10-22:
    (`vk_fsr4_metal`, merged 2026-10-23), reaching the images through `VK_EXT_metal_objects`;
    on the Metal backend it takes them through `NativeHandle`.
 
-Open until M3: FSR 3.1 on the Metal backend (a FidelityFX port to Metal, as the fork has, or
-MetalFX only on that backend).
+Taken by the maintainer on 2026-10-24:
+
+4. **FSR 3.1 on the Metal backend:** ported, not dropped. AMD's FidelityFX host code and shaders
+   stay; a Metal back end for its interface (as Wooloomooloo2's fork has, `gpu/shim/ffx_metal/`,
+   credited when taken) runs them. It lands in M3, after M2's Metal submissions.
