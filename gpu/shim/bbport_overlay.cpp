@@ -1113,6 +1113,51 @@ const char* RendererName() {
 /// and the frame time on one line. Big: also what runs the game (GPU and CPU path), the upscaler
 /// and resolutions, and a graph of the last frame times (stutters stand out). Fixed widths, so it
 /// never moves as the numbers change.
+/// BB_TEST_TITLE (tools/test_run.sh): what a test run is testing, at the top of the screen, so
+/// whoever sees the window knows; BB_TEST_DETAIL a second, smaller line. Not in game-frame
+/// grabs (only in --screen ones).
+const char* TestTitle() {
+    static const char* title = [] {
+        const char* env = std::getenv("BB_TEST_TITLE");
+        return env && env[0] ? env : nullptr;
+    }();
+    return title;
+}
+
+void TestBanner() {
+    static const char* detail = [] {
+        const char* env = std::getenv("BB_TEST_DETAIL");
+        return env && env[0] ? env : nullptr;
+    }();
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + S(14)),
+                            ImGuiCond_Always, ImVec2(0.5f, 0.0f));
+    ImGui::SetNextWindowBgAlpha(0.82f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(Theme::Radius));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(16), S(8)));
+    ImGui::Begin("##test", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.2f);
+    ImGui::PushStyleColor(ImGuiCol_Text, Theme::Warning);
+    ImGui::TextUnformatted("TEST");
+    ImGui::PopStyleColor();
+    ImGui::SameLine();
+    ImGui::TextUnformatted(TestTitle());
+    ImGui::PopFont();
+    if (detail) {
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        ImGui::PushTextWrapPos(viewport->WorkSize.x * 0.6f);
+        ImGui::TextUnformatted(detail);
+        ImGui::PopTextWrapPos();
+        ImGui::PopStyleColor();
+    }
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
 void FpsCounter() {
     const auto& s = BbSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1868,7 +1913,8 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending());
+    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps ||
+                           trophy_queue.Pending() || TestTitle());
 }
 
 bool MenuOpen() {
@@ -1936,6 +1982,9 @@ void BuildUi(std::chrono::steady_clock::time_point now) {
         TextPrompt();
     }
     TrophyToast(now);
+    if (TestTitle() && !menu_open) {
+        TestBanner();
+    }
     ImGui::Render();
 }
 } // namespace

@@ -85,6 +85,9 @@ a time (`pgrep -x bb-probe` first). Test windows open on the screen.
   windows above `LEVEL_DRAWS=200` draws a frame), holds there (`HOLD=45` seconds) and prints the frame summary and any fault. `SAVE_FROM=DIR` starts from a launcher
   backup instead; `KEEP_SAVE=1` keeps the previous test's progress. The test copy of the
   settings is `out/test-user/bbport.ini` (keep `show_fps=1` and `fps_size=big` there).
+  `TEST_TITLE="..."` (default: NAME) and `TEST_DETAIL="..."` put a banner at the top of the
+  game's window saying what the run tests (`BB_TEST_TITLE`, `BB_TEST_DETAIL`: the overlay's
+  test banner), for whoever sees it; it is in `grab.sh --screen` pictures, not in game frames.
 - `tools/test_opening_video.sh NAME`: a new save in a fresh folder, through the opening video to
   character creation. Reports whether playback completed. `VIDEO_GRAB=1` (in the environment,
   not as an argument) saves the character creator's frame. Part of release testing.
