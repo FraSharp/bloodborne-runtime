@@ -8,8 +8,10 @@ M2 is done (accepted by the maintainer on 2026-10-25): with the Metal frame ever
 renderer records is encoded in Metal, shaders and pipelines are Metal's only, the window is
 presented and drawn through Metal with the upscaler's own passes, and every submission is
 committed in Metal. MoltenVK still holds the device, the queue and the resources, begins and
-ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is next:
-MetalFX without copies, the Metal backend's only upscaler (decision 5).
+ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is done:
+the upscaler is off by default, and the Metal renderer offers MetalFX only (decision 5). MetalFX
+itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native MetalFX is a
+later plan. M4 is next.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -154,7 +156,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A6 ✓ | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 ✓ | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 ✓ | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
-| M3 | MetalFX without input and output copies; MetalFX the Metal backend's only upscaler (decision 5) | Upscalers measured against today |
+| M3 ✓ | The upscaler off by default; MetalFX the Metal backend's only upscaler (decision 5). MetalFX without copies: a later plan (below) | Upscalers measured against native |
 | M4 | Metal by default on macOS; MoltenVK and `mtl_vk_layer` removed from the macOS build | Release-candidate play tests pass |
 
 Wooloomooloo2's fork reached its Metal-only renderer in a similar order (device and queue,
@@ -635,6 +637,21 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   character creation and play, without faults; 42.2 FPS median in levels (37.2 or more 90% of
   the time; about 1,060 draws a frame); one 6.4 s stall on entering the first level, and a few
   0.7–1.2 s frames. Accepted on 2026-10-25.
+- **M3, upscalers by backend:** measured on the Metal frame at the test save's place, no
+  upscaler beat native 1080p: native 39.0 FPS (median 25.4 ms), MetalFX Quality 31.7 (31.2 ms),
+  MetalFX Balanced 33.5 (29.6 ms), FSR 3.1 Balanced 36.2. Rendering 44% of the pixels made the
+  frame slower: at 1080p it is not bound by pixel work. So the upscaler is off by default (the
+  runtime's settings, `patches.py` and the launcher), and with the Metal frame FSR 3.1, FSR 4,
+  FSR 4.1.1 and DLSS are not offered: a setting asking for one runs MetalFX
+  (`ConfigureUpscalerSupport`'s `metalfx_only`; the launcher shows it as MetalFX). Checked: the
+  Metal frame started with FSR 3.1 runs MetalFX, 33.7 FPS, frame correct.
+- **Later: MetalFX native to the Metal backend.** MetalFX runs through the bridge written for
+  MoltenVK (`vk_metalfx` and `shim/bbport_metalfx.mm`): the scene's colour, depth and motion are
+  copied into buffers Metal can read, MetalFX runs on its own Metal queue, and a CPU thread waits
+  for the copies and then for MetalFX before the copy back is submitted. On the Metal frame the
+  images are Metal textures already: a `renderer_metal` MetalFX encoded in the frame's command
+  buffer, reading and writing them directly, removes the copies, the CPU waits and the second
+  queue. To be measured against native, at 1080p and above it.
 
 ## Decisions
 

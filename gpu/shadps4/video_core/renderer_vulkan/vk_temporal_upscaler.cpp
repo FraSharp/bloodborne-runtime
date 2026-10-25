@@ -38,10 +38,22 @@
 #include "video_core/renderer_vulkan/vk_runtime.h"
 #include "video_core/renderer_vulkan/vk_scheduler.h"
 #include "video_core/texture_cache/texture_cache.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 
 namespace Vulkan {
 
 namespace {
+
+/// The Metal renderer (BB_METAL_FRAME=1) is on.
+bool MetalFrameOn() {
+#if BB_METAL_BACKEND
+    return MetalLayer::FrameEnabled();
+#else
+    return false;
+#endif
+}
 
 FfxVkPortableImage Describe(vk::Image image, vk::Format format, u32 width, u32 height,
                             vk::ImageUsageFlags usage, vk::ImageAspectFlags aspect,
@@ -198,8 +210,10 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
       runtime{runtime_}, camera_motion{camera_motion_}, scene_targets{scene_targets_} {
     // Reject unsupported shaders before allocating resources or recording a frame.
     metalfx = std::make_unique<MetalFxUpscaler>(instance, scheduler);
+    // The Metal renderer offers MetalFX only (docs/RENDER_ADAPTER.md, decision 5).
     BbSettings::ConfigureUpscalerSupport(instance.IsFsr4Int8Supported(),
-                                         instance.IsFsr411Supported(), metalfx->Supported());
+                                         instance.IsFsr411Supported(), metalfx->Supported(),
+                                         MetalFrameOn());
 #ifdef __APPLE__
     PublishMetalFxProblem(metalfx->Problem());
 #endif

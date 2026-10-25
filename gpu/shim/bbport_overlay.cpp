@@ -727,6 +727,7 @@ void GraphicsTab() {
                                    : i == BbSettings::UpscalerFsr411 ? s.fsr411_supported.load()
                                    : i == BbSettings::UpscalerDlss   ? s.dlss_supported.load()
                                    : i == BbSettings::UpscalerMetalFx ? s.metalfx_supported.load()
+                                   : i == BbSettings::UpscalerFsr3   ? s.fsr3_supported.load()
                                                                      : true;
 #ifndef __APPLE__
             if (i == BbSettings::UpscalerMetalFx) continue; // macOS only

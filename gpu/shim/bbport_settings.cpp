@@ -296,16 +296,24 @@ void Load() {
     v.startup_live_resolution = v.live_resolution;
 }
 
-void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx) {
+void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx, bool metalfx_only) {
     auto& v = Get();
-    v.fsr4_supported = fsr4;
+    v.fsr4_supported = fsr4 && !metalfx_only;
 #ifdef __APPLE__
-    v.fsr411_supported = fsr411;
+    v.fsr411_supported = fsr411 && !metalfx_only;
 #else
     v.fsr411_supported = fsr4 && fsr411;
 #endif
+    v.fsr3_supported = !metalfx_only;
     v.metalfx_supported = metalfx;
     const int requested = v.upscaler;
+    if (metalfx_only && (requested == UpscalerFsr3 || requested == UpscalerFsr4 ||
+                         requested == UpscalerFsr411 || requested == UpscalerDlss)) {
+        v.upscaler = metalfx ? UpscalerMetalFx : UpscalerOff;
+        std::printf("Upscaler: %s is not offered on the Metal renderer; %s before the first frame\n",
+                    UpscalerName(requested), metalfx ? "MetalFX" : "upscaler off");
+        return;
+    }
     if (requested == UpscalerMetalFx && !metalfx) {
         // Off, not FSR 3.1: only macOS has MetalFX, where FSR 3.1 is not proven either.
         std::printf("Upscaler: MetalFX unavailable here; upscaler off before the first frame\n");
@@ -328,9 +336,12 @@ void ConfigureDlssSupport(bool available, const char* problem) {
     kept = problem ? problem : "";
     v.dlss_problem = available || kept.empty() ? nullptr : kept.c_str();
     if (v.upscaler == UpscalerDlss && !available) {
-        std::printf("Upscaler: DLSS unavailable (%s); falling back to FSR 3.1\n",
-                    kept.empty() ? "the DLSS bridge or NVIDIA's DLSS library is missing" : kept.c_str());
-        v.upscaler = UpscalerFsr3;
+        const int fallback = v.fsr3_supported ? UpscalerFsr3
+                             : v.metalfx_supported ? UpscalerMetalFx : UpscalerOff;
+        std::printf("Upscaler: DLSS unavailable (%s); falling back to %s\n",
+                    kept.empty() ? "the DLSS bridge or NVIDIA's DLSS library is missing" : kept.c_str(),
+                    UpscalerName(fallback));
+        v.upscaler = fallback;
     }
 }
 
