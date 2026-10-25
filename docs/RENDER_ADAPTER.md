@@ -14,7 +14,8 @@ itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native
 later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, step 2, the inventory
 of the calls still reaching MoltenVK, and step 3, replacing them, are done: nothing per frame
 and no resource, view, pipeline, shader or command buffer reaches MoltenVK. Step 4, the Metal
-device without a Vulkan instance, is next (plan below).
+device without MoltenVK, is next: the Metal backend answers the remaining entry points
+(decision 6).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -782,6 +783,17 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   resources, views, samplers, shaders and pipelines, the Metal recorder, transfers, ticks as
   shared events, capabilities from the MTLDevice, the Metal swapchain; (d) the macOS build without
   Vulkan, MoltenVK and `mtl_vk_layer`, the Vulkan backend still built for Linux and Windows.
+- **M4 step 4, the steps under decision 6:** (4.1) a comparison mode: at start the Metal backend's
+  own answers to the startup queries (the feature and property chains `Instance::CreateDevice`
+  reads, about 80 feature fields and the limits it uses; the extensions; format properties for
+  every guest surface and depth format; memory and queue families; image format queries) are
+  computed next to MoltenVK's and every difference is logged, MoltenVK's still in use; (4.2) the
+  Metal answers in use once the comparison is clean here and on other Apple Silicon Macs (M1,
+  M2: testers); (4.3) instance, device, queue, semaphores (shared events) and fences made by the
+  Metal backend, MoltenVK not loaded; (4.4) the macOS build and the app without MoltenVK and the
+  Vulkan loader. MoltenVK comes into deps as a binary release: its derivation of these answers
+  from the MTLDevice (KhronosGroup/MoltenVK, Apache-2.0) is read for reference and credited where
+  code is taken.
 
 ## Decisions
 
@@ -800,6 +812,13 @@ Taken by the maintainer on 2026-10-24:
 4. *(Replaced by 5 on 2026-10-25.)* FSR 3.1 on the Metal backend: ported, not dropped.
 
 Taken by the maintainer on 2026-10-25:
+
+6. **How MoltenVK leaves macOS:** the Metal backend answers the Vulkan entry points the shared
+   renderer calls (instance, device, queue, properties, features, formats, synchronization; the
+   per-frame work and the resources already are its own), so MoltenVK and the Vulkan loader leave
+   the macOS build while the Vulkan headers stay the shared code's vocabulary (Vulkan is the
+   backend on the other platforms). Removing Vulkan types from the shared code can follow piece
+   by piece; nothing here blocks it. This replaces step 4's plan (a)–(d) below.
 
 5. **Upscalers by backend:** the Metal backend's upscaler is MetalFX only. FSR 3.1, FSR 4, FSR
    4.1.1 and DLSS belong to the Vulkan backend, the renderer for the other platforms the runtime
