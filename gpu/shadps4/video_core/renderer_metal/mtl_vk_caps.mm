@@ -9,6 +9,8 @@
 #include <cstdlib>
 #include <cstring>
 #include <set>
+#include <tuple>
+#include <mutex>
 #include <string>
 #include <vector>
 
@@ -229,6 +231,73 @@ void FillFormat(VkFormat format, VkFormatProperties2* properties) {
             }
         }
     }
+}
+
+/// vkGetPhysicalDeviceImageFormatProperties2: whether an image of these parameters can be made,
+/// and its limits, from the format's features (FillFormat) and the device's limits.
+VkResult ImageFormat(const VkPhysicalDeviceImageFormatInfo2* info, VkImageFormatProperties2* out) {
+    VkFormatProperties3 p3{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
+    VkFormatProperties2 p2{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, &p3};
+    FillFormat(info->format, &p2);
+    const u64 features = info->tiling == VK_IMAGE_TILING_LINEAR ? p3.linearTilingFeatures
+                                                                : p3.optimalTilingFeatures;
+    out->imageFormatProperties = {};
+    // Each usage needs its feature (Vulkan 1.3, "Image Creation Limits").
+    const struct {
+        VkImageUsageFlags usage;
+        u64 feature;
+    } needs[] = {
+        {VK_IMAGE_USAGE_SAMPLED_BIT, VK_FORMAT_FEATURE_2_SAMPLED_IMAGE_BIT},
+        {VK_IMAGE_USAGE_STORAGE_BIT, VK_FORMAT_FEATURE_2_STORAGE_IMAGE_BIT},
+        {VK_IMAGE_USAGE_COLOR_ATTACHMENT_BIT, VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT},
+        {VK_IMAGE_USAGE_DEPTH_STENCIL_ATTACHMENT_BIT, VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT},
+        {VK_IMAGE_USAGE_TRANSFER_SRC_BIT, VK_FORMAT_FEATURE_2_TRANSFER_SRC_BIT},
+        {VK_IMAGE_USAGE_TRANSFER_DST_BIT, VK_FORMAT_FEATURE_2_TRANSFER_DST_BIT},
+    };
+    // With extended usage the image's own format need not support every usage (its views do).
+    if (!(info->flags & VK_IMAGE_CREATE_EXTENDED_USAGE_BIT)) {
+        for (const auto& n : needs) {
+            if ((info->usage & n.usage) && !(features & n.feature)) {
+                return VK_ERROR_FORMAT_NOT_SUPPORTED;
+            }
+        }
+    }
+    if (!features) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    // Metal cannot write a block-compressed texture, extended usage or not.
+    if ((info->usage & VK_IMAGE_USAGE_STORAGE_BIT) && info->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK &&
+        info->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
+    VkImageFormatProperties& p = out->imageFormatProperties;
+    switch (info->type) {
+    case VK_IMAGE_TYPE_1D:
+        p.maxExtent = {16384, 1, 1};
+        p.maxArrayLayers = 2048;
+        break;
+    case VK_IMAGE_TYPE_3D:
+        p.maxExtent = {2048, 2048, 2048};
+        p.maxArrayLayers = 1;
+        break;
+    default:
+        p.maxExtent = {16384, 16384, 1};
+        p.maxArrayLayers = 2048;
+        break;
+    }
+    u32 levels = 1;
+    for (u32 size = std::max({p.maxExtent.width, p.maxExtent.height, p.maxExtent.depth}); size > 1; size >>= 1) {
+        ++levels;
+    }
+    p.maxMipLevels = info->tiling == VK_IMAGE_TILING_LINEAR ? 1 : levels;
+    p.sampleCounts = VK_SAMPLE_COUNT_1_BIT;
+    if (info->type == VK_IMAGE_TYPE_2D && info->tiling == VK_IMAGE_TILING_OPTIMAL &&
+        !(info->flags & VK_IMAGE_CREATE_CUBE_COMPATIBLE_BIT) &&
+        (features & (VK_FORMAT_FEATURE_2_COLOR_ATTACHMENT_BIT | VK_FORMAT_FEATURE_2_DEPTH_STENCIL_ATTACHMENT_BIT))) {
+        p.sampleCounts = VK_SAMPLE_COUNT_1_BIT | VK_SAMPLE_COUNT_2_BIT | VK_SAMPLE_COUNT_4_BIT;
+    }
+    p.maxResourceSize = u64(1) << 62; // as MoltenVK reports it: no limit of its own
+    return VK_SUCCESS;
 }
 
 void FillMemory(VkPhysicalDeviceMemoryProperties* memory) {
@@ -521,6 +590,41 @@ int CompareExtensions(VkPhysicalDevice physical) {
     return n;
 }
 
+PFN_vkGetPhysicalDeviceImageFormatProperties2 moltenvk_image_format;
+
+/// In compare mode the renderer's image format queries go through here: MoltenVK answers (as
+/// before) and each distinct query whose Metal answer differs is logged once.
+VKAPI_ATTR VkResult VKAPI_CALL CompareImageFormat(VkPhysicalDevice physical,
+                                                  const VkPhysicalDeviceImageFormatInfo2* info,
+                                                  VkImageFormatProperties2* out) {
+    const VkResult result = moltenvk_image_format(physical, info, out);
+    VkImageFormatProperties2 ours{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
+    const VkResult our_result = ImageFormat(info, &ours);
+    const auto& a = out->imageFormatProperties;
+    const auto& b = ours.imageFormatProperties;
+    const bool same = result == our_result &&
+                      (result != VK_SUCCESS ||
+                       (a.maxExtent.width == b.maxExtent.width && a.maxExtent.height == b.maxExtent.height &&
+                        a.maxExtent.depth == b.maxExtent.depth && a.maxMipLevels == b.maxMipLevels &&
+                        a.maxArrayLayers == b.maxArrayLayers && a.sampleCounts == b.sampleCounts &&
+                        a.maxResourceSize == b.maxResourceSize));
+    static std::mutex mutex;
+    static std::set<std::tuple<int, int, int, u32, u32>> logged;
+    std::scoped_lock lock{mutex};
+    if (!same && logged.emplace(info->format, info->type, info->tiling, info->usage, info->flags).second) {
+        std::printf("Metal caps: image format %d type %d tiling %d usage %#x flags %#x: MoltenVK %d "
+                    "%ux%ux%u, %u levels, %u layers, samples %#x, %llu bytes; Metal %d %ux%ux%u, %u "
+                    "levels, %u layers, samples %#x, %llu bytes\n",
+                    info->format, info->type, info->tiling, info->usage, info->flags, result,
+                    a.maxExtent.width, a.maxExtent.height, a.maxExtent.depth, a.maxMipLevels,
+                    a.maxArrayLayers, a.sampleCounts, (unsigned long long)a.maxResourceSize,
+                    our_result, b.maxExtent.width, b.maxExtent.height, b.maxExtent.depth,
+                    b.maxMipLevels, b.maxArrayLayers, b.sampleCounts,
+                    (unsigned long long)b.maxResourceSize);
+    }
+    return result;
+}
+
 } // namespace
 
 void CompareIfAsked(void* physical_device) {
@@ -535,6 +639,20 @@ void CompareIfAsked(void* physical_device) {
         const int formats = CompareFormats(physical);
         const int memory = CompareMemoryAndQueues(physical);
         const int extensions = CompareExtensions(physical);
+        // The image format queries happen later (the texture cache): compared as they come.
+        moltenvk_image_format = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceImageFormatProperties2;
+        VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceImageFormatProperties2 = CompareImageFormat;
+        {
+            // Instance::CollectImageFormatInfo's block-texel-view query, made before this.
+            VkPhysicalDeviceImageFormatInfo2 info{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_IMAGE_FORMAT_INFO_2};
+            info.format = VK_FORMAT_BC1_RGBA_UNORM_BLOCK;
+            info.type = VK_IMAGE_TYPE_2D;
+            info.tiling = VK_IMAGE_TILING_OPTIMAL;
+            info.usage = VK_IMAGE_USAGE_SAMPLED_BIT;
+            info.flags = VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT;
+            VkImageFormatProperties2 props{VK_STRUCTURE_TYPE_IMAGE_FORMAT_PROPERTIES_2};
+            CompareImageFormat(physical, &info, &props);
+        }
         std::printf("Metal caps: %d differences from MoltenVK (features %d, properties %d, formats %d, "
                     "memory and queues %d, extensions %d)\n",
                     features + properties + formats + memory + extensions, features, properties,

@@ -810,8 +810,11 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   MoltenVK's at start and logs every difference: the 23 feature and property structures
   `Instance::CreateDevice` reads (430 members, named from `tools/vk_caps_fields.py`'s tables), the
   three feature masks of every core format, memory types and heaps, queue families, and the
-  extensions. On the M3 Pro: 0 differences (683 with nothing answered). The other Apple Silicon
-  generations (M1, M2) are to be compared before the answers are used (4.2).
+  extensions, and the image format queries as the texture cache makes them (support, extents,
+  levels, layers, sample counts; MoltenVK refuses storage usage on block-compressed formats even
+  with extended usage, and reports 2^62 as the largest resource). On the M3 Pro: 0 differences
+  (683 with nothing answered) and all 25 distinct image format queries the same. The other Apple
+  Silicon generations (M1, M2) are to be compared before the answers are relied on (4.2).
 
 ## Decisions
 
