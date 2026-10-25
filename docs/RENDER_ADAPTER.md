@@ -685,6 +685,17 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   required; frame correct. Validation also reports two older problems, already in the M2
   validation run: pipelines with a depth or stencil format used in passes without that
   attachment, and one compute shader reading 32 bytes from a 28-byte buffer.
+- **M4 step 3, ticks and the memory report:** with the Metal frame a timeline semaphore keeps its
+  MTLSharedEvent (`MetalLayer::SemaphoreEvent`; every signal reaches it, from Metal submissions
+  and from MoltenVK's): `Semaphore::Refresh` reads `signaledValue`, and `Semaphore::Wait`, the
+  device's timed `WaitFor` and the presenter's `WaitRendered` wait through an
+  `MTLSharedEventListener` (a log line if a wait passes 10 s). The device's memory report reads
+  the Metal device's `currentAllocatedSize` and `recommendedMaxWorkingSetSize`, which is what
+  MoltenVK's VK_EXT_memory_budget reports: 7,490 MiB of 13,639 both ways in the test (printed
+  once). Measured (new second): `vkGetSemaphoreCounterValue` from 32,023 calls a second to none,
+  `vkWaitSemaphores` from 349 to none, the memory query from 39 to none; 39.1 against 39.0 and
+  38.9 against 39.0 FPS in the two pairs; no wait reached 10 s. Per second only
+  `vkBeginCommandBuffer` and `vkEndCommandBuffer` still reach MoltenVK.
 
 ## Decisions
 

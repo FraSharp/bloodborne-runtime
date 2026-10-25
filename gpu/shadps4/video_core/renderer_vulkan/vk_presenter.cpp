@@ -631,6 +631,12 @@ void Presenter::WaitRendered(const Frame* frame) {
         .pSemaphores = &frame->ready_semaphore,
         .pValues = &frame->ready_tick,
     };
+#if BB_METAL_BACKEND
+    if (void* event = MetalLayer::SemaphoreEvent(static_cast<VkSemaphore>(frame->ready_semaphore))) {
+        MetalLayer::WaitEvent(event, frame->ready_tick);
+        return;
+    }
+#endif
     // A lost device ends the wait (the presenter reports it); a timeout waits again.
     while (instance.GetDevice().waitSemaphores(&info, 1'000'000'000) == vk::Result::eTimeout) {
     }

@@ -39,6 +39,10 @@ Semaphore::Semaphore(const Instance& instance_) : instance{instance_} {
     ASSERT_MSG(semaphore_result == vk::Result::eSuccess, "Failed to create master semaphore: {}",
                vk::to_string(semaphore_result));
     semaphore = std::move(sem);
+#if BB_METAL_BACKEND
+    // With the Metal frame the ticks are read and waited for on the event, not through MoltenVK.
+    event = MetalLayer::SemaphoreEvent(static_cast<VkSemaphore>(*semaphore));
+#endif
 }
 
 Semaphore::~Semaphore() = default;
@@ -48,6 +52,15 @@ void Semaphore::Refresh() {
     u64 counter{};
     do {
         this_tick = gpu_tick.load(std::memory_order_acquire);
+#if BB_METAL_BACKEND
+        if (event) {
+            counter = MetalLayer::EventValue(event);
+            if (counter < this_tick) {
+                return;
+            }
+            continue;
+        }
+#endif
         auto [counter_result, cntr] = instance.GetDevice().getSemaphoreCounterValue(*semaphore);
         if (counter_result == vk::Result::eErrorDeviceLost) {
             Breadcrumbs::ReportDeviceLost("reading the GPU progress");
@@ -73,6 +86,13 @@ void Semaphore::Wait(u64 tick) {
         return;
     }
 
+#if BB_METAL_BACKEND
+    if (event) {
+        MetalLayer::WaitEvent(event, tick);
+        Refresh();
+        return;
+    }
+#endif
     // If none of the above is hit, fallback to a regular wait
     const vk::SemaphoreWaitInfo wait_info = {
         .semaphoreCount = 1,

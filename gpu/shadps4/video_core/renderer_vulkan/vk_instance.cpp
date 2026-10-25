@@ -999,6 +999,10 @@ void Instance::CollectToolingInfo() const {
     }
 }
 
+u64 Instance::VramLimitBytes() {
+    return VramLimit();
+}
+
 std::pair<u64, u64> Instance::GetDeviceMemoryUsageAndBudget() const {
     vk::PhysicalDeviceMemoryBudgetPropertiesEXT memory_budget_props{};
     vk::PhysicalDeviceMemoryProperties2 props = {

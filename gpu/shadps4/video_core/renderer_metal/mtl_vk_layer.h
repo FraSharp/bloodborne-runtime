@@ -55,5 +55,15 @@ void Own(void* command_buffer);
 /// M4). BufferGone: right before the VkBuffer is destroyed.
 void BufferMade(void* buffer);
 void BufferGone(void* buffer);
+/// With the Metal frame: a timeline semaphore's MTLSharedEvent (id<MTLSharedEvent>, owned by the
+/// layer until vkDestroySemaphore), or null. Every signal of the semaphore reaches it, from Metal
+/// submissions and from MoltenVK's. EventValue: its signaled value; WaitEvent: blocks until it
+/// reaches `value` or `timeout_ns` passes (false then) (docs/RENDER_ADAPTER.md, M4).
+void* SemaphoreEvent(void* semaphore);
+unsigned long long EventValue(void* event);
+bool WaitEvent(void* event, unsigned long long value, unsigned long long timeout_ns = ~0ull);
+/// With the Metal frame: the GPU memory in use and the working-set budget of MoltenVK's Metal
+/// device (what MoltenVK's VK_EXT_memory_budget reports); false when the frame is off.
+bool MemoryUsage(unsigned long long* used, unsigned long long* budget);
 
 } // namespace MetalLayer

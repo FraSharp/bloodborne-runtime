@@ -108,6 +108,12 @@ constexpr vk::BufferUsageFlags AllFlags =
 } // namespace
 
 Backend::Device::WaitResult BackendDevice::WaitFor(u64 tick, u64 timeout_ns) {
+#if BB_METAL_BACKEND
+    if (void* event = scheduler.GetWorkSemaphore()->Event()) {
+        return MetalLayer::WaitEvent(event, tick, timeout_ns) ? WaitResult::Complete
+                                                              : WaitResult::Timeout;
+    }
+#endif
     const vk::Semaphore handle = scheduler.GetWorkSemaphore()->Handle();
     const vk::SemaphoreWaitInfo wait_info = {
         .semaphoreCount = 1,
@@ -755,6 +761,27 @@ Backend::MemoryReport BackendDevice::ReportMemory() const {
     if (!instance.CanReportMemoryUsage()) {
         return {.total = instance.GetTotalMemoryBudget()};
     }
+#if BB_METAL_BACKEND
+    // With the Metal frame, Metal's own numbers (what MoltenVK reports), without a Vulkan call.
+    unsigned long long metal_used = 0, metal_budget = 0;
+    if (MetalLayer::MemoryUsage(&metal_used, &metal_budget)) {
+        static std::once_flag compared;
+        std::call_once(compared, [&] {
+            const auto [vk_used, vk_budget] = instance.GetDeviceMemoryUsageAndBudget();
+            std::printf("Memory report: Metal %llu MiB used of %llu, MoltenVK %llu of %llu\n",
+                        metal_used >> 20, metal_budget >> 20,
+                        static_cast<unsigned long long>(vk_used >> 20),
+                        static_cast<unsigned long long>(vk_budget >> 20));
+        });
+        const u64 limit = Instance::VramLimitBytes();
+        return {
+            .available = true,
+            .used = metal_used,
+            .budget = limit != 0 ? std::min<u64>(metal_budget, limit) : metal_budget,
+            .total = instance.GetTotalMemoryBudget(),
+        };
+    }
+#endif
     const auto [used, budget] = instance.GetDeviceMemoryUsageAndBudget();
     return {
         .available = true,

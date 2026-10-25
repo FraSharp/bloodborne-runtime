@@ -905,6 +905,68 @@ void BufferGone(void* buffer) {
     }
 }
 
+void* SemaphoreEvent(void* semaphore) {
+    if (!frame_enabled || !semaphore || !export_fn || !layer_device) {
+        return nullptr;
+    }
+    std::scoped_lock lock{event_mutex};
+    @autoreleasepool {
+        return (__bridge void*)EventOfLocked(static_cast<VkSemaphore>(semaphore));
+    }
+}
+
+unsigned long long EventValue(void* event) {
+    return [(__bridge id<MTLSharedEvent>)event signaledValue];
+}
+
+bool WaitEvent(void* event, unsigned long long value, unsigned long long timeout_ns) {
+    id<MTLSharedEvent> shared = (__bridge id<MTLSharedEvent>)event;
+    if (shared.signaledValue >= value) {
+        return true;
+    }
+    if (timeout_ns == 0) {
+        return false;
+    }
+    static MTLSharedEventListener* listener = [[MTLSharedEventListener alloc]
+        initWithDispatchQueue:dispatch_queue_create("bbport.ticks", DISPATCH_QUEUE_CONCURRENT)];
+    dispatch_semaphore_t reached = dispatch_semaphore_create(0);
+    @autoreleasepool {
+        [shared notifyListener:listener
+                       atValue:value
+                         block:^(id<MTLSharedEvent>, uint64_t) {
+                           dispatch_semaphore_signal(reached);
+                         }];
+    }
+    if (timeout_ns != ~0ull) {
+        // A late signal still runs the block; it signals a semaphore nobody waits on.
+        return dispatch_semaphore_wait(reached, dispatch_time(DISPATCH_TIME_NOW,
+                                                              int64_t(std::min<unsigned long long>(
+                                                                  timeout_ns, INT64_MAX)))) == 0;
+    }
+    bool reported = false;
+    while (dispatch_semaphore_wait(reached, dispatch_time(DISPATCH_TIME_NOW, 10 * NSEC_PER_SEC))) {
+        if (!reported) {
+            std::printf("Metal layer: still waiting for tick %llu (at %llu) after 10 s\n", value,
+                        shared.signaledValue);
+            reported = true;
+        }
+    }
+    return true;
+}
+
+bool MemoryUsage(unsigned long long* used, unsigned long long* budget) {
+    if (!frame_enabled) {
+        return false;
+    }
+    id<MTLDevice> device = (__bridge id<MTLDevice>)MtlDevice();
+    if (!device) {
+        return false;
+    }
+    *used = device.currentAllocatedSize;
+    *budget = device.recommendedMaxWorkingSetSize;
+    return true;
+}
+
 void Install(void* dispatcher_ptr) {
     const char* env = std::getenv("BB_METAL_TRACE");
     trace = env && env[0] == '1';
