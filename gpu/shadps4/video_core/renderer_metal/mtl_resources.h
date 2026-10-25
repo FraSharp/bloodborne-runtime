@@ -46,6 +46,9 @@ bool Enabled();
 void Init(void* device);
 /// A buffer of `size` bytes; fatal when Metal cannot make it.
 Buffer NewBuffer(u64 size, Storage storage);
+/// A buffer over `size` bytes of host memory at `host` (both page-aligned), used in place; the
+/// memory stays the caller's (M4: the guest memory pool).
+Buffer WrapHostMemory(void* host, u64 size);
 Texture NewTexture(const TextureDesc& desc);
 /// Gives up a reference taken by NewBuffer or NewTexture.
 void Release(void* object);
@@ -57,6 +60,9 @@ inline bool Enabled() {
 }
 inline void Init(void*) {}
 inline Buffer NewBuffer(u64, Storage) {
+    return {};
+}
+inline Buffer WrapHostMemory(void*, u64) {
     return {};
 }
 inline Texture NewTexture(const TextureDesc&) {

@@ -759,6 +759,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   upscaler's), address queries from 99 to 6; 39.1 against 39.5 FPS new second and 38.8 against
   38.5 new first (median 25.3 ms both, then 25.5 against 25.7); Metal API validation: nothing
   destroyed while still required; frame correct.
+- **M4 step 3, the guest memory in Metal:** with the Metal frame the game's memory (the pool's two
+  windows, 3,584 and 3,520 MiB) is used in place by Metal alone (`MetalResources::WrapHostMemory`:
+  `newBufferWithBytesNoCopy`, as MoltenVK does for VK_EXT_external_memory_host) under a
+  placeholder VkBuffer, its device address the MTLBuffer's, kept resident. Measured (new second):
+  39.3 FPS both, 4.02–4.31 against 4.11–4.26 µs per draw; Metal API validation: nothing destroyed
+  while still required; frame correct. What still reaches MoltenVK is made once at start: the
+  device and its queries, its queue, 4 semaphores and 3 fences, a descriptor pool nothing uses,
+  one buffer of the guest-memory check, and 3D images viewed as 2D slices.
 
 ## Decisions
 

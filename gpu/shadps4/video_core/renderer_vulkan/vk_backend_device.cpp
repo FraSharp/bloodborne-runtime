@@ -179,6 +179,24 @@ Backend::BufferAllocation BackendDevice::ImportHostMemory(void* host, u64 size,
                                                           std::string_view name) {
     const auto device = instance.GetDevice();
     UniqueBuffer buffer{device, instance.GetAllocator()};
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // The guest memory used in place by Metal alone (M4): no MoltenVK buffer or import.
+        const auto metal = MetalResources::WrapHostMemory(host, size);
+        buffer.metal_buffer = metal.object;
+        buffer.metal_contents = host;
+        buffer.metal_size = size;
+        buffer.metal_only = true;
+        buffer.buffer = vk::Buffer{static_cast<VkBuffer>(MetalLayer::MetalOnlyBuffer(metal.object))};
+        buffer.bda_addr = MetalLayer::MetalOnlyBufferAddress(static_cast<VkBuffer>(buffer.buffer));
+        BbMetalResidency::AddMetalBuffer(static_cast<VkBuffer>(buffer.buffer), metal.object);
+        std::printf("GPU: %s (%llu MiB) used in place by Metal, kept resident\n",
+                    std::string{name}.c_str(), static_cast<unsigned long long>(size >> 20));
+        auto result = Insert(std::move(buffer), false);
+        result.mapped = std::span<u8>{static_cast<u8*>(host), size};
+        return result;
+    }
+#endif
     const vk::ExternalMemoryBufferCreateInfo external{
         .handleTypes = vk::ExternalMemoryHandleTypeFlagBits::eHostAllocationEXT,
     };

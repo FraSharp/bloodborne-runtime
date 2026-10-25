@@ -67,6 +67,17 @@ Buffer NewBuffer(u64 size, Storage storage) {
             storage == Storage::Private ? nullptr : buffer.contents};
 }
 
+Buffer WrapHostMemory(void* host, u64 size) {
+    // What MoltenVK does for VK_EXT_external_memory_host: shared storage, no copy, no deallocator.
+    id<MTLBuffer> buffer = [mtl_device newBufferWithBytesNoCopy:host
+                                                         length:size
+                                                        options:MTLResourceStorageModeShared |
+                                                                MTLResourceHazardTrackingModeDefault
+                                                    deallocator:nil];
+    ASSERT_MSG(buffer, "Metal could not use {} bytes of host memory in place", size);
+    return {(__bridge_retained void*)buffer, host};
+}
+
 std::atomic<u64> live_textures{0}, live_texture_bytes{0};
 
 Texture NewTexture(const TextureDesc& desc) {
