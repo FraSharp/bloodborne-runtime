@@ -6,6 +6,7 @@
 
 #pragma once
 
+
 namespace MetalCaps {
 
 /// With BB_METAL_CAPS=compare: compares the answers for `physical_device` (a VkPhysicalDevice,
@@ -16,5 +17,8 @@ void CompareIfAsked(void* physical_device);
 /// (BB_METAL_FRAME=1) the physical-device queries are answered by the Metal backend (M4 step 4.2;
 /// BB_METAL_CAPS=moltenvk keeps MoltenVK's). The comparison still asks MoltenVK.
 void UseMetalAnswers();
+
+/// Physical-device entry points for the loader-free Metal instance.
+void* GetProc(const char* name);
 
 } // namespace MetalCaps

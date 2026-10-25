@@ -11,13 +11,16 @@
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#ifndef __APPLE__
 #include <vulkan/vulkan.h>
+#endif
 #include <SDL3/SDL.h>
 #ifdef __APPLE__
 #include <CommonCrypto/CommonDigest.h>
 #include <sys/sysctl.h>
 #endif
 
+#ifndef __APPLE__
 static VkDeviceSize largest_local_heap(VkPhysicalDevice device) {
     VkPhysicalDeviceMemoryProperties memory;
     vkGetPhysicalDeviceMemoryProperties(device, &memory);
@@ -76,6 +79,7 @@ static int live_resolution_suits(VkPhysicalDevice device) {
             suits ? "on" : "off (startup resolution patch)");
     return suits;
 }
+#endif
 
 static int list_gamepads(void) {
     if (!SDL_Init(SDL_INIT_GAMEPAD)) {
@@ -303,6 +307,19 @@ int main(int argc, char **argv) {
     if (argc > 1 && !strcmp(argv[1], "--displays")) {
         return list_displays();
     }
+#ifdef __APPLE__
+    if (argc > 1 && !strcmp(argv[1], "--device")) {
+        puts("0x106b\tApple GPU");
+        return 0;
+    }
+    if (argc > 1 && !strcmp(argv[1], "--live-resolution")) {
+        // The automatic live path is expensive on an integrated GPU. Presets use the
+        // startup-size patch; the in-game setting can still explicitly select live mode.
+        puts("0");
+        return 0;
+    }
+    return 0;
+#else
     const int live_mode = argc > 1 && !strcmp(argv[1], "--live-resolution");
     const int device_mode = argc > 1 && !strcmp(argv[1], "--device");
     const VkApplicationInfo app = {
@@ -396,4 +413,5 @@ int main(int argc, char **argv) {
     free(devices);
     vkDestroyInstance(instance, NULL);
     return supported ? 0 : 1;
+#endif
 }

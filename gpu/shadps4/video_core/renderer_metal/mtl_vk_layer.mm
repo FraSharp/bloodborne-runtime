@@ -8,16 +8,19 @@
 #include <atomic>
 #include <deque>
 #include <chrono>
+#include <condition_variable>
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <memory>
 #include <string>
 #include <tuple>
 #include <unordered_map>
 #include <utility>
 #include <vector>
 #include "video_core/renderer_metal/mtl_vk_layer.h"
+#include "video_core/renderer_metal/mtl_vk_caps.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 // The Metal export types (this directory builds without VK_USE_PLATFORM_METAL_EXT: under ARC its
 // structs break vulkan.hpp; the C header alone is fine).
@@ -66,7 +69,10 @@ using MetalFrame::Owned;
     X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout)                  \
     X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyImage)               \
     X(vkCreateSampler) X(vkDestroySampler) X(vkDestroyImageView) X(vkDestroyPipeline)              \
-    X(vkDestroySemaphore)                                                                          \
+    X(vkCreateSemaphore) X(vkDestroySemaphore) X(vkGetSemaphoreCounterValue)                      \
+    X(vkWaitSemaphores) X(vkSignalSemaphore) X(vkCreateFence) X(vkDestroyFence)                   \
+    X(vkWaitForFences) X(vkResetFences) X(vkGetFenceStatus)                                      \
+    X(vkCreateDescriptorPool) X(vkDestroyDescriptorPool)                                           \
     X(vkGetBufferDeviceAddress) X(vkGetBufferDeviceAddressKHR) X(vkCreateShaderModule)            \
     X(vkCreateGraphicsPipelines) X(vkCreateComputePipelines) X(vkCreateImageView)               \
     X(vkSetDebugUtilsObjectNameEXT) X(vkUpdateDescriptorSets) X(vkGetDeviceProcAddr)             \
@@ -151,9 +157,9 @@ void ReportInventory(double seconds) {
         }
         std::printf("Metal inventory: %s (%zu functions): %s\n", what, list.size(), line.c_str());
     };
-    print("calls reaching the driver per second", now, seconds);
+    print(NativeBoot() ? "adapter calls per second" : "calls reaching the driver per second", now, seconds);
     if (++inventory_reports % 12 == 1) {
-        print("calls reaching the driver since the start", total, 1.0);
+        print(NativeBoot() ? "adapter calls since the start" : "calls reaching the driver since the start", total, 1.0);
     }
 }
 
@@ -278,7 +284,10 @@ std::atomic<uint64_t> next_pool{1}, next_command_buffer{1};
 constexpr uint64_t SamplerTag = 0xBC50000000000000ull, ModuleTag = 0xBC60000000000000ull,
                    PipelineLayoutTag = 0xBC70000000000000ull, SetLayoutTag = 0xBC80000000000000ull,
                    ImageTag = 0xBC90000000000000ull, ViewTag = 0xBCA0000000000000ull,
-                   MetalBufferTag = 0xBCC0000000000000ull;
+                   MetalBufferTag = 0xBCC0000000000000ull,
+                   SemaphoreTag = 0xBCD0000000000000ull,
+                   FenceTag = 0xBCE0000000000000ull,
+                   DescriptorPoolTag = 0xBCF0000000000000ull;
 std::atomic<uint64_t> next_object{1};
 template <typename H>
 H OurHandle(uint64_t tag) {
@@ -347,20 +356,42 @@ struct EventSignal {
     uint64_t value;
 };
 
+struct FenceState {
+    std::atomic<bool> signaled{false};
+};
+std::mutex fences_mutex;
+std::condition_variable fences_cv;
+std::unordered_map<VkFence, std::shared_ptr<FenceState>> fences;
+
+std::shared_ptr<FenceState> FenceOf(VkFence fence) {
+    std::scoped_lock lock{fences_mutex};
+    const auto it = fences.find(fence);
+    return it == fences.end() ? nullptr : it->second;
+}
+
+void CompleteFence(id<MTLCommandBuffer> cmd, const std::shared_ptr<FenceState>& fence) {
+    if (!fence) return;
+    [cmd addCompletedHandler:^(id<MTLCommandBuffer>) {
+      fence->signaled.store(true, std::memory_order_release);
+      fences_cv.notify_all();
+    }];
+}
+
 /// Commits the Metal command buffers of the owned command buffers in `buffers`, in order, and
 /// releases them; MoltenVK then gets the submit unchanged (its copies of them are empty). With
 /// MoltenVK's single-queue semaphores ("Metal implicit guarantees within a single queue") order
 /// on the queue is what synchronizes, and ours comes first. `signals`, when the submit does not
 /// go to MoltenVK (SubmitInMetal): encoded on the last one (or a command buffer of their own).
 template <typename Get>
-void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* signals = nullptr) {
+void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* signals = nullptr,
+                 const std::shared_ptr<FenceState>& fence = {}) {
     const bool signal = signals && !signals->empty();
-    if (owned_count.load(std::memory_order_acquire) == 0 && !signal) {
+    if (owned_count.load(std::memory_order_acquire) == 0 && !signal && !fence) {
         return;
     }
     // The last owned command buffer of the submit carries the signals.
     uint32_t last = count;
-    if (signal) {
+    if (signal || fence) {
         for (uint32_t i = count; i-- > 0;) {
             if (FindOwned(get(i))) {
                 last = i;
@@ -371,9 +402,12 @@ void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* sign
             @autoreleasepool {
                 id<MTLCommandBuffer> cmd = [queue commandBuffer];
                 cmd.label = @"bbport Metal submit signal";
-                for (const auto& s : *signals) {
-                    [cmd encodeSignalEvent:s.event value:s.value];
+                if (signals) {
+                    for (const auto& s : *signals) {
+                        [cmd encodeSignalEvent:s.event value:s.value];
+                    }
                 }
+                CompleteFence(cmd, fence);
                 [cmd commit];
             }
             return;
@@ -395,10 +429,11 @@ void CommitOwned(uint32_t count, Get&& get, const std::vector<EventSignal>* sign
         }
         @autoreleasepool {
         MetalFrame::EndEncoders(*o);
-        if (signal && i == last) {
-            for (const auto& s : *signals) {
+        if (i == last) {
+            if (signals) for (const auto& s : *signals) {
                 [o->cmd encodeSignalEvent:s.event value:s.value];
             }
+            CompleteFence(o->cmd, fence);
         }
         MetalFrame::ReturnScratchWhenDone(*o);
         if (!o->keep.empty()) {
@@ -432,11 +467,13 @@ VkDevice layer_device;
 std::mutex event_mutex;
 std::unordered_map<VkSemaphore, id<MTLSharedEvent>> events; ///< nil: not exportable
 std::unordered_map<VkSemaphore, uint64_t> committed_values; ///< highest value committed in Metal
+std::unordered_map<VkSemaphore, bool> timeline_semaphores;
 
 id<MTLSharedEvent> EventOfLocked(VkSemaphore semaphore) {
     if (auto it = events.find(semaphore); it != events.end()) {
         return it->second;
     }
+    if (!export_fn) return nil;
     VkExportMetalSharedEventInfoEXT event{VK_STRUCTURE_TYPE_EXPORT_METAL_SHARED_EVENT_INFO_EXT};
     event.semaphore = semaphore;
     VkExportMetalObjectsInfoEXT info{VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT, &event};
@@ -450,6 +487,7 @@ void ForgetSemaphore(VkSemaphore semaphore) {
     std::scoped_lock lock{event_mutex};
     events.erase(semaphore);
     committed_values.erase(semaphore);
+    timeline_semaphores.erase(semaphore);
 }
 
 const VkTimelineSemaphoreSubmitInfo* TimelineInfo(const VkSubmitInfo& submit) {
@@ -471,7 +509,7 @@ bool SubmitInMetal(uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
                        : "through MoltenVK (BB_METAL_SUBMIT=0)");
         return on;
     }();
-    if (!enabled || fence || !export_fn) {
+    if (!enabled || (fence && !FenceOf(fence))) {
         return false;
     }
     // One at a time: a submit's values are committed before another can count on them.
@@ -488,9 +526,10 @@ bool SubmitInMetal(uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
                 }
             }
             const auto* timeline = TimelineInfo(submit);
-            if ((submit.waitSemaphoreCount || submit.signalSemaphoreCount) && !timeline) {
-                return false; // binary semaphores
-            }
+            // The native Metal swapchain does not use binary semaphores. Refuse an untracked
+            // binary wait until its acquisition semantics are represented by this queue.
+            if ((submit.waitSemaphoreCount || submit.signalSemaphoreCount) && !timeline)
+                return false;
             for (uint32_t i = 0; i < submit.waitSemaphoreCount; ++i) {
                 const VkSemaphore semaphore = submit.pWaitSemaphores[i];
                 id<MTLSharedEvent> event = EventOfLocked(semaphore);
@@ -519,7 +558,8 @@ bool SubmitInMetal(uint32_t count, const VkSubmitInfo* submits, VkFence fence) {
     }
     for (uint32_t s = 0; s < count; ++s) {
         CommitOwned(submits[s].commandBufferCount,
-                    [&](uint32_t i) { return submits[s].pCommandBuffers[i]; }, &signals[s]);
+                    [&](uint32_t i) { return submits[s].pCommandBuffers[i]; }, &signals[s],
+                    s + 1 == count ? FenceOf(fence) : nullptr);
     }
     ++metal_submits;
     return true;
@@ -816,10 +856,136 @@ struct Hook<I, R (*)(A...)> {
                 return;
             }
             return original(args...);
-        } else if constexpr (I == Id_vkDestroySemaphore) {
-            if (frame_enabled) {
-                ForgetSemaphore(std::get<1>(std::tuple{args...}));
+        } else if constexpr (I == Id_vkCreateSemaphore) {
+            if (!frame_enabled) return original(args...);
+            const auto [dev, info, alloc, out] = std::tuple{args...};
+            VkSemaphoreType type = VK_SEMAPHORE_TYPE_BINARY;
+            uint64_t initial = 0;
+            for (auto* next = static_cast<const VkBaseInStructure*>(info->pNext); next;
+                 next = next->pNext) {
+                if (next->sType == VK_STRUCTURE_TYPE_SEMAPHORE_TYPE_CREATE_INFO) {
+                    const auto* ti = reinterpret_cast<const VkSemaphoreTypeCreateInfo*>(next);
+                    type = ti->semaphoreType;
+                    initial = ti->initialValue;
+                }
             }
+            id<MTLSharedEvent> event = [queue.device newSharedEvent];
+            if (!event) return VK_ERROR_OUT_OF_DEVICE_MEMORY;
+            event.signaledValue = initial;
+            *out = OurHandle<VkSemaphore>(SemaphoreTag);
+            {
+                std::scoped_lock lock{event_mutex};
+                events[*out] = event;
+                committed_values[*out] = initial;
+                timeline_semaphores[*out] = type == VK_SEMAPHORE_TYPE_TIMELINE;
+            }
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkDestroySemaphore) {
+            const VkSemaphore sem = std::get<1>(std::tuple{args...});
+            if (IsOurs(sem, SemaphoreTag)) {
+                ForgetSemaphore(sem);
+                return;
+            }
+            if (frame_enabled) ForgetSemaphore(sem);
+            return original(args...);
+        } else if constexpr (I == Id_vkGetSemaphoreCounterValue) {
+            const auto [dev, sem, out] = std::tuple{args...};
+            if (!IsOurs(sem, SemaphoreTag)) return original(args...);
+            std::scoped_lock lock{event_mutex};
+            auto it = events.find(sem);
+            if (it == events.end()) return VK_ERROR_DEVICE_LOST;
+            *out = it->second.signaledValue;
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkWaitSemaphores) {
+            const auto [dev, info, timeout] = std::tuple{args...};
+            if (!frame_enabled) return original(args...);
+            const auto start = std::chrono::steady_clock::now();
+            for (uint32_t i = 0; i < info->semaphoreCount; ++i) {
+                void* event = SemaphoreEvent(info->pSemaphores[i]);
+                if (!event) return VK_ERROR_DEVICE_LOST;
+                uint64_t remaining = timeout;
+                if (timeout != ~0ull) {
+                    const auto elapsed = std::chrono::duration_cast<std::chrono::nanoseconds>(
+                        std::chrono::steady_clock::now() - start).count();
+                    remaining = elapsed >= 0 && uint64_t(elapsed) < timeout
+                                    ? timeout - uint64_t(elapsed) : 0;
+                }
+                if (!WaitEvent(event, info->pValues[i], remaining)) return VK_TIMEOUT;
+            }
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkSignalSemaphore) {
+            const auto [dev, info] = std::tuple{args...};
+            if (!IsOurs(info->semaphore, SemaphoreTag)) return original(args...);
+            std::scoped_lock lock{event_mutex};
+            auto it = events.find(info->semaphore);
+            if (it == events.end()) return VK_ERROR_DEVICE_LOST;
+            it->second.signaledValue = info->value;
+            committed_values[info->semaphore] = std::max(committed_values[info->semaphore], info->value);
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkCreateFence) {
+            if (!frame_enabled) return original(args...);
+            const auto [dev, info, alloc, out] = std::tuple{args...};
+            *out = OurHandle<VkFence>(FenceTag);
+            auto state = std::make_shared<FenceState>();
+            state->signaled.store(bool(info->flags & VK_FENCE_CREATE_SIGNALED_BIT));
+            std::scoped_lock lock{fences_mutex};
+            fences[*out] = std::move(state);
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkDestroyFence) {
+            const VkFence fence = std::get<1>(std::tuple{args...});
+            if (!IsOurs(fence, FenceTag)) return original(args...);
+            std::scoped_lock lock{fences_mutex};
+            fences.erase(fence);
+            return;
+        } else if constexpr (I == Id_vkGetFenceStatus) {
+            const VkFence fence = std::get<1>(std::tuple{args...});
+            if (!IsOurs(fence, FenceTag)) return original(args...);
+            auto state = FenceOf(fence);
+            return state && state->signaled.load(std::memory_order_acquire) ? VK_SUCCESS
+                                                                             : VK_NOT_READY;
+        } else if constexpr (I == Id_vkResetFences) {
+            const auto [dev, count, handles] = std::tuple{args...};
+            if (!frame_enabled) return original(args...);
+            for (uint32_t i = 0; i < count; ++i) {
+                auto state = FenceOf(handles[i]);
+                if (!state) return VK_ERROR_DEVICE_LOST;
+                state->signaled.store(false, std::memory_order_release);
+            }
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkWaitForFences) {
+            const auto [dev, count, handles, all, timeout] = std::tuple{args...};
+            if (!frame_enabled) return original(args...);
+            std::vector<std::shared_ptr<FenceState>> states;
+            states.reserve(count);
+            for (uint32_t i = 0; i < count; ++i) {
+                auto state = FenceOf(handles[i]);
+                if (!state) return VK_ERROR_DEVICE_LOST;
+                states.push_back(std::move(state));
+            }
+            const auto ready = [&] {
+                uint32_t signaled = 0;
+                for (const auto& state : states) {
+                    signaled += state->signaled.load(std::memory_order_acquire);
+                }
+                return all ? signaled == count : signaled != 0;
+            };
+            if (ready()) return VK_SUCCESS;
+            if (timeout == 0) return VK_TIMEOUT;
+            std::unique_lock lock{fences_mutex};
+            if (timeout == ~0ull) {
+                fences_cv.wait(lock, ready);
+                return VK_SUCCESS;
+            }
+            const auto deadline = std::chrono::steady_clock::now() +
+                                  std::chrono::nanoseconds(std::min<uint64_t>(timeout, INT64_MAX));
+            return fences_cv.wait_until(lock, deadline, ready) ? VK_SUCCESS : VK_TIMEOUT;
+        } else if constexpr (I == Id_vkCreateDescriptorPool) {
+            if (!frame_enabled) return original(args...);
+            *std::get<3>(std::tuple{args...}) = OurHandle<VkDescriptorPool>(DescriptorPoolTag);
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkDestroyDescriptorPool) {
+            const VkDescriptorPool pool = std::get<1>(std::tuple{args...});
+            if (IsOurs(pool, DescriptorPoolTag)) return;
             return original(args...);
         } else if constexpr (I == Id_vkDestroyImageView) {
             const VkImageView view = std::get<1>(std::tuple{args...});
@@ -1045,6 +1211,10 @@ void* MetalCommandBuffer(void* command_buffer) {
     return (__bridge void*)o->cmd;
 }
 
+void* MetalImageTexture(void* image) {
+    return (__bridge void*)MetalFrame::ImageTexture(reinterpret_cast<VkImage>(image));
+}
+
 void* MtlDevice() {
     return queue ? (__bridge void*)queue.device : nullptr;
 }
@@ -1058,6 +1228,21 @@ void SetDevice(void* device, void* vkqueue) {
         return;
     }
     const VkDevice vk_device = static_cast<VkDevice>(device);
+    if (NativeBoot()) {
+        id<MTLDevice> metal = MTLCreateSystemDefaultDevice();
+        queue = [metal newCommandQueue];
+        if (!queue) {
+            std::printf("Metal backend: failed to make a Metal command queue\n");
+            frame_enabled = false;
+            return;
+        }
+        queue.label = @"bloodborne Metal frame";
+        export_fn = nullptr;
+        layer_device = vk_device;
+        MetalFrame::Init(vk_device, queue, nullptr, nullptr);
+        std::printf("Metal backend: native device and queue on %s\n", metal.name.UTF8String);
+        return;
+    }
     auto export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
         VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr(vk_device, "vkExportMetalObjectsEXT"));
     if (!export_objects) {
@@ -1158,7 +1343,7 @@ void ImageGone(void* image) {
 }
 
 void* SemaphoreEvent(void* semaphore) {
-    if (!frame_enabled || !semaphore || !export_fn || !layer_device) {
+    if (!frame_enabled || !semaphore) {
         return nullptr;
     }
     std::scoped_lock lock{event_mutex};
@@ -1248,6 +1433,130 @@ void Install(void* dispatcher_ptr) {
     BB_LAYER_FUNCTIONS(BB_INSTALL)
 #undef BB_INSTALL
     std::printf("Metal layer: installed over %u Vulkan functions\n", unsigned(Count));
+}
+
+namespace {
+constexpr uint64_t NativeInstanceTag = 0xBC01000000000001ull;
+constexpr uint64_t NativePhysicalTag = 0xBC02000000000001ull;
+constexpr uint64_t NativeDeviceTag = 0xBC03000000000001ull;
+constexpr uint64_t NativeQueueTag = 0xBC04000000000001ull;
+
+VKAPI_ATTR VkResult VKAPI_CALL NativeEnumerateVersion(uint32_t* version) {
+    *version = VK_API_VERSION_1_3;
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeEnumerateInstanceExtensions(
+    const char*, uint32_t* count, VkExtensionProperties* out) {
+    static constexpr const char* names[] = {
+        VK_KHR_SURFACE_EXTENSION_NAME, VK_EXT_METAL_SURFACE_EXTENSION_NAME,
+        VK_KHR_PORTABILITY_ENUMERATION_EXTENSION_NAME, VK_EXT_DEBUG_UTILS_EXTENSION_NAME,
+        VK_EXT_SWAPCHAIN_COLOR_SPACE_EXTENSION_NAME};
+    constexpr uint32_t total = std::size(names);
+    if (!out) { *count = total; return VK_SUCCESS; }
+    const uint32_t n = std::min(*count, total);
+    for (uint32_t i = 0; i < n; ++i) {
+        out[i] = {};
+        std::strncpy(out[i].extensionName, names[i], VK_MAX_EXTENSION_NAME_SIZE - 1);
+        out[i].specVersion = 1;
+    }
+    *count = n;
+    return n < total ? VK_INCOMPLETE : VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeEnumerateLayers(uint32_t* count,
+                                                      VkLayerProperties*) {
+    *count = 0;
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeCreateInstance(const VkInstanceCreateInfo*,
+                                                     const VkAllocationCallbacks*, VkInstance* out) {
+    *out = reinterpret_cast<VkInstance>(NativeInstanceTag);
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL NativeDestroyInstance(VkInstance, const VkAllocationCallbacks*) {}
+VKAPI_ATTR VkResult VKAPI_CALL NativeEnumeratePhysicalDevices(VkInstance, uint32_t* count,
+                                                               VkPhysicalDevice* out) {
+    if (!out) { *count = 1; return VK_SUCCESS; }
+    if (*count == 0) return VK_INCOMPLETE;
+    out[0] = reinterpret_cast<VkPhysicalDevice>(NativePhysicalTag);
+    *count = 1;
+    return VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeCreateDevice(VkPhysicalDevice,
+                                                   const VkDeviceCreateInfo*,
+                                                   const VkAllocationCallbacks*, VkDevice* out) {
+    *out = reinterpret_cast<VkDevice>(NativeDeviceTag);
+    return VK_SUCCESS;
+}
+VKAPI_ATTR void VKAPI_CALL NativeDestroyDevice(VkDevice, const VkAllocationCallbacks*) {}
+VKAPI_ATTR void VKAPI_CALL NativeGetDeviceQueue(VkDevice, uint32_t, uint32_t, VkQueue* out) {
+    *out = reinterpret_cast<VkQueue>(NativeQueueTag);
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeWaitIdle(VkDevice) {
+    id<MTLCommandBuffer> cmd = [queue commandBuffer];
+    if (!cmd) return VK_ERROR_DEVICE_LOST;
+    [cmd commit];
+    [cmd waitUntilCompleted];
+    return cmd.status == MTLCommandBufferStatusCompleted ? VK_SUCCESS : VK_ERROR_DEVICE_LOST;
+}
+VKAPI_ATTR VkResult VKAPI_CALL NativeQueueWaitIdle(VkQueue) {
+    return NativeWaitIdle(nullptr);
+}
+
+template <unsigned I, typename F> struct NativeFallback;
+template <unsigned I, typename R, typename... A>
+struct NativeFallback<I, R (*)(A...)> {
+    static R Call(A...) {
+        static std::atomic<bool> once{false};
+        if (!once.exchange(true))
+            std::fprintf(stderr, "Metal backend: unimplemented entry point %s\n", Names[I]);
+        if constexpr (std::is_same_v<R, VkResult>) return VK_ERROR_FEATURE_NOT_PRESENT;
+        else if constexpr (!std::is_void_v<R>) return R{};
+    }
+};
+
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL NativeGetProc(VkInstance, const char*);
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL NativeGetDeviceProc(VkDevice, const char* name) {
+    return NativeGetProc(nullptr, name);
+}
+VKAPI_ATTR PFN_vkVoidFunction VKAPI_CALL NativeGetProc(VkInstance, const char* name) {
+    if (!name) return nullptr;
+#define BB_NATIVE_PROC(symbol, fn) \
+    if (std::strcmp(name, "vk" #symbol) == 0) \
+        return reinterpret_cast<PFN_vkVoidFunction>(fn);
+    BB_NATIVE_PROC(GetInstanceProcAddr, NativeGetProc)
+    BB_NATIVE_PROC(GetDeviceProcAddr, NativeGetDeviceProc)
+    BB_NATIVE_PROC(EnumerateInstanceVersion, NativeEnumerateVersion)
+    BB_NATIVE_PROC(EnumerateInstanceExtensionProperties, NativeEnumerateInstanceExtensions)
+    BB_NATIVE_PROC(EnumerateInstanceLayerProperties, NativeEnumerateLayers)
+    BB_NATIVE_PROC(CreateInstance, NativeCreateInstance)
+    BB_NATIVE_PROC(DestroyInstance, NativeDestroyInstance)
+    BB_NATIVE_PROC(EnumeratePhysicalDevices, NativeEnumeratePhysicalDevices)
+    BB_NATIVE_PROC(CreateDevice, NativeCreateDevice)
+    BB_NATIVE_PROC(DestroyDevice, NativeDestroyDevice)
+    BB_NATIVE_PROC(GetDeviceQueue, NativeGetDeviceQueue)
+    BB_NATIVE_PROC(DeviceWaitIdle, NativeWaitIdle)
+    BB_NATIVE_PROC(QueueWaitIdle, NativeQueueWaitIdle)
+#undef BB_NATIVE_PROC
+    if (auto proc = MetalCaps::GetProc(name))
+        return reinterpret_cast<PFN_vkVoidFunction>(proc);
+#define BB_NATIVE_FALLBACK(symbol) \
+    if (std::strcmp(name, #symbol) == 0) \
+        return reinterpret_cast<PFN_vkVoidFunction>( \
+            &NativeFallback<Id_##symbol, decltype(std::declval<Dispatcher>().symbol)>::Call);
+    BB_LAYER_FUNCTIONS(BB_NATIVE_FALLBACK)
+#undef BB_NATIVE_FALLBACK
+    return nullptr;
+}
+} // namespace
+
+bool NativeBoot() {
+    const char* frame = std::getenv("BB_METAL_FRAME");
+    const char* native = std::getenv("BB_METAL_NATIVE_BOOT");
+    return frame && frame[0] == '1' && native && native[0] == '1';
+}
+
+void* NativeInstanceProcAddr() {
+    return reinterpret_cast<void*>(NativeGetProc);
 }
 
 } // namespace MetalLayer

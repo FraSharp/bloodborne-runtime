@@ -424,6 +424,12 @@ Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& de
     auto record = std::make_unique<ImageRecord>();
     record->image = UniqueImage{instance.GetDevice(), instance.GetAllocator()};
     if (const auto create_info = ImageCreateInfo(desc); !record->image.CreateInMetal(create_info)) {
+#if BB_METAL_BACKEND
+        ASSERT_MSG(!MetalLayer::FrameEnabled(),
+                   "Metal frame image allocation fell back to VMA (format {}, flags {}, usage {})",
+                   vk::to_string(create_info.format), vk::to_string(create_info.flags),
+                   vk::to_string(create_info.usage));
+#endif
         record->image.Create(create_info);
     }
     SetObjectName(instance.GetDevice(), record->image.image, name);
@@ -824,11 +830,16 @@ Backend::MemoryReport BackendDevice::ReportMemory() const {
     if (MetalLayer::MemoryUsage(&metal_used, &metal_budget)) {
         static std::once_flag compared;
         std::call_once(compared, [&] {
-            const auto [vk_used, vk_budget] = instance.GetDeviceMemoryUsageAndBudget();
-            std::printf("Memory report: Metal %llu MiB used of %llu, MoltenVK %llu of %llu\n",
-                        metal_used >> 20, metal_budget >> 20,
-                        static_cast<unsigned long long>(vk_used >> 20),
-                        static_cast<unsigned long long>(vk_budget >> 20));
+            if (MetalLayer::NativeBoot()) {
+                std::printf("Memory report: native Metal %llu MiB used of %llu\n",
+                            metal_used >> 20, metal_budget >> 20);
+            } else {
+                const auto [vk_used, vk_budget] = instance.GetDeviceMemoryUsageAndBudget();
+                std::printf("Memory report: Metal %llu MiB used of %llu, MoltenVK %llu of %llu\n",
+                            metal_used >> 20, metal_budget >> 20,
+                            static_cast<unsigned long long>(vk_used >> 20),
+                            static_cast<unsigned long long>(vk_budget >> 20));
+            }
         });
         const u64 limit = Instance::VramLimitBytes();
         return {

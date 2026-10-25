@@ -718,8 +718,8 @@ void Init(VkDevice dev, id<MTLCommandQueue> q, PFN_vkExportMetalObjectsEXT expor
     device = q.device;
     export_objects = export_fn;
     get_address = address_fn;
-    get_mtl_buffer = FindGetMTLBuffer();
-    if (!get_mtl_buffer) {
+    get_mtl_buffer = export_fn ? FindGetMTLBuffer() : nullptr;
+    if (export_fn && !get_mtl_buffer) {
         std::printf("Metal frame: vkGetMTLBufferMVK not found in MoltenVK: buffers cannot be "
                     "bound\n");
     }

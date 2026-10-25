@@ -155,7 +155,14 @@ WindowSDL::WindowSDL(s32 width_, s32 height_, const char* title) : width{width_}
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_WIDTH_NUMBER, width_);
     SDL_SetNumberProperty(props, SDL_PROP_WINDOW_CREATE_HEIGHT_NUMBER, height_);
     SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_RESIZABLE_BOOLEAN, true);
-    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, true);
+    bool native_metal = false;
+#ifdef __APPLE__
+    const char* metal_frame = std::getenv("BB_METAL_FRAME");
+    const char* metal_boot = std::getenv("BB_METAL_NATIVE_BOOT");
+    native_metal = metal_frame && metal_frame[0] == '1' && metal_boot && metal_boot[0] == '1';
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_METAL_BOOLEAN, native_metal);
+#endif
+    SDL_SetBooleanProperty(props, SDL_PROP_WINDOW_CREATE_VULKAN_BOOLEAN, !native_metal);
 #ifdef __APPLE__
     // macOS: a Retina-resolution drawable (from bmy/bbport-mac). Without it the CAMetalLayer is
     // sized in points, half the panel's pixels, and macOS stretches the frame 2x. BB_RETINA=0: as

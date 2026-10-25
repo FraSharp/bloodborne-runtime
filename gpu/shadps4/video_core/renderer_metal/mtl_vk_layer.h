@@ -7,12 +7,15 @@
 // Step A: forwarding plus counts (BB_METAL_TRACE=1 prints the command stream every 5 s).
 
 #pragma once
-
 namespace MetalFrame {
 struct Owned;
 }
 
 namespace MetalLayer {
+
+/// The native Metal startup path, selected by run.sh without opening the Vulkan loader.
+bool NativeBoot();
+void* NativeInstanceProcAddr();
 
 /// `dispatcher`: VULKAN_HPP_DEFAULT_DISPATCHER, right after its init(device). Installs only when
 /// BB_METAL_TRACE=1 or a Metal path is on (BB_METAL_PRESENT=1); otherwise it stays untouched.
@@ -42,6 +45,8 @@ void* MetalOnlyPipeline(const void* graphics_info, const void* compute_info);
 /// The id<MTLCommandBuffer> an owned command buffer is encoded into, with every encoder ended,
 /// for work encoded outside the layer in order (MetalFX); null when it is not owned.
 void* MetalCommandBuffer(void* command_buffer);
+/// Borrow the Metal texture registered for a Metal-frame image.
+void* MetalImageTexture(void* image);
 
 /// Step B (BB_METAL_PRESENT=1): the presenter's command buffer is encoded in Metal.
 bool PresentEnabled();

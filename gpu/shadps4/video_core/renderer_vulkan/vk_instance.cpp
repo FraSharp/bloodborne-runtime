@@ -212,7 +212,9 @@ Instance::Instance(const Frontend::WindowSystemInfo& window_info, s32 physical_d
 
 Instance::~Instance() {
     ImGui::Core::Shutdown(GetDevice());
-    vmaDestroyAllocator(allocator);
+    if (allocator) {
+        vmaDestroyAllocator(allocator);
+    }
 }
 
 std::string Instance::GetDriverVersionName() {
@@ -796,7 +798,16 @@ bool Instance::CreateDevice() {
 
     // bbport: before the allocator, which adds its memory blocks to the residency set.
     BbMetalResidency::Init(*this);
-    CreateAllocator();
+#ifdef BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        // Every resource in this path is a Metal object. A null allocator makes any
+        // accidental VMA use fail at its caller instead of silently loading MoltenVK.
+        std::printf("GPU: Metal frame uses no VMA allocator\n");
+    } else
+#endif
+    {
+        CreateAllocator();
+    }
     return true;
 }
 
@@ -806,7 +817,7 @@ const Instance* stats_instance = nullptr;
 
 void VmaDeviceUsage(u64& block_bytes, u64& allocation_bytes) {
     block_bytes = allocation_bytes = 0;
-    if (!stats_instance) {
+    if (!stats_instance || !stats_instance->GetAllocator()) {
         return;
     }
     const auto props = stats_instance->GetPhysicalDevice().getMemoryProperties();
@@ -887,16 +898,33 @@ void Instance::CollectDeviceParameters() {
             device_local = std::max<u64>(device_local, memory_properties.memoryHeaps[i].size);
         }
     }
-    std::printf("GPU: %s%s, %llu MiB VRAM; %s %s (%s), Vulkan %s\n", model_name.c_str(),
-                IsIntegrated() ? " (integrated)" : "",
-                static_cast<unsigned long long>(device_local >> 20), vendor_name.c_str(),
-                driver_version.c_str(), driver.driverInfo.data(), api_version.c_str());
-    LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
+    bool native_metal = false;
+#ifdef BB_METAL_BACKEND
+    native_metal = MetalLayer::NativeBoot();
+#endif
+    if (native_metal) {
+        // Keep driverID from the compatibility profile: backend workarounds use it. This label
+        // describes the actual implementation; no MoltenVK driver is loaded on this path.
+        std::printf("GPU: %s%s, %llu MiB shared memory; native Metal backend\n",
+                    model_name.c_str(), IsIntegrated() ? " (integrated)" : "",
+                    static_cast<unsigned long long>(device_local >> 20));
+    } else {
+        std::printf("GPU: %s%s, %llu MiB VRAM; %s %s (%s), Vulkan %s\n", model_name.c_str(),
+                    IsIntegrated() ? " (integrated)" : "",
+                    static_cast<unsigned long long>(device_local >> 20), vendor_name.c_str(),
+                    driver_version.c_str(), driver.driverInfo.data(), api_version.c_str());
+    }
     LOG_INFO(Render_Vulkan, "GPU_Model: {}", model_name);
     LOG_INFO(Render_Vulkan, "GPU_Integrated: {}", IsIntegrated() ? "Yes" : "No");
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Driver: {}", driver_name);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Version: {}", api_version);
-    LOG_INFO(Render_Vulkan, "GPU_Vulkan_Extensions: {}", extensions);
+    if (native_metal) {
+        LOG_INFO(Render_Vulkan, "GPU_Vendor: Apple");
+        LOG_INFO(Render_Vulkan, "GPU_Metal_Backend: native");
+    } else {
+        LOG_INFO(Render_Vulkan, "GPU_Vendor: {}", vendor_name);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Driver: {}", driver_name);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Version: {}", api_version);
+        LOG_INFO(Render_Vulkan, "GPU_Vulkan_Extensions: {}", extensions);
+    }
 }
 
 void Instance::CollectPhysicalMemoryInfo() {

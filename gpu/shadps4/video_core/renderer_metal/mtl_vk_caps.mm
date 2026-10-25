@@ -818,4 +818,33 @@ void UseMetalAnswers() {
                 "extensions are the Metal backend's (BB_METAL_CAPS=moltenvk: MoltenVK's)\n");
 }
 
+void* GetProc(const char* name) {
+    if (!name) return nullptr;
+#define BB_CAP_PROC(symbol, function) \
+    if (std::strcmp(name, "vk" #symbol) == 0) \
+        return reinterpret_cast<void*>(function);
+    BB_CAP_PROC(GetPhysicalDeviceFeatures2, GetFeatures2)
+    BB_CAP_PROC(GetPhysicalDeviceFeatures2KHR, GetFeatures2)
+    BB_CAP_PROC(GetPhysicalDeviceFeatures, GetFeatures)
+    BB_CAP_PROC(GetPhysicalDeviceProperties2, GetProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceProperties2KHR, GetProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceProperties, GetProperties)
+    BB_CAP_PROC(GetPhysicalDeviceFormatProperties2, GetFormatProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceFormatProperties2KHR, GetFormatProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceFormatProperties, GetFormatProperties)
+    BB_CAP_PROC(GetPhysicalDeviceMemoryProperties, GetMemoryProperties)
+    BB_CAP_PROC(GetPhysicalDeviceMemoryProperties2, GetMemoryProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceMemoryProperties2KHR, GetMemoryProperties2)
+    BB_CAP_PROC(GetPhysicalDeviceQueueFamilyProperties, GetQueueFamilies)
+    BB_CAP_PROC(GetPhysicalDeviceQueueFamilyProperties2, GetQueueFamilies2)
+    BB_CAP_PROC(GetPhysicalDeviceQueueFamilyProperties2KHR, GetQueueFamilies2)
+    BB_CAP_PROC(EnumerateDeviceExtensionProperties, EnumerateExtensions)
+    BB_CAP_PROC(GetPhysicalDeviceImageFormatProperties2, GetImageFormat2)
+    BB_CAP_PROC(GetPhysicalDeviceImageFormatProperties2KHR, GetImageFormat2)
+    BB_CAP_PROC(GetPhysicalDeviceToolProperties, GetToolProperties)
+    BB_CAP_PROC(GetPhysicalDeviceToolPropertiesEXT, GetToolProperties)
+#undef BB_CAP_PROC
+    return nullptr;
+}
+
 } // namespace MetalCaps
