@@ -12,6 +12,9 @@
 #include <shared_mutex>
 #include <tuple>
 #include <unordered_map>
+#include <unordered_set>
+#include <string>
+#include <set>
 #include "video_core/renderer_metal/mtl_frame.h"
 #include <vulkan/vulkan_metal.h>
 #include "video_core/renderer_metal/mtl_depth_stencil.h"
@@ -827,16 +830,61 @@ void SamplerDestroyed(VkSampler sampler) {
     samplers.erase(sampler);
 }
 
+/// 2D views of 3D images (M4): Metal has no such views, so these images stay MoltenVK's. How the
+/// game uses them (drawn into, sampled, written) is logged once per use and format, to choose
+/// their Metal replacement (a render pass's depth plane, or a copy of the slice).
+std::unordered_set<VkImageView> slice_views;
+void NoteSliceView(VkImageView view, const char* use) {
+    VkFormat format{};
+    u32 layer = 0;
+    {
+        std::scoped_lock lock{maps_mutex};
+        if (!slice_views.contains(view)) {
+            return;
+        }
+        if (auto it = view_infos.find(view); it != view_infos.end()) {
+            format = it->second.format;
+            layer = it->second.range.baseArrayLayer;
+        }
+    }
+    static std::mutex logged_mutex;
+    static std::set<std::pair<std::string, int>> logged;
+    std::scoped_lock lock{logged_mutex};
+    if (logged.emplace(use, int(format)).second) {
+        std::printf("Metal frame: a 2D view of a 3D image (format %d, slice %u) is %s\n",
+                    int(format), layer, use);
+    }
+}
+
 void ImageViewCreated(VkImageView view, const VkImageViewCreateInfo* info) {
+    const bool flat_view = info->viewType == VK_IMAGE_VIEW_TYPE_2D ||
+                           info->viewType == VK_IMAGE_VIEW_TYPE_2D_ARRAY;
+    id<MTLTexture> image = flat_view ? TextureOfImage(info->image) : nil;
     std::scoped_lock lock{maps_mutex};
     view_infos[view] = {info->image, info->format, info->subresourceRange};
     views.erase(view);
+    {
+        // Which views MoltenVK still makes (images Metal does not make), once per kind.
+        static std::set<std::pair<int, int>> kinds;
+        id<MTLTexture> base = flat_view ? image : TextureOfImage(info->image);
+        if (base && kinds.emplace(int(info->viewType), int(base.textureType)).second) {
+            std::printf("Metal frame: a MoltenVK image (texture type %d, format %d) gets a view of "
+                        "type %d\n",
+                        int(base.textureType), int(base.pixelFormat), int(info->viewType));
+        }
+    }
+    if (image && image.textureType == MTLTextureType3D) {
+        slice_views.insert(view);
+    } else {
+        slice_views.erase(view);
+    }
 }
 
 void ImageViewDestroyed(VkImageView view) {
     std::scoped_lock lock{maps_mutex};
     views.erase(view);
     view_infos.erase(view);
+    slice_views.erase(view);
 }
 
 void ImageMade(VkImage image, id<MTLTexture> texture) {
@@ -1022,6 +1070,7 @@ struct Attachment {
     u32 level{}, slice{};
 };
 Attachment AttachmentOf(VkImageView view) {
+    NoteSliceView(view, "drawn into (a render target)");
     ViewInfo vi{};
     bool known = false;
     {
@@ -1235,6 +1284,10 @@ void DecodeWrite(const VkWriteDescriptorSet& write, std::vector<Bound>& elements
             }
             case VK_DESCRIPTOR_TYPE_SAMPLED_IMAGE:
             case VK_DESCRIPTOR_TYPE_STORAGE_IMAGE:
+                NoteSliceView(write.pImageInfo[i].imageView,
+                              write.descriptorType == VK_DESCRIPTOR_TYPE_STORAGE_IMAGE
+                                  ? "written or read as a storage image"
+                                  : "sampled");
                 b.texture = TextureOfView(write.pImageInfo[i].imageView);
                 break;
             case VK_DESCRIPTOR_TYPE_SAMPLER: {
@@ -1244,6 +1297,7 @@ void DecodeWrite(const VkWriteDescriptorSet& write, std::vector<Bound>& elements
                 break;
             }
             case VK_DESCRIPTOR_TYPE_COMBINED_IMAGE_SAMPLER: {
+                NoteSliceView(write.pImageInfo[i].imageView, "sampled");
                 b.texture = TextureOfView(write.pImageInfo[i].imageView);
                 std::scoped_lock lock{maps_mutex};
                 auto it = samplers.find(write.pImageInfo[i].sampler);

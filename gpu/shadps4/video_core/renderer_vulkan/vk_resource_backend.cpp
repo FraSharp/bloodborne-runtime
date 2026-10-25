@@ -319,11 +319,16 @@ bool UniqueImage::CreateInMetal(const vk::ImageCreateInfo& image_ci) {
 #endif
     vk::ImageCreateFlags unsupported =
         vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency |
-        vk::ImageCreateFlagBits::eSparseAliased | vk::ImageCreateFlagBits::eCubeCompatible |
-        vk::ImageCreateFlagBits::e2DArrayCompatible | vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
+        vk::ImageCreateFlagBits::eSparseAliased | vk::ImageCreateFlagBits::eCubeCompatible;
     if (!frame) {
-        unsupported |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
+        // MoltenVK makes the views then: it needs these images made by itself.
+        unsupported |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible |
+                       vk::ImageCreateFlagBits::e2DArrayCompatible |
+                       vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
     }
+    // With the Metal frame 3D images qualify too: the texture cache makes every 3D image
+    // slice-viewable, but the game was measured viewing them only as 3D (Metal has no 2D view of
+    // a 3D texture; the frame logs one if it is asked for).
     if ((image_ci.flags & unsupported) || image_ci.tiling != vk::ImageTiling::eOptimal) {
         return false;
     }

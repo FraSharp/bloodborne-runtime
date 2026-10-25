@@ -769,7 +769,15 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   39.3 FPS both, 4.02–4.31 against 4.11–4.26 µs per draw; Metal API validation: nothing destroyed
   while still required; frame correct. What still reaches MoltenVK is made once at start: the
   device and its queries, its queue, 4 semaphores and 3 fences, a descriptor pool nothing uses,
-  one buffer of the guest-memory check, and 3D images viewed as 2D slices.
+  and one buffer of the guest-memory check.
+- **M4 step 3, 3D images in Metal:** the texture cache makes every 3D image viewable as 2D slices
+  (Vulkan's 2D-array-compatible flag), which Metal cannot do, so M1 left them to MoltenVK. Logged
+  how the game uses its views (the Metal frame notes a 2D view of a 3D image drawn into, sampled
+  or written, and which views MoltenVK still makes): at the test save and in the new game's
+  clinic, the only such image is one 3D R8 texture, viewed only as 3D. With the Metal frame 3D
+  images are now made in Metal too; a 2D view of one would be logged ("a 2D view of a 3D image").
+  Measured (new second): 37.0 against 37.1 FPS (median 26.6 ms both); no image or view reaches
+  MoltenVK; Metal API validation: nothing destroyed while still required; frame correct.
 - **M4 step 4, the plan: the Metal device without Vulkan.** What still needs MoltenVK is that the
   shared renderer is built from a Vulkan `Instance`: the scheduler (`Scheduler(instance)`, its
   command pools, submissions and timeline semaphore), the transfers (`Runtime(instance, ...)`),
