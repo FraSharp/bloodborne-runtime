@@ -366,6 +366,13 @@ bool BackendDevice::CanBlit(Backend::Format format) {
 
 u32 BackendDevice::SupportedSampleCounts(const Backend::ImageDesc& desc) {
     const vk::ImageCreateInfo ci = ImageCreateInfo(desc);
+    const auto key = std::tuple{u32(ci.format), u32(ci.imageType), u32(ci.usage), u32(ci.flags)};
+    {
+        std::scoped_lock lock{sample_counts_mutex};
+        if (const auto it = sample_counts.find(key); it != sample_counts.end()) {
+            return it->second;
+        }
+    }
     const vk::PhysicalDeviceImageFormatInfo2 format_info{
         .format = ci.format,
         .type = ci.imageType,
@@ -386,9 +393,12 @@ u32 BackendDevice::SupportedSampleCounts(const Backend::ImageDesc& desc) {
                       vk::to_string(format_info.flags), vk::to_string(format_info.usage));
         }
     }
-    return properties.result == vk::Result::eSuccess
-               ? static_cast<u32>(properties.value.imageFormatProperties.sampleCounts)
-               : 1u;
+    const u32 counts = properties.result == vk::Result::eSuccess
+                           ? static_cast<u32>(properties.value.imageFormatProperties.sampleCounts)
+                           : 1u;
+    std::scoped_lock lock{sample_counts_mutex};
+    sample_counts.emplace(key, counts);
+    return counts;
 }
 
 Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& desc,
@@ -436,11 +446,28 @@ Backend::ImageViewAllocation BackendDevice::CreateImageView(Backend::ImageHandle
                                                             const Backend::ImageViewDesc& desc,
                                                             std::string_view name) {
     vk::Image native_image{};
+    vk::Format image_format{};
     {
         std::scoped_lock lock{objects_mutex};
         const std::unique_ptr<ImageRecord>* entry = images.Get(image);
         ASSERT_MSG(entry, "Creating a view of a destroyed image");
         native_image = (*entry)->image.image;
+        image_format = (*entry)->image.image_ci.format;
+    }
+    // Metal cannot view a block-compressed texture as an uncompressed format (M4): each kind of
+    // such view is logged once, so it shows whether the game makes any.
+    const auto compressed = [](vk::Format f) {
+        return f >= vk::Format::eBc1RgbUnormBlock && f <= vk::Format::eAstc12x12SrgbBlock;
+    };
+    if (compressed(image_format) && !compressed(ToVk(desc.format))) {
+        static std::mutex logged_mutex;
+        static std::set<std::pair<vk::Format, vk::Format>> logged;
+        std::scoped_lock lock{logged_mutex};
+        if (logged.emplace(image_format, ToVk(desc.format)).second) {
+            std::printf("Image views: uncompressed view %s of a %s image\n",
+                        vk::to_string(ToVk(desc.format)).c_str(),
+                        vk::to_string(image_format).c_str());
+        }
     }
     vk::ImageViewUsageCreateInfo usage_ci{.usage = ToVk(desc.usage)};
     vk::ImageViewMinLodCreateInfoEXT min_lod_ci{.minLod = desc.min_lod};

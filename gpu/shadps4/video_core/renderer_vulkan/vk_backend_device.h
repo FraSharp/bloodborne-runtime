@@ -5,7 +5,9 @@
 
 #include <array>
 #include <memory>
+#include <map>
 #include <mutex>
+#include <tuple>
 #include <unordered_map>
 #include <boost/container/static_vector.hpp>
 
@@ -165,6 +167,10 @@ private:
     // CanBlit: core formats index a flat table; extension formats (large values) use the map.
     std::array<u8, 256> blit_table{}; ///< 0 unknown, 1 no, 2 yes
     std::unordered_map<u32, bool> blit_formats;
+    /// SupportedSampleCounts' answers by format, type, usage and flags: asked for every image the
+    /// texture cache makes (about 2,300 driver queries in a run before).
+    std::mutex sample_counts_mutex;
+    std::map<std::tuple<u32, u32, u32, u32>, u32> sample_counts;
     Instance instance;
     Scheduler scheduler;
     VideoCore::Backend::Capabilities capabilities;

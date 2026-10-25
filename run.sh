@@ -31,6 +31,10 @@ if [[ $(uname -s) == Darwin ]]; then
     if [[ $BB_ARCH == arm64 && -z ${BB_VK_DRIVER:-} ]]; then
         export BB_METAL_FRAME=${BB_METAL_FRAME:-1}
     fi
+    # With the Metal renderer, buffers and images are made in Metal too (M1's backend).
+    if [[ ${BB_METAL_FRAME:-0} == 1 ]]; then
+        export BB_GFX_BACKEND=${BB_GFX_BACKEND:-metal}
+    fi
     # The MoltenVK from scripts/macos/build-deps.sh, unless a Vulkan driver is chosen.
     # BB_VK_DRIVER=kosmickrisp (native arm64, macOS 26+): Mesa's Vulkan-on-Metal 4 driver from
     # scripts/macos/build-kosmickrisp.sh instead.

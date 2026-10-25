@@ -717,6 +717,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   against 4.16–4.47 µs per draw; Metal API validation: nothing destroyed while still required;
   frame correct. Left reaching MoltenVK in a run: image views (2,514) with their memory and format
   queries (about 2,290 each), buffer addresses at creation (99), and the device with its queries.
+- **M4 step 3, resources made in Metal:** with the Metal frame `run.sh` now also sets
+  `BB_GFX_BACKEND=metal` (M1's resources: buffers and images made in Metal and imported into
+  MoltenVK), and the device keeps `SupportedSampleCounts`' answers per format, type, usage and
+  flags (the texture cache asks for every image). Measured (new second; base with
+  `BB_GFX_BACKEND=vulkan`): 39.3 against 39.0 FPS, 4.12–4.35 against 4.19–4.60 µs per draw; the
+  format queries from 2,427 to 25; Metal API validation: nothing destroyed while still required;
+  frame correct. Of the images, 526 were made in Metal and 1,912 still by MoltenVK (VMA): the
+  block-compressed ones, made viewable as uncompressed formats, and 3D images viewed as 2D
+  slices, which M1 leaves to MoltenVK. Metal cannot view a compressed texture as uncompressed;
+  the device logs each kind of such view the game makes ("Image views: uncompressed view").
 
 ## Decisions
 
