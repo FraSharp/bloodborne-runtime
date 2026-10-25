@@ -6,6 +6,7 @@
 #include <algorithm>
 #include <array>
 #include <atomic>
+#include <deque>
 #include <chrono>
 #include <cstdio>
 #include <cstdlib>
@@ -86,6 +87,70 @@ std::atomic<unsigned long long> metal_submits{0}, vulkan_submits{0}; ///< Submit
 std::mutex report_mutex;
 id<MTLCommandQueue> queue;
 
+/// BB_METAL_INVENTORY=1 (docs/RENDER_ADAPTER.md, M4 step 2): every Vulkan function the dispatcher
+/// loaded is wrapped, below the layer's own hooks, to count the calls that reach the driver
+/// (MoltenVK). The list is tools/vk_inventory_list.py's, from vulkan.hpp.
+bool inventory;
+struct InventoryEntry {
+    const char* name = nullptr;
+    std::atomic<unsigned long long> calls{0};
+    unsigned long long total = 0;
+};
+std::deque<InventoryEntry> inventory_entries; ///< filled once at Install: stable addresses
+unsigned inventory_reports = 0;
+
+template <int N, typename F>
+struct Passthrough;
+template <int N, typename R, typename... A>
+struct Passthrough<N, R (*)(A...)> {
+    static inline R (*original)(A...) = nullptr;
+    static inline std::atomic<unsigned long long>* calls = nullptr;
+    static R Call(A... args) {
+        calls->fetch_add(1, std::memory_order_relaxed);
+        return original(args...);
+    }
+    static void Install(R (*&slot)(A...), const char* name) {
+        if (!slot) {
+            return;
+        }
+        auto& entry = inventory_entries.emplace_back();
+        entry.name = name;
+        calls = &entry.calls;
+        original = slot;
+        slot = &Call;
+    }
+};
+
+/// Per second since the last report; every 12th report also the totals since the start.
+void ReportInventory(double seconds) {
+    std::vector<std::pair<unsigned long long, const InventoryEntry*>> now, total;
+    for (auto& e : inventory_entries) {
+        const auto n = e.calls.exchange(0);
+        e.total += n;
+        if (n) {
+            now.emplace_back(n, &e);
+        }
+        if (e.total) {
+            total.emplace_back(e.total, &e);
+        }
+    }
+    const auto print = [](const char* what, auto& list, double scale) {
+        std::sort(list.rbegin(), list.rend());
+        std::string line;
+        for (const auto& [n, e] : list) {
+            char item[128];
+            std::snprintf(item, sizeof item, "%s%s %.0f", line.empty() ? "" : ", ", e->name + 2,
+                          double(n) / scale);
+            line += item;
+        }
+        std::printf("Metal inventory: %s (%zu functions): %s\n", what, list.size(), line.c_str());
+    };
+    print("calls reaching the driver per second", now, seconds);
+    if (++inventory_reports % 12 == 1) {
+        print("calls reaching the driver since the start", total, 1.0);
+    }
+}
+
 void Report() {
     const auto now = std::chrono::steady_clock::now();
     if (now - since < std::chrono::seconds(5)) {
@@ -111,6 +176,9 @@ void Report() {
         std::printf("Metal layer: per second: %.0f submits committed in Metal, %.0f through "
                     "MoltenVK\n",
                     metal_submits.exchange(0) / seconds, vulkan_submits.exchange(0) / seconds);
+    }
+    if (inventory) {
+        ReportInventory(seconds);
     }
     if (!trace) {
         return;
@@ -830,10 +898,20 @@ void Install(void* dispatcher_ptr) {
     present_enabled = present && present[0] == '1';
     const char* frame = std::getenv("BB_METAL_FRAME");
     frame_enabled = frame && frame[0] == '1';
-    if (!trace && !present_enabled && !frame_enabled) {
+    const char* inventory_env = std::getenv("BB_METAL_INVENTORY");
+    inventory = inventory_env && inventory_env[0] == '1';
+    if (!trace && !present_enabled && !frame_enabled && !inventory) {
         return;
     }
     auto& d = *static_cast<Dispatcher*>(dispatcher_ptr);
+    if (inventory) {
+        // Below the hooks: their `original` is then the counting wrapper.
+#define BB_INVENTORY(name) Passthrough<__COUNTER__, decltype(d.name)>::Install(d.name, #name);
+#include "video_core/renderer_metal/mtl_vk_inventory.inc"
+#undef BB_INVENTORY
+        std::printf("Metal inventory: counting the calls of %zu Vulkan functions that reach the driver\n",
+                    inventory_entries.size());
+    }
 #define BB_INSTALL(name)                                                                           \
     Hook<Id_##name, decltype(d.name)>::Install(d.name);                                            \
     hooked[Id_##name] = Hook<Id_##name, decltype(d.name)>::original                                \

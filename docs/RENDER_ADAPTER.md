@@ -11,8 +11,8 @@ committed in Metal. MoltenVK still holds the device, the queue and the resources
 ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is done:
 the upscaler is off by default, and the Metal renderer offers MetalFX only (decision 5). MetalFX
 itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native MetalFX is a
-later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, is done; next is the
-inventory of the calls still reaching MoltenVK.
+later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, and step 2, the
+inventory of the calls still reaching MoltenVK, are done; step 3 replaces them.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -663,6 +663,18 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   `renderer` defaults to `metal` and passes `BB_METAL_FRAME=0` for MoltenVK; the in-game menu's
   launcher options follow. Checked: with nothing set the game runs the Metal frame (38.9 FPS at
   the test save's place), with `BB_METAL_FRAME=0` MoltenVK (30.3 FPS).
+- **M4 step 2, the inventory:** `BB_METAL_INVENTORY=1` wraps every Vulkan function the dispatcher
+  loaded (314 on macOS; the list is `tools/vk_inventory_list.py`'s, from vulkan.hpp) below the
+  layer's hooks and reports the calls that reach the driver, per second and since the start.
+  Functions libraries look up for themselves (`vkGetDeviceProcAddr`) are not counted. With the
+  Metal frame, standing in the level at the test save's place, 37 functions reach MoltenVK in a
+  run; per second only 7: `vkGetBufferDeviceAddress` 882,223 (the Metal frame resolves a bound
+  buffer's `MTLBuffer` and offset through MoltenVK on every use), `vkGetSemaphoreCounterValue`
+  31,501 and `vkWaitSemaphores` 324 (the ticks), `vkBeginCommandBuffer` and `vkEndCommandBuffer`
+  727 each, `vkGetPhysicalDeviceMemoryProperties2` 39 (the memory report). The rest is creation:
+  image views (2,698) with their memory requirements and format queries (about 2,430 each), 429
+  descriptor set and pipeline layouts, object names (5,660), samplers, shader modules, command
+  pools and buffers, semaphores, fences, the device and its queries.
 
 ## Decisions
 
