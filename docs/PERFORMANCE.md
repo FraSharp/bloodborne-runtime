@@ -17,9 +17,9 @@ and battery.
 | The clinic at the start | FSR 3.1 Balanced (renders 1130×636) | ~44 |
 
 Character motion vectors cost about 6 FPS with FSR (36 against 42 in the clinic). The game's
-code takes about 3–5 cores through the translator, and about the same with the recompiled library
-(420% of one core against 428% in the Hunter's Dream; 340% against 327% at the test save's
-place, 2026-10-24); making it cheaper is the recompiler's milestone R3.
+code takes about 3–5 cores through the translator, and less with the recompiled library (344%
+of one core against 402% at the 1st Floor Sickroom lamp; 357% against 392% at the test save's
+place, 2026-10-25); making it cheaper still is the recompiler's milestone R3.
 
 ## Where a frame's time goes
 
