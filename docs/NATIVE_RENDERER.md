@@ -60,8 +60,9 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
   pipeline keys (`vk_pipeline_key.h`) and blend rules; no Vulkan handle is in them.
 
 **Replaced by the [render adapter](RENDER_ADAPTER.md)** (approved 2026-10-22): the renderer
-will call the project's own GPU interface, with Vulkan and Metal backends, and the interception
-layer and MoltenVK leave the macOS build. The interception route was chosen on 2026-10-20 over N4's original order (a backend-neutral command stream
+calls the project's own GPU interface, with Vulkan and Metal backends. Native Metal no longer
+loads MoltenVK; the selectable fallback remains until M4 acceptance. The interception route was
+chosen on 2026-10-20 over N4's original order (a backend-neutral command stream
 first, then Metal): adapting the Metal renderer of
 [Wooloomooloo2/bloodborne_mac_port](https://github.com/Wooloomooloo2/bloodborne_mac_port)
 reached a working Metal frame directly. N4's approved contract still describes how resources and

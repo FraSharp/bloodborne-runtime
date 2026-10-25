@@ -643,18 +643,15 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   FSR 4.1.1 and DLSS are not offered: a setting asking for one runs MetalFX
   (`ConfigureUpscalerSupport`'s `metalfx_only`; the launcher shows it as MetalFX). Checked: the
   Metal frame started with FSR 3.1 runs MetalFX, 33.7 FPS, frame correct.
-- **Later: MetalFX native to the Metal backend.** MetalFX runs through the bridge written for
-  MoltenVK (`vk_metalfx` and `shim/bbport_metalfx.mm`): the scene's colour, depth and motion are
-  copied into buffers Metal can read, MetalFX runs on its own Metal queue, and a CPU thread waits
-  for the copies and then for MetalFX before the copy back is submitted. On the Metal frame the
-  images are Metal textures already: a `renderer_metal` MetalFX encoded in the frame's command
-  buffer, reading and writing them directly, removes the copies, the CPU waits and the second
-  queue. To be measured against native, at 1080p and above it.
-- **M4, the plan:** (1) Metal by default on Apple Silicon, MoltenVK selectable; (2) an
+- **MetalFX native to the Metal backend:** the earlier export bridge copied colour, depth and
+  motion through buffers, used a second Metal queue and waited on the CPU. M4 step 4.3 now
+  encodes MetalFX on the native frame's command buffer using Metal-owned textures. Its measured
+  comparison is above.
+- **M4, the earlier plan:** (1) Metal by default on Apple Silicon, MoltenVK selectable; (2) an
   inventory of every call that still reaches MoltenVK with the Metal frame, at start and per
   frame; (3) those replaced area by area (device and queue, memory and resources, descriptors,
   semaphores and fences, command buffers, capabilities), each measured; (4) the macOS build
-  without MoltenVK and `mtl_vk_layer`, the Vulkan backend still built for Linux.
+  without loading MoltenVK on the native path, with the fallback retained until acceptance.
 - **M4 step 1, Metal by default:** `run.sh` sets `BB_METAL_FRAME=1` on Apple Silicon with the
   bundled driver unless it is set (Rosetta and `BB_VK_DRIVER` stay on Vulkan); the launcher's
   `renderer` defaults to `metal` and passes `BB_METAL_FRAME=0` for MoltenVK; the in-game menu's
