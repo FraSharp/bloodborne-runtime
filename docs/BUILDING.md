@@ -36,6 +36,11 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
   `scripts/macos/build-deps.sh`. Its libraries
   record absolute paths: a moved or copied `deps/` must be rebuilt (remove `deps/macos-arm64`,
   then `BB_ARCH=arm64 bash scripts/macos/build-deps.sh`).
+- On macOS `build.sh` applies `gpu/patches/fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`
+  to the FSR-Vulkan submodule once. It links that library to Vulkan headers, while the native
+  Metal path loads no Vulkan library. The patch is checked before application, so a repeated
+  build leaves the submodule pointer unchanged. Linux uses the existing Vulkan build path and
+  does not apply this macOS patch.
 - From a checkout, saves and caches go to `user/` and settings to `bbport.ini`.
 - The macOS app (launcher, DMG, releases) is
   [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac), which builds this
@@ -53,8 +58,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
 | `BB_FSR411_DIR` | AMD's FSR 4.1.1 files: the Vulkan path's set, or for FSR 4.1.1 on Metal `initializers.bin` and `initializers-ultraperformance.bin` (`tools/fsr4_metal_initializers.sh <the player's amd_fidelityfx_upscaler_dx12.dll>`) |
 | `BB_FSR4_METAL_SYNC=1`, `BB_FSR4_METAL_DIR` | FSR 4.1.1 on Metal with CPU waits instead of shared events; its built files (default `out/fsr4_metal`) |
 | `BB_FPS=uncap\|90\|60\|30`, `BB_FPS_LIMIT` | Frame-rate mode and limit |
-| `BB_METAL_FRAME=1`, `=0` | The Metal renderer (run.sh's default on Apple Silicon), or MoltenVK |
-| `BB_GFX_BACKEND=metal`, `=vulkan` | The render adapter's Metal backend (macOS; run.sh's default with the Metal renderer): buffers and images made in Metal and imported into MoltenVK |
+| `BB_METAL_FRAME=1`, `=0` | Native Metal (default on Apple Silicon, no Vulkan loader mapped) or the MoltenVK fallback |
+| `BB_GFX_BACKEND=metal`, `=vulkan` | The render adapter backend, selected by `run.sh` with the renderer |
+| `BB_VULKAN_LOADER` | Path to the optional Vulkan loader on the MoltenVK path; `run.sh` sets it from `deps/` or the app bundle |
 | `BB_RECOMP_LIB=PATH` | Load the recompiled library |
 | `BB_LANGUAGE`, `BB_UI_LANGUAGE` | The game's language (PS4 code), the menu's (`en`, `pt-BR`, ...) |
 | `BB_MODS_DIR`, `BB_MODS_ENABLED=0` | Mods folder, or no mods |

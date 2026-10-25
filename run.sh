@@ -30,10 +30,13 @@ if [[ $(uname -s) == Darwin ]]; then
     # BB_METAL_FRAME=0 draws through MoltenVK instead, as Rosetta and other Vulkan drivers do.
     if [[ $BB_ARCH == arm64 && -z ${BB_VK_DRIVER:-} ]]; then
         export BB_METAL_FRAME=${BB_METAL_FRAME:-1}
+    else
+        export BB_METAL_FRAME=0 # Rosetta and alternate Vulkan drivers have no Metal adapter.
     fi
-    # With the Metal renderer, buffers and images are made in Metal too (M1's backend).
-    if [[ ${BB_METAL_FRAME:-0} == 1 ]]; then
-        export BB_GFX_BACKEND=${BB_GFX_BACKEND:-metal}
+    if [[ $BB_METAL_FRAME == 1 ]]; then
+        export BB_METAL_NATIVE_BOOT=1 BB_GFX_BACKEND=metal
+    else
+        export BB_METAL_NATIVE_BOOT=0 BB_GFX_BACKEND=vulkan
     fi
     # The MoltenVK from scripts/macos/build-deps.sh, unless a Vulkan driver is chosen.
     # BB_VK_DRIVER=kosmickrisp (native arm64, macOS 26+): Mesa's Vulkan-on-Metal 4 driver from
@@ -47,8 +50,15 @@ if [[ $(uname -s) == Darwin ]]; then
         icd=$(ls "$PWD"/deps/macos-arm64-kk/share/vulkan/icd.d/kosmickrisp*.json 2>/dev/null | head -1)
         [[ -n $icd ]] || { echo 'KosmicKrisp not built (scripts/macos/build-kosmickrisp.sh)' >&2; exit 1; }
     fi
-    if [[ -z ${VK_DRIVER_FILES:-} && -f $icd ]]; then export VK_DRIVER_FILES=$icd; fi
-    export MVK_CONFIG_LOG_LEVEL=${MVK_CONFIG_LOG_LEVEL:-1} # errors only
+    if [[ $BB_METAL_FRAME == 0 ]]; then
+        if [[ -z ${VK_DRIVER_FILES:-} && -f $icd ]]; then export VK_DRIVER_FILES=$icd; fi
+        export MVK_CONFIG_LOG_LEVEL=${MVK_CONFIG_LOG_LEVEL:-1} # errors only
+        if [[ -n ${BB_PREBUILT:-} && -f $PWD/../../Frameworks/libvulkan.1.dylib ]]; then
+            export BB_VULKAN_LOADER=${BB_VULKAN_LOADER:-$PWD/../../Frameworks/libvulkan.1.dylib}
+        else
+            export BB_VULKAN_LOADER=${BB_VULKAN_LOADER:-$PWD/deps/macos-$BB_ARCH/lib/libvulkan.1.dylib}
+        fi
+    fi
     # Rosetta runs AVX/AVX2/F16C/FMA/BMI code but hides them from CPUID unless asked: the game
     # then sees the features of the PS4's CPU.
     export ROSETTA_ADVERTISE_AVX=${ROSETTA_ADVERTISE_AVX:-1}

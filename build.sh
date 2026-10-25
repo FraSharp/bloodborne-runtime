@@ -43,16 +43,19 @@ if [[ -z ${CC:-} ]]; then
     fi
 fi
 if [[ -z ${CC:-} ]]; then echo 'Install GCC/Clang or set CC.' >&2; exit 1; fi
-# Dependencies come from pkg-config (Vulkan loader/headers, SDL3). On NixOS the
+# Dependencies come from pkg-config (SDL3, and Vulkan on Linux). On NixOS the
 # environment is provided by shell.nix; re-enter it automatically if needed.
-if ! { command -v pkg-config >/dev/null && pkg-config --exists vulkan sdl3 && command -v cmake >/dev/null && command -v ninja >/dev/null; }; then
+pkg_dependencies=(vulkan sdl3)
+if (( macos )); then pkg_dependencies=(sdl3); fi
+if ! { command -v pkg-config >/dev/null && pkg-config --exists "${pkg_dependencies[@]}" && command -v cmake >/dev/null && command -v ninja >/dev/null; }; then
     if [[ -z ${BB_IN_NIX_SHELL:-} ]] && command -v nix-shell >/dev/null; then
         exec env BB_IN_NIX_SHELL=1 nix-shell shell.nix --run "bash build.sh $*"
     fi
-    echo 'Need pkg-config with vulkan and sdl3, cmake and ninja (see shell.nix).' >&2; exit 1
+    echo 'Need pkg-config with the required graphics dependencies, cmake and ninja (see shell.nix).' >&2; exit 1
 fi
-read -r -a includes <<< "$(pkg-config --cflags vulkan sdl3)"
-read -r -a libraries <<< "$(pkg-config --libs vulkan sdl3)"
+read -r -a includes <<< "$(pkg-config --cflags "${pkg_dependencies[@]}")"
+read -r -a libraries <<< "$(pkg-config --libs "${pkg_dependencies[@]}")"
+if (( macos )); then includes+=(-I"$deps/include"); fi
 # GPU library (shadPS4 video core + drivers), built by CMake into out/gpu/libbbgpu.so.
 # BB_PGO: generate (instrumented build that writes pgo/ while the game runs), use, off.
 # Default: use the profile in pgo/ when there is one. BB_LTO=OFF disables link-time optimization.
@@ -84,6 +87,12 @@ if (( ! macos )); then
         git -C gpu/third_party/fsr-vulkan checkout -- .
     fi
     fsr_patches_apply
+else
+    for patch in gpu/patches/fsr-vulkan-macos/*.patch; do
+        if ! git -C gpu/third_party/fsr-vulkan apply --unidiff-zero --reverse --check "$PWD/$patch" 2>/dev/null; then
+            git -C gpu/third_party/fsr-vulkan apply --unidiff-zero "$PWD/$patch"
+        fi
+    done
 fi
 cmake_platform=()
 gpudir=out/gpu
@@ -143,8 +152,11 @@ fi
 cpu=()
 if (( macos )); then
     rm -rf out/cpu && mkdir -p out/cpu
+    # recomp's AFP helper is arm64-only and unused under Rosetta. Keep the other warnings fatal.
+    cpu_warnings=()
+    if [[ $macarch == x86_64 ]]; then cpu_warnings=(-Wno-error=unused-function); fi
     for source in recomp/src/cpu/*.c recomp/src/cpu/hostcall.S; do
-        "$CC" "${arch[@]}" -std=gnu11 -O2 -g -Wall -Wextra -Werror -Wno-unused-parameter -I"$deps/include" \
+        "$CC" "${arch[@]}" -std=gnu11 -O2 -g -Wall -Wextra -Werror "${cpu_warnings[@]}" -Wno-unused-parameter -I"$deps/include" \
             -c "$source" -o "out/cpu/$(basename "$source").o"
     done
     rm -f out/libbbcpu.a && ar rcs out/libbbcpu.a out/cpu/*.o
@@ -154,6 +166,15 @@ fi
 echo "Built $PWD/out/bb-probe"
 # GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 "$CC" "${arch[@]}" -std=c11 -O2 -Wall -Wextra -Werror "${includes[@]}" tools/gpu_capabilities.c "${libraries[@]}" -o out/bb-gpu-capabilities
+if (( macos )); then
+    if nm -u "$gpudir/libbbgpu.dylib" | grep -Eq '_vk[A-Z]'; then
+        echo 'macOS GPU library still has unresolved Vulkan C entry points' >&2; exit 1
+    fi
+    if otool -L out/bb-probe "$gpudir/libbbgpu.dylib" out/bb-gpu-capabilities |
+        grep -Eiq 'lib(vulkan|MoltenVK)'; then
+        echo 'macOS build still links a Vulkan loader or MoltenVK' >&2; exit 1
+    fi
+fi
 if [[ ${1:-} == --test ]]; then
     ninja -C "$gpudir" image-upload-hash-test slot-vector-test handle-table-test fixed-quad-tessellation-test avplayer-clock-test avplayer-queue-test trophy-queue-test >/dev/null
     "$gpudir/image-upload-hash-test"

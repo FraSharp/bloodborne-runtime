@@ -12,8 +12,8 @@ It is the graphics half of the native port; the CPU half is the
 
 1. **Multiplatform.** Nothing works on Metal only. Planning a frame, tracking resources and
    converting shaders happen in the shared core; a backend only speaks its API.
-2. **Always playable.** Every step is behind a switch, with today's renderer (Vulkan, through
-   MoltenVK on macOS) as the default and fallback until the new path draws everything.
+2. **Always playable.** Native Metal is the default on Apple Silicon; the MoltenVK renderer stays
+   selectable until M4 is accepted.
 3. **Measured.** Each step is compared against the path it replaces: FPS, frame-time p90, CPU,
    and GPU time from Metal System Traces.
 4. **Ahead of time where possible.** Shaders and texture layouts converted once, on the player's
@@ -30,7 +30,7 @@ Each bar has 20 blocks, one per 5% of the step's accepted scope.
 | N2 · shaders ahead of time | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: inventory the shader variants |
 | N3 · textures as objects | 0% `░░░░░░░░░░░░░░░░░░░░` | Next: trace texture creation |
 | N4 · render adapter | 100% `████████████████████` | [Specification](RENDER_ADAPTER.md) approved; A0–A6 done: the renderer runs on the adapter with the Vulkan backend; the Metal backend continues as N5 (M1–M4) |
-| N5 · Metal backend | 50% `██████████░░░░░░░░░░` | The frame draws through Metal behind an option; resources are made in Metal (`BB_GFX_BACKEND=metal`, M1); M2 step 1 done (all shared recording through the adapter); next: a Metal command stream |
+| N5 · Metal backend | 95% `███████████████████░` | M1–M4 are implemented, including loader-free native startup; M1/M2 capability comparisons and the maintainer's release-candidate play session remain for acceptance |
 | N6 · engine render boundary | 0% `░░░░░░░░░░░░░░░░░░░░` | Needs the recompiler's names for the engine (R4) |
 
 ## What was measured (N0, N1)
@@ -88,11 +88,10 @@ renderer; both source renderers are Metal only.
   tessellator; geometry shaders as kernels; pipeline states cached in a binary archive between
   sessions (`PipelineFactory`).
 - **The frame:** render passes, draws, dispatches, copies, clears and blits encoded in Metal,
-  with push descriptors bound to the shaders' slots, on MoltenVK's queue. Images, buffers and
-  memory are still MoltenVK's, reached through `VK_EXT_metal_objects`.
-- **Switches:** `BB_METAL_FRAME=1` (the launcher's Advanced → Renderer → Metal);
-  `BB_METAL_PRESENT=1` (only the present pass); `BB_METAL_SHADOW=1` (also build every pipeline
-  in Metal and count failures, drawing nothing with them); `BB_METAL_TRACE=1` (command counts).
+  with push descriptors bound to the shaders' slots, on Metal's own queue. Its images, buffers
+  and synchronization are native Metal objects.
+- **Switches:** `BB_METAL_FRAME=1` (the native Metal default), `BB_METAL_FRAME=0` (MoltenVK
+  fallback), `BB_METAL_TRACE=1` (command counts).
 
 | Measured (Hunter's Dream, 1080p, FSR Balanced, M3 Pro) | FPS | p90 |
 |---|---|---|

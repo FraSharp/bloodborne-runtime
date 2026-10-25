@@ -2,26 +2,20 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
-backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
-M2 is done (accepted by the maintainer on 2026-10-25): with the Metal frame every command the
-renderer records is encoded in Metal, shaders and pipelines are Metal's only, the window is
-presented and drawn through Metal with the upscaler's own passes, and every submission is
-committed in Metal. MoltenVK still holds the device, the queue and the resources, begins and
-ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is done:
-the upscaler is off by default, and the Metal renderer offers MetalFX only (decision 5). MetalFX
-itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native MetalFX is a
-later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, step 2, the inventory
-of the calls still reaching MoltenVK, and step 3, replacing them, are done: nothing per frame
-and no resource, view, pipeline, shader or command buffer reaches MoltenVK. Step 4, the Metal
-device without MoltenVK, is next: the Metal backend answers the remaining entry points
-(decision 6).
+**State:** approved on 2026-10-22. A0–A6 and M1–M3 are done. M4 steps 1–4 are implemented,
+but M4 is **not accepted**: capability comparisons on M1 and M2 Macs and the maintainer's
+release-candidate play session remain. Native Metal owns its device, queue, resources,
+synchronization and MetalFX work without loading Vulkan or MoltenVK. The app still bundles a
+MoltenVK fallback, selected with `BB_METAL_FRAME=0`; only that path loads the Vulkan loader and
+ICD. The shared renderer still uses Vulkan types and dispatch signatures internally. Linux keeps
+its Vulkan backend. A copied-save M3 Pro Metal run with an invalid Vulkan ICD path reached 492
+gameplay frames without a fault (37.8 mean FPS, 26.2 ms median, 28.1 ms p90).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
 passes, pipelines and commands; a backend per graphics API carries them out. Vulkan (Linux,
-Windows) and Metal (macOS) are the two backends. MoltenVK and the Metal interception layer
-(`renderer_metal/mtl_vk_layer`) go away on macOS.
+Windows) and Metal (macOS) are the two backends. The MoltenVK path stays selectable on macOS
+until M4 acceptance; the native Metal path does not load it.
 
 ## Why, and where it leads
 
@@ -161,7 +155,7 @@ Metal backend draws everything; then the interception layer is removed.
 | M1 ✓ | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 ✓ | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
 | M3 ✓ | The upscaler off by default; MetalFX the Metal backend's only upscaler (decision 5). MetalFX without copies: a later plan (below) | Upscalers measured against native |
-| M4 | Metal by default on macOS; MoltenVK and `mtl_vk_layer` removed from the macOS build | Release-candidate play tests pass |
+| M4 | Metal by default on Apple Silicon without loading Vulkan; MoltenVK remains selectable until acceptance | M1/M2 capability comparisons and release-candidate play tests pass |
 
 Wooloomooloo2's fork reached its Metal-only renderer in a similar order (device and queue,
 command recording and caches, pipelines and rasterizer, presenter, upscalers and overlay, then
@@ -778,30 +772,46 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   images are now made in Metal too; a 2D view of one would be logged ("a 2D view of a 3D image").
   Measured (new second): 37.0 against 37.1 FPS (median 26.6 ms both); no image or view reaches
   MoltenVK; Metal API validation: nothing destroyed while still required; frame correct.
-- **M4 step 4, the plan: the Metal device without Vulkan.** What still needs MoltenVK is that the
-  shared renderer is built from a Vulkan `Instance`: the scheduler (`Scheduler(instance)`, its
-  command pools, submissions and timeline semaphore), the transfers (`Runtime(instance, ...)`),
-  the rasterizer and the swapchain take it, and the presenter holds it. Their queries are few:
-  most of the 88 `Instance` queries in the tree are in the Vulkan backend's own files (the device,
-  upscalers, pipelines, swapchain, resources), which stay Vulkan's. The steps, each measured:
-  (a) the scheduler's Vulkan parts (command pools and buffers, submission, the tick semaphore)
-  behind the device's command stream, so the scheduler keeps only ordering, ticks and pending
-  operations; (b) the transfers, rasterizer and presenter built from the device alone; (c) a
-  native Metal `Device` (`renderer_metal/`) from what the layer and the Metal frame do today:
-  resources, views, samplers, shaders and pipelines, the Metal recorder, transfers, ticks as
-  shared events, capabilities from the MTLDevice, the Metal swapchain; (d) the macOS build without
-  Vulkan, MoltenVK and `mtl_vk_layer`, the Vulkan backend still built for Linux and Windows.
-- **M4 step 4, the steps under decision 6:** (4.1) a comparison mode: at start the Metal backend's
-  own answers to the startup queries (the feature and property chains `Instance::CreateDevice`
-  reads, about 80 feature fields and the limits it uses; the extensions; format properties for
-  every guest surface and depth format; memory and queue families; image format queries) are
-  computed next to MoltenVK's and every difference is logged, MoltenVK's still in use; (4.2) the
-  Metal answers in use once the comparison is clean here and on other Apple Silicon Macs (M1,
-  M2: testers); (4.3) instance, device, queue, semaphores (shared events) and fences made by the
-  Metal backend, MoltenVK not loaded; (4.4) the macOS build and the app without MoltenVK and the
-  Vulkan loader. MoltenVK comes into deps as a binary release: its derivation of these answers
-  from the MTLDevice (KhronosGroup/MoltenVK, Apache-2.0) is read for reference and credited where
-  code is taken.
+- **M4 step 4, native startup:** the macOS build retains Vulkan headers for shared types, but
+  links no Vulkan loader or MoltenVK. The Metal adapter supplies the startup instance, device,
+  queue and entry points, owns synchronization and resources, and submits to its own Metal queue.
+  MetalFX encodes on the frame's command buffer using the adapter's textures; its depth is
+  converted to the pixel format MetalFX accepts. A C entry-point bridge resolves optional
+  Vulkan upscaler symbols through the adapter, so dyld does not require the Vulkan loader even
+  when those libraries remain linked. The macOS app bundles the loader and MoltenVK solely for
+  the selectable fallback; `run.sh` gives their paths only to that path.
+  The tested build ran with `VK_DRIVER_FILES` pointing to a nonexistent manifest. The copied-save
+  M3 Pro run reached gameplay without faults (492 frames, 37.8 mean FPS, 26.2 ms median and
+  28.1 ms p90). The MoltenVK fallback reached the level and produced a correct game-frame grab
+  (226 frames, 28.2 mean FPS); `vmmap` showed both libraries there and neither in the native
+  Metal run. The fallback remains until M4 acceptance.
+- **M4 step 4.3, diagnostic resources:** the present dump and temporal-upscaler readbacks use
+  adapter buffers; the optional Vulkan readback queue and GPU breadcrumbs are skipped on native
+  Metal. Eight game-frame grabs during 1,816 gameplay frames had no frame over 150 ms (127.8 ms
+  maximum while loading). A single reported 1.8-second pause could not be reproduced in that
+  session; the readback path remains under observation.
+- **M4 step 4.3, MetalFX:** the temporal scaler encodes on the native frame command buffer and
+  takes native textures. Depth/stencil is converted to a MetalFX-compatible depth texture.
+  A copied-save comparison measured 34.5 mean FPS against 30.8 with the exported-texture bridge
+  in one pair; scene drift limits precision. A validated MetalFX Balanced run reached gameplay,
+  had a correct frame grab and no resource-destruction warnings.
+- **M4 step 4.3, synchronization:** semaphores use shared events, fences use native completion,
+  and the Metal queue owns submissions. The native path creates no VMA allocator. A copied-save
+  synchronization run measured 35.7 mean FPS over 643 frames; the no-VMA run measured 35.8 over
+  645 frames, both without faults.
+- **M4 step 4.4, build and fallback:** macOS links Vulkan headers but no loader library. An
+  explicit C entry-point bridge lets optional Vulkan upscalers resolve through the native adapter
+  on Metal or through the loader opened at run time for MoltenVK. The app bundles the loader,
+  MoltenVK and its ICD for the fallback only. The FSR-Vulkan submodule's CMake patch applies once
+  without changing its pinned commit; Linux does not use the macOS patch. A base-first copied-save
+  A/B pair (native 1080p, upscaler off) measured 34.4 against 33.2 FPS on main, median 28.2 ms
+  both, p90 32.1 against 35.4 ms, and GPU-thread median 4.85 against 4.79 us/draw (last six
+  reports). M1/M2 capability comparisons and the maintainer's release-candidate play session
+  remain acceptance gates.
+  A reversed A/B pair measured 36.9 FPS on the new build against 36.8 on main, median
+  26.6 against 26.8 ms, p90 28.9 ms both, and GPU-thread median 4.17 against 4.13 µs/draw.
+  The Rosetta build reaches device initialization but faults before a frame at the same guest
+  offset and thread as an isolated main build on this Mac; the x86_64 fallback remains available.
 - **M4 step 4.1, the comparison:** `renderer_metal/mtl_vk_caps.mm` answers the start-up queries
   from a profile (`mtl_vk_caps_profile.inc`: MoltenVK's answers on an Apple M3 Pro, generated by
   `tools/vk_caps_profile.py` from a comparison log; credited) and the MTLDevice for what depends on
@@ -842,6 +852,9 @@ Taken by the maintainer on 2026-10-22:
 Taken by the maintainer on 2026-10-24:
 
 4. *(Replaced by 5 on 2026-10-25.)* FSR 3.1 on the Metal backend: ported, not dropped.
+
+The decisions below record the earlier plan. The M4 fallback decision above supersedes the
+planned removal of MoltenVK from macOS.
 
 Taken by the maintainer on 2026-10-25:
 

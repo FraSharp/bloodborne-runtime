@@ -40,7 +40,13 @@ elseif (BB_PGO STREQUAL "use")
                         -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
 endif()
 
-find_package(Vulkan REQUIRED)
+if (APPLE)
+    find_package(VulkanHeaders CONFIG REQUIRED)
+    add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
+    target_link_libraries(Vulkan::Vulkan INTERFACE Vulkan::Headers)
+else()
+    find_package(Vulkan REQUIRED)
+endif()
 find_package(fmt REQUIRED)
 find_package(Boost REQUIRED)
 find_package(magic_enum REQUIRED)
@@ -184,6 +190,7 @@ if (CMAKE_OSX_ARCHITECTURES STREQUAL "arm64" OR CMAKE_SYSTEM_PROCESSOR MATCHES "
 endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
+    target_sources(bbgpu PRIVATE shadps4/video_core/renderer_metal/mtl_vk_c_bridge.cpp)
     target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
     set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")

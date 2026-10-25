@@ -100,8 +100,9 @@ runs is excluded from the recompiled library.
 
 The renderer (`gpu/shadps4/`) is derived from [shadPS4](https://github.com/shadps4-emu/shadPS4)
 and extended by bbport. It reads the PM4 packets the game writes into its command buffers,
-translates the GCN shaders to SPIR-V, and draws with Vulkan. On macOS,
-[MoltenVK](https://github.com/KhronosGroup/MoltenVK) runs that Vulkan on Metal.
+translates the GCN shaders to SPIR-V. On macOS the native Metal adapter converts them to MSL
+and draws directly on Metal. The selectable fallback uses
+[MoltenVK](https://github.com/KhronosGroup/MoltenVK), loaded only for that run; Linux uses Vulkan.
 
 **The draw pipeline.** Draws are prepared in two stages: stage A reads packets and resolves the
 draw's resources, partly on preparation workers (`BB_PREP_WORKERS`); stage B, the GPU thread,
@@ -109,23 +110,17 @@ records them. `BB_DRAW_PIPE=0` runs both in one thread. Most of bbport's speed-u
 off at run time for bisection: `BB_TOGGLE_FILE` names a file holding a bit mask (re-read every
 250 ms).
 
-**Memory on the GPU.** The game's memory pool is imported as Vulkan buffers, so the GPU reads the
-game's data where it is. MoltenVK draws wrongly from offsets past 4 GiB in one buffer, so the pool
-is imported in overlapping windows (a new one every 3 GiB, each 3.5 GiB long) and every binding
-uses a window where its offset is below 4 GiB (`BB_POOL_SPLIT=0`: one import). GPU objects stay
+**Memory on the GPU.** The game's memory pool is imported as GPU buffers, so the GPU reads the
+game's data where it is. The MoltenVK fallback needs overlapping windows because it draws wrongly
+from offsets past 4 GiB in one buffer. Native Metal makes its buffers directly. GPU objects stay
 in a Metal residency set (`gpu/shim/bbport_metal_residency.*`); removed ones are kept until the
 GPU has finished every submission that could use them.
 
-**Resolution and upscaling.** The output has an aspect ratio (16:9 by default; 4:3, 16:10, 21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`, `output_res`). The game renders at 1920×1080 internally. With an upscaler preset,
-a patch at start makes the whole game render smaller (for example 1130×636 for Balanced at 1080p)
-and AMD FSR 3.1 reconstructs the output resolution; the game's UI is drawn at the output size.
-On macOS, MetalFX or FSR 4.1.1 on Metal (`gpu/fsr4_metal/`, from fsr4-native-macos) can do it
-instead. FSR 4.1.1 runs on MoltenVK's own textures in a Metal queue of its own, ordered against
-the Vulkan work by shared events; its kernels and model layouts are built with the runtime
-(`gpu/fsr4_metal/build_assets.py`), and AMD's initializers stay in the player's folder
-(`BB_FSR411_DIR`; `tools/fsr4_metal_initializers.sh` takes them from the player's own AMD DLL):
-the menu offers it only when both are there. On an M3 Pro it costs 4.8 ms of GPU time a frame at
-1080p output (Balanced), about 13% of the frame rate against FSR 3.1.
+**Resolution and upscaling.** The output has an aspect ratio (16:9 by default; 4:3, 16:10,
+21:9, 32:9 or Auto, the monitor's) and a size from that ratio's list (`aspect_ratio`,
+`output_res`). The game renders at 1920×1080 internally by default. A preset can make the scene
+render smaller while the game's UI stays at output size. Native Metal uses MetalFX on the frame's
+command buffer. The MoltenVK fallback retains its Vulkan FSR options and MetalFX bridge.
 The other route, live resolution, keeps the game at 1920×1080 and scales the renderer's targets
 while it runs (`live_resolution` in the settings).
 
@@ -133,13 +128,12 @@ while it runs (`live_resolution` in the settings).
 moving characters, so a variant of their vertex shaders writes them, which makes FSR much sharper
 on characters for a few frames per second.
 
-**The Metal renderer** (the default on Apple Silicon since M4; the launcher's Advanced → Renderer;
-`BB_METAL_FRAME=1`, and `BB_METAL_FRAME=0` for MoltenVK): a
-layer under vulkan.hpp's dispatcher (`gpu/shadps4/video_core/renderer_metal/`) encodes the
-command buffers itself in Metal instead of passing them to MoltenVK. The renderer above it is
-unchanged, so Linux keeps real Vulkan. Pipelines are converted from SPIR-V to MSL with
-SPIRV-Cross. Resources are still created by MoltenVK. Plan and progress:
-[Native renderer](NATIVE_RENDERER.md).
+**The Metal renderer** is the default on Apple Silicon (`BB_METAL_FRAME=1`). It owns the
+device, queue, resources, synchronization, command buffers, pipelines and present; no Vulkan
+loader or MoltenVK library is mapped. Its adapter still answers Vulkan-typed entry points from
+the shared renderer. `BB_METAL_FRAME=0` selects the MoltenVK fallback, which loads the Vulkan
+loader and ICD at run time. The launcher exposes both choices until M4 acceptance. Linux keeps
+its Vulkan backend. See [Render adapter](RENDER_ADAPTER.md).
 
 ## Settings, the menu and the launcher
 

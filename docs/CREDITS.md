@@ -93,7 +93,9 @@ Changes taken from other ports of bbport, with thanks:
 - [SDL3](https://www.libsdl.org/) (zlib)
 - [FFmpeg](https://ffmpeg.org/) (LGPL)
 - [Mesa](https://www.mesa3d.org/) KosmicKrisp (MIT, optional)
-- [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT)
+- [FSR-Vulkan](https://github.com/FireBurn/FSR-Vulkan) by FireBurn and the AMD FidelityFX SDK (MIT).
+  The macOS build applies a local CMake patch in `gpu/patches/fsr-vulkan-macos/` so this library
+  uses Vulkan headers without linking the loader. The upstream submodule commit is unchanged.
 - [fsr4-native-macos](https://github.com/UzenUPoZiTiV4ik/fsr4-native-macos) by PoZiTiV4ik (UzenUPoZiTiV4ik) (MIT), native Metal backend for FSR 4.1.1
 - [LibAtrac9](https://github.com/Thealexbarney/LibAtrac9) (MIT)
 - [Dear ImGui](https://github.com/ocornut/imgui) (MIT)
