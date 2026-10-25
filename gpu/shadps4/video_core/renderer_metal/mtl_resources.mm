@@ -15,6 +15,7 @@
 #include "common/assert.h"
 #include "video_core/renderer_backend/device.h"
 #include "video_core/renderer_metal/vk_to_mtl.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
 #include "video_core/renderer_vulkan/vk_common.h"
 #include <vulkan/vulkan_metal.h>
 
@@ -34,6 +35,15 @@ void Init(void* device) {
     if (!Enabled() || mtl_device) {
         return;
     }
+#if BB_METAL_BACKEND
+    if (MetalLayer::NativeBoot()) {
+        mtl_device = (__bridge id<MTLDevice>)MetalLayer::MtlDevice();
+        ASSERT_MSG(mtl_device, "Metal backend has no MTLDevice");
+        std::printf("Render adapter: buffers made on the native Metal device %s\n",
+                    mtl_device.name.UTF8String);
+        return;
+    }
+#endif
     const VkDevice vk_device = static_cast<VkDevice>(device);
     const auto export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
         VULKAN_HPP_DEFAULT_DISPATCHER.vkGetDeviceProcAddr(vk_device, "vkExportMetalObjectsEXT"));

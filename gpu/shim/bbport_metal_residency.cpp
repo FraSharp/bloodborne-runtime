@@ -12,6 +12,9 @@
 #include <objc/runtime.h>
 #include <vulkan/vulkan_metal.h>
 #include "video_core/renderer_vulkan/vk_instance.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #endif
 
 namespace BbMetalResidency {
@@ -108,30 +111,35 @@ void Init(const Vulkan::Instance& instance) {
     auto& s = Get();
     std::scoped_lock lock{s.mutex};
     const char* env = std::getenv("BB_RESIDENCY_SET");
-    if ((env && env[0] == '0') || !instance.IsMetalObjectsSupported() || s.set) {
+    const bool native = MetalLayer::NativeBoot();
+    if ((env && env[0] == '0') || (!native && !instance.IsMetalObjectsSupported()) || s.set) {
         return;
     }
     s.device = instance.GetDevice();
-    s.export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
-        instance.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
-    if (!s.export_objects) {
-        return;
+    id device = nullptr, queue = nullptr;
+    if (native) {
+        device = static_cast<id>(MetalLayer::MtlDevice());
+        queue = static_cast<id>(MetalLayer::MtlQueue());
+    } else {
+        s.export_objects = reinterpret_cast<PFN_vkExportMetalObjectsEXT>(
+            instance.GetDevice().getProcAddr("vkExportMetalObjectsEXT"));
+        if (!s.export_objects) return;
+        VkExportMetalDeviceInfoEXT device_info{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
+        };
+        VkExportMetalCommandQueueInfoEXT queue_info{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_COMMAND_QUEUE_INFO_EXT,
+            .pNext = &device_info,
+            .queue = instance.GetGraphicsQueue(),
+        };
+        VkExportMetalObjectsInfoEXT objects{
+            .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
+            .pNext = &queue_info,
+        };
+        s.export_objects(s.device, &objects);
+        device = static_cast<id>(device_info.mtlDevice);
+        queue = static_cast<id>(queue_info.mtlCommandQueue);
     }
-    VkExportMetalDeviceInfoEXT device_info{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_DEVICE_INFO_EXT,
-    };
-    VkExportMetalCommandQueueInfoEXT queue_info{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_COMMAND_QUEUE_INFO_EXT,
-        .pNext = &device_info,
-        .queue = instance.GetGraphicsQueue(),
-    };
-    VkExportMetalObjectsInfoEXT objects{
-        .sType = VK_STRUCTURE_TYPE_EXPORT_METAL_OBJECTS_INFO_EXT,
-        .pNext = &queue_info,
-    };
-    s.export_objects(s.device, &objects);
-    const id device = static_cast<id>(device_info.mtlDevice);
-    const id queue = static_cast<id>(queue_info.mtlCommandQueue);
     const SEL new_set = sel_registerName("newResidencySetWithDescriptor:error:");
     if (!device || !queue || !class_respondsToSelector(object_getClass(device), new_set)) {
         std::printf("GPU: no Metal residency sets (macOS 15 or newer needed)\n");
