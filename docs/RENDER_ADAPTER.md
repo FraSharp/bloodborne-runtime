@@ -4,14 +4,12 @@
 
 **State:** approved on 2026-10-22. A0 to A6 are done (the renderer on the adapter with the Vulkan
 backend), and M1: with `BB_GFX_BACKEND=metal` buffers and images are made in Metal.
-M2 is in progress: step 1, the command stream, is done (everything both backends run records
-through the adapter); in step 2, the Metal recorder encodes every command the shared code
-records into the Metal frame directly. Step 3 is done: with the Metal frame, shaders and
-pipelines are Metal's only. In step 4 the window is presented through Metal, the present is
-drawn in Metal, and the upscaler's own passes are encoded in Metal. The stream's skeleton is
-done: every submission is committed in Metal; command buffers are still begun and ended in
-MoltenVK (empty: it never runs them). Step 5, the acceptance: the automated runs passed (below);
-a play session on a copied save by the maintainer is what remains before M2 is closed.
+M2 is done (accepted by the maintainer on 2026-10-25): with the Metal frame every command the
+renderer records is encoded in Metal, shaders and pipelines are Metal's only, the window is
+presented and drawn through Metal with the upscaler's own passes, and every submission is
+committed in Metal. MoltenVK still holds the device, the queue and the resources, begins and
+ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is next:
+MetalFX without copies and FSR 3.1 ported to Metal (decision 4).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -155,8 +153,8 @@ Metal backend draws everything; then the interception layer is removed.
 | A5 ✓ | Pipelines and shaders through the adapter; pipelines own shaders | 550 pipelines build; unused shaders freed |
 | A6 ✓ | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 ✓ | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
-| M2 | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
-| M3 | MetalFX without input and output copies; FSR 3.1 on Metal or left out on that backend (decision) | Upscalers measured against today |
+| M2 ✓ | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
+| M3 | MetalFX without input and output copies; FSR 3.1 ported to Metal (decision 4) | Upscalers measured against today |
 | M4 | Metal by default on macOS; MoltenVK and `mtl_vk_layer` removed from the macOS build | Release-candidate play tests pass |
 
 Wooloomooloo2's fork reached its Metal-only renderer in a similar order (device and queue,
@@ -632,6 +630,11 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   (median 27.3 ms, p90 28.8) against MoltenVK's 27.6 (35.5, 38.1); a 10-minute Metal-frame
   session, 21,904 frames, no faults, 36.6 FPS (median 27.0 ms, p90 28.5), ~395 submissions a
   second in Metal and none through MoltenVK; frames correct.
+- **M2 step 5, the play session:** a new game with the Metal frame at native 1080p (upscaler
+  off), by the maintainer: about 3 hours 26 minutes from the title through the opening, the
+  character creation and play, without faults; 42.2 FPS median in levels (37.2 or more 90% of
+  the time; about 1,060 draws a frame); one 6.4 s stall on entering the first level, and a few
+  0.7–1.2 s frames. Accepted on 2026-10-25.
 
 ## Decisions
 
