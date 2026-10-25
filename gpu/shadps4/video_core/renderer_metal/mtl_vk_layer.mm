@@ -24,6 +24,7 @@
 #include <vulkan/vulkan_metal.h>
 #include "video_core/renderer_metal/mtl_frame.h"
 #include "video_core/renderer_metal/mtl_shadow.h"
+#include "video_core/renderer_vulkan/vk_metal_shadow.h"
 
 namespace MetalLayer {
 namespace {
@@ -62,6 +63,8 @@ using MetalFrame::Owned;
     X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkCmdCopyQueryPoolResults)        \
     X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkResetCommandPool)                           \
     X(vkAllocateCommandBuffers) X(vkFreeCommandBuffers) X(vkResetCommandBuffer)                    \
+    X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout)                  \
+    X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout)                                 \
     X(vkCreateSampler) X(vkDestroySampler) X(vkDestroyImageView) X(vkDestroyPipeline)              \
     X(vkDestroySemaphore)                                                                          \
     X(vkGetBufferDeviceAddress) X(vkGetBufferDeviceAddressKHR) X(vkCreateShaderModule)            \
@@ -269,6 +272,20 @@ constexpr uint64_t PoolTag = 0xBC10000000000000ull, BufferTag = 0xBCB00000000000
 std::mutex pools_mutex;
 std::unordered_map<VkCommandPool, std::vector<VkCommandBuffer>> pools;
 std::atomic<uint64_t> next_pool{1}, next_command_buffer{1};
+/// Likewise the objects only Metal uses with the frame: samplers (the frame makes the MTLSampler
+/// from the create info), shader modules (their SPIR-V goes to the Metal builder), and the
+/// layouts (no pipeline reaches MoltenVK; push descriptors and constants are encoded in Metal).
+constexpr uint64_t SamplerTag = 0xBC50000000000000ull, ModuleTag = 0xBC60000000000000ull,
+                   PipelineLayoutTag = 0xBC70000000000000ull, SetLayoutTag = 0xBC80000000000000ull;
+std::atomic<uint64_t> next_object{1};
+template <typename H>
+H OurHandle(uint64_t tag) {
+    return reinterpret_cast<H>(tag | next_object++);
+}
+template <typename H>
+bool IsOurs(H handle, uint64_t tag) {
+    return (reinterpret_cast<uint64_t>(handle) & 0xFFF0000000000000ull) == tag;
+}
 bool IsOurCommandBuffer(VkCommandBuffer cb) {
     return (reinterpret_cast<uint64_t>(cb) & 0xFFF0000000000000ull) == BufferTag;
 }
@@ -639,6 +656,13 @@ struct Hook<I, R (*)(A...)> {
             return original(args...);
         } else if constexpr (I == Id_vkCreateSampler) {
             const auto [dev, info, alloc, out] = std::tuple{args...};
+            if (frame_enabled) {
+                *out = OurHandle<VkSampler>(SamplerTag);
+                @autoreleasepool {
+                    MetalFrame::SamplerCreated(*out, info);
+                }
+                return VK_SUCCESS;
+            }
             const R result = original(args...);
             if (result == VK_SUCCESS && (present_enabled || frame_enabled)) {
                 @autoreleasepool {
@@ -648,6 +672,11 @@ struct Hook<I, R (*)(A...)> {
             return result;
         } else if constexpr (I == Id_vkCreateShaderModule) {
             const auto [dev, info, alloc, out] = std::tuple{args...};
+            if (frame_enabled) {
+                *out = OurHandle<VkShaderModule>(ModuleTag);
+                MetalShadow::ModuleCreated(*out, info);
+                return VK_SUCCESS;
+            }
             const R result = original(args...);
             if (result == VK_SUCCESS && frame_enabled) {
                 MetalShadow::ModuleCreated(*out, info);
@@ -697,6 +726,9 @@ struct Hook<I, R (*)(A...)> {
             return result;
         } else if constexpr (I == Id_vkSetDebugUtilsObjectNameEXT) {
             const auto info = std::get<1>(std::tuple{args...});
+            if (frame_enabled) {
+                return VK_SUCCESS; // names only label MoltenVK's objects, which the frame does not use
+            }
             if (info && info->objectType == VK_OBJECT_TYPE_PIPELINE &&
                 IsPlaceholderPipeline(reinterpret_cast<VkPipeline>(info->objectHandle), false)) {
                 return VK_SUCCESS; // MoltenVK does not know the placeholder
@@ -732,8 +764,33 @@ struct Hook<I, R (*)(A...)> {
             }
             return;
         } else if constexpr (I == Id_vkDestroySampler) {
+            const VkSampler sampler = std::get<1>(std::tuple{args...});
             if (present_enabled || frame_enabled) {
-                MetalFrame::SamplerDestroyed(std::get<1>(std::tuple{args...}));
+                MetalFrame::SamplerDestroyed(sampler);
+            }
+            if (IsOurs(sampler, SamplerTag)) {
+                return;
+            }
+            return original(args...);
+        } else if constexpr (I == Id_vkDestroyShaderModule) {
+            const VkShaderModule module = std::get<1>(std::tuple{args...});
+            if (IsOurs(module, ModuleTag)) {
+                MetalShadow::ForgetModule(vk::ShaderModule{module});
+                return;
+            }
+            return original(args...);
+        } else if constexpr (I == Id_vkCreatePipelineLayout || I == Id_vkCreateDescriptorSetLayout) {
+            if (!frame_enabled) {
+                return original(args...);
+            }
+            auto* out = std::get<3>(std::tuple{args...});
+            using Handle = std::remove_pointer_t<decltype(out)>;
+            *out = OurHandle<Handle>(I == Id_vkCreatePipelineLayout ? PipelineLayoutTag : SetLayoutTag);
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkDestroyPipelineLayout || I == Id_vkDestroyDescriptorSetLayout) {
+            const auto handle = std::get<1>(std::tuple{args...});
+            if (IsOurs(handle, I == Id_vkDestroyPipelineLayout ? PipelineLayoutTag : SetLayoutTag)) {
+                return;
             }
             return original(args...);
         } else if constexpr (I == Id_vkDestroySemaphore) {

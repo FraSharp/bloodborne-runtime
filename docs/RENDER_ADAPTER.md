@@ -709,6 +709,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   reaches MoltenVK is made once: image views (2,697 in the test) with their memory requirements
   and format queries, object names (5,601), 429 descriptor set and pipeline layouts, buffer
   addresses at creation (111), samplers, shader modules, and the device with its queries.
+- **M4 step 3, objects made once:** with the Metal frame samplers (the frame makes the MTLSampler
+  from the create info), shader modules made directly (their SPIR-V goes to the Metal builder),
+  pipeline layouts and descriptor set layouts are the layer's own handles too, destroyed by the
+  layer; descriptor sets are never allocated (MoltenVK has push descriptors). Object names stop at
+  the layer: they only labelled MoltenVK's objects. Measured (new second): 39.2 FPS both, 4.15–4.35
+  against 4.16–4.47 µs per draw; Metal API validation: nothing destroyed while still required;
+  frame correct. Left reaching MoltenVK in a run: image views (2,514) with their memory and format
+  queries (about 2,290 each), buffer addresses at creation (99), and the device with its queries.
 
 ## Decisions
 
