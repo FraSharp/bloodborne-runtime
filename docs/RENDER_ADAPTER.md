@@ -11,8 +11,10 @@ committed in Metal. MoltenVK still holds the device, the queue and the resources
 ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is done:
 the upscaler is off by default, and the Metal renderer offers MetalFX only (decision 5). MetalFX
 itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native MetalFX is a
-later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, and step 2, the
-inventory of the calls still reaching MoltenVK, are done; step 3 replaces them.
+later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, step 2, the inventory
+of the calls still reaching MoltenVK, and step 3, replacing them, are done: nothing per frame
+and no resource, view, pipeline, shader or command buffer reaches MoltenVK. Step 4, the Metal
+device without a Vulkan instance, is next (plan below).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -767,6 +769,19 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   while still required; frame correct. What still reaches MoltenVK is made once at start: the
   device and its queries, its queue, 4 semaphores and 3 fences, a descriptor pool nothing uses,
   one buffer of the guest-memory check, and 3D images viewed as 2D slices.
+- **M4 step 4, the plan: the Metal device without Vulkan.** What still needs MoltenVK is that the
+  shared renderer is built from a Vulkan `Instance`: the scheduler (`Scheduler(instance)`, its
+  command pools, submissions and timeline semaphore), the transfers (`Runtime(instance, ...)`),
+  the rasterizer and the swapchain take it, and the presenter holds it. Their queries are few:
+  most of the 88 `Instance` queries in the tree are in the Vulkan backend's own files (the device,
+  upscalers, pipelines, swapchain, resources), which stay Vulkan's. The steps, each measured:
+  (a) the scheduler's Vulkan parts (command pools and buffers, submission, the tick semaphore)
+  behind the device's command stream, so the scheduler keeps only ordering, ticks and pending
+  operations; (b) the transfers, rasterizer and presenter built from the device alone; (c) a
+  native Metal `Device` (`renderer_metal/`) from what the layer and the Metal frame do today:
+  resources, views, samplers, shaders and pipelines, the Metal recorder, transfers, ticks as
+  shared events, capabilities from the MTLDevice, the Metal swapchain; (d) the macOS build without
+  Vulkan, MoltenVK and `mtl_vk_layer`, the Vulkan backend still built for Linux and Windows.
 
 ## Decisions
 
