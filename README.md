@@ -1,6 +1,6 @@
 # bloodborne-runtime
 
-[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/EyyQ23sTBg)
+[![Discord](https://img.shields.io/badge/Discord-join%20the%20server-5865F2?logo=discord&logoColor=white)](https://discord.gg/QS6vHz45xA)
 
 What runs Bloodborne (PS4, CUSA03173 1.09) outside a PS4: it loads the game's executable, provides
 the PS4 system libraries the game calls (threads, memory, files, saves, pad, audio, video out),
