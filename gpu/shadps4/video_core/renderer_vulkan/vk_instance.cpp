@@ -15,6 +15,7 @@
 #include "bbport_toggles.h"
 #include "bbport_metal_residency.h"
 #ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_caps.h"
 #include "video_core/renderer_metal/mtl_vk_layer.h"
 #endif
 #include "video_core/renderer_vulkan/vk_dlss.h"
@@ -753,6 +754,8 @@ bool Instance::CreateDevice() {
     graphics_queue = device->getQueue(queue_family_index, 0);
 #ifdef BB_METAL_BACKEND
     MetalLayer::SetDevice(static_cast<VkDevice>(*device), static_cast<VkQueue>(graphics_queue));
+    // BB_METAL_CAPS=compare: the Metal backend's answers against MoltenVK's (M4 step 4.1).
+    MetalCaps::CompareIfAsked(static_cast<VkPhysicalDevice>(physical_device));
 #endif
     present_queue = device->getQueue(queue_family_index, 0);
     if (readback_family_index != NoFamily) {

@@ -88,7 +88,7 @@ Changes taken from other ports of bbport, with thanks:
 
 ## Libraries
 
-- [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Apache-2.0)
+- [MoltenVK](https://github.com/KhronosGroup/MoltenVK) (Apache-2.0). The Metal backend's answers to the renderer's start-up Vulkan queries (`renderer_metal/mtl_vk_caps_profile.inc`) are MoltenVK 1.4.2's answers on an Apple M3 Pro, recorded with `BB_METAL_CAPS=compare` (`tools/vk_caps_profile.py`).
 - [Zydis](https://github.com/zyantific/zydis) (MIT), the translator's x86 decoder
 - [SDL3](https://www.libsdl.org/) (zlib)
 - [FFmpeg](https://ffmpeg.org/) (LGPL)
