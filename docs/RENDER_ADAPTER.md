@@ -9,7 +9,7 @@ renderer records is encoded in Metal, shaders and pipelines are Metal's only, th
 presented and drawn through Metal with the upscaler's own passes, and every submission is
 committed in Metal. MoltenVK still holds the device, the queue and the resources, begins and
 ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is next:
-MetalFX without copies and FSR 3.1 ported to Metal (decision 4).
+MetalFX without copies, the Metal backend's only upscaler (decision 5).
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -154,7 +154,7 @@ Metal backend draws everything; then the interception layer is removed.
 | A6 ✓ | Presenter, overlay, upscalers through `Swapchain` and `NativeHandle` | Every upscaler choice renders on Vulkan |
 | M1 ✓ | Metal backend: device, queue, resources (heaps; the pool without copies), transfers | Loading reaches the Hunter's Dream with `BB_GFX_BACKEND=metal` |
 | M2 ✓ | Metal backend: passes, draws, tessellation, pipelines (from `mtl_frame` and `mtl_pso_cache`) | A copied-save play session with no faults; FPS ≥ today's Metal path (65.5/61.7) |
-| M3 | MetalFX without input and output copies; FSR 3.1 ported to Metal (decision 4) | Upscalers measured against today |
+| M3 | MetalFX without input and output copies; MetalFX the Metal backend's only upscaler (decision 5) | Upscalers measured against today |
 | M4 | Metal by default on macOS; MoltenVK and `mtl_vk_layer` removed from the macOS build | Release-candidate play tests pass |
 
 Wooloomooloo2's fork reached its Metal-only renderer in a similar order (device and queue,
@@ -650,6 +650,15 @@ Taken by the maintainer on 2026-10-22:
 
 Taken by the maintainer on 2026-10-24:
 
-4. **FSR 3.1 on the Metal backend:** ported, not dropped. AMD's FidelityFX host code and shaders
-   stay; a Metal back end for its interface (as Wooloomooloo2's fork has, `gpu/shim/ffx_metal/`,
-   credited when taken) runs them. It lands in M3, after M2's Metal submissions.
+4. *(Replaced by 5 on 2026-10-25.)* FSR 3.1 on the Metal backend: ported, not dropped.
+
+Taken by the maintainer on 2026-10-25:
+
+5. **Upscalers by backend:** the Metal backend's upscaler is MetalFX only. FSR 3.1, FSR 4, FSR
+   4.1.1 and DLSS belong to the Vulkan backend, the renderer for the other platforms the runtime
+   is to reach; Vulkan on macOS (MoltenVK) is retired in M4. Measured at the test save's place on
+   the Metal frame, FSR 3.1 Balanced ran slower than native 1080p without an upscaler (36.2
+   against 38.2–39.6 FPS). In M3 the Metal frame offers MetalFX only (a setting asking for
+   another upscaler gets MetalFX); with MoltenVK the FSR options stay until M4 removes it, and
+   with it FSR 3.1 and FSR 4.1.1 on macOS (`vk_fsr4_metal` runs FSR 4.1.1 in Metal, but reaches
+   the images through MoltenVK).
