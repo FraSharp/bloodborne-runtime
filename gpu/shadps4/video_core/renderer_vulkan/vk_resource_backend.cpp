@@ -249,11 +249,9 @@ vk::FormatFeatureFlags2 FormatFeatureFlags(const vk::ImageUsageFlags usage_flags
 }
 
 UniqueImage::~UniqueImage() {
-    if (image) {
-        BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
-        BbMetalResidency::RemoveImage(image);
-        vmaDestroyImage(allocator, image, allocation);
-    }
+    // Destroy also gives up a Metal-made image's texture (CreateInMetal); destroying only the
+    // VkImage left it alive.
+    Destroy();
 }
 
 void UniqueImage::Destroy() {

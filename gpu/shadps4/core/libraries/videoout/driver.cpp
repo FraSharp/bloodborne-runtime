@@ -17,6 +17,10 @@
 #include "bbport_heap_sites.h"
 #include "bbport_wait_trace.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_resources.h"
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "common/debug.h"
 #include "common/thread.h"
 #include "core/debug_state.h"
@@ -366,6 +370,18 @@ static void PrintMemory() {
                 (unsigned long long)(BbStats::gc_trigger_bytes.load() >> 20),
                 (unsigned long long)BbStats::gc_freed_images.exchange(0),
                 (unsigned long long)BbStats::gc_kept_images.exchange(0));
+#if BB_METAL_BACKEND
+    // The Metal renderer: what the Metal device holds (MoltenVK's objects included).
+    unsigned long long metal_used = 0, metal_budget = 0;
+    if (MetalLayer::MemoryUsage(&metal_used, &metal_budget)) {
+        u64 textures = 0, texture_bytes = 0;
+        MetalResources::LiveTextures(&textures, &texture_bytes);
+        std::printf("Memory: Metal %llu MiB allocated of a %llu MiB working set; %llu textures "
+                    "made by the Metal backend live (%llu MiB)\n",
+                    metal_used >> 20, metal_budget >> 20, (unsigned long long)textures,
+                    (unsigned long long)(texture_bytes >> 20));
+    }
+#endif
 }
 
 void VideoOutDriver::Flip(const Request& req) {

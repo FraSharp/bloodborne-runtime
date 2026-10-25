@@ -49,6 +49,8 @@ Buffer NewBuffer(u64 size, Storage storage);
 Texture NewTexture(const TextureDesc& desc);
 /// Gives up a reference taken by NewBuffer or NewTexture.
 void Release(void* object);
+/// The textures NewTexture made that are not released yet, and their bytes.
+void LiveTextures(u64* count, u64* bytes);
 #else
 inline bool Enabled() {
     return false;
@@ -61,6 +63,9 @@ inline Texture NewTexture(const TextureDesc&) {
     return {};
 }
 inline void Release(void*) {}
+inline void LiveTextures(u64* count, u64* bytes) {
+    *count = *bytes = 0;
+}
 #endif
 
 } // namespace MetalResources

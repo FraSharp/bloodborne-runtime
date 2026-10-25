@@ -8,6 +8,7 @@
 #include <cstdio>
 #include <cstdlib>
 #include <cstring>
+#include <atomic>
 #include <mutex>
 #include <set>
 
@@ -65,6 +66,8 @@ Buffer NewBuffer(u64 size, Storage storage) {
     return {(__bridge_retained void*)buffer,
             storage == Storage::Private ? nullptr : buffer.contents};
 }
+
+std::atomic<u64> live_textures{0}, live_texture_bytes{0};
 
 Texture NewTexture(const TextureDesc& desc) {
     namespace VkToMtl = Metal::VkToMtl;
@@ -125,14 +128,25 @@ Texture NewTexture(const TextureDesc& desc) {
     }
     static std::once_flag first;
     std::call_once(first, [] { std::printf("Render adapter: images made in Metal\n"); });
+    live_textures.fetch_add(1, std::memory_order_relaxed);
+    live_texture_bytes.fetch_add(texture.allocatedSize, std::memory_order_relaxed);
     return {(__bridge_retained void*)texture, u64(texture.allocatedSize)};
 }
 
 void Release(void* object) {
     if (object) {
         id<MTLResource> resource = (__bridge_transfer id<MTLResource>)object;
+        if ([resource conformsToProtocol:@protocol(MTLTexture)]) {
+            live_textures.fetch_sub(1, std::memory_order_relaxed);
+            live_texture_bytes.fetch_sub(resource.allocatedSize, std::memory_order_relaxed);
+        }
         resource = nil;
     }
+}
+
+void LiveTextures(u64* count, u64* bytes) {
+    *count = live_textures.load(std::memory_order_relaxed);
+    *bytes = live_texture_bytes.load(std::memory_order_relaxed);
 }
 
 } // namespace MetalResources

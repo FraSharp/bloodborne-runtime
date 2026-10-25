@@ -727,6 +727,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   block-compressed ones, made viewable as uncompressed formats, and 3D images viewed as 2D
   slices, which M1 leaves to MoltenVK. Metal cannot view a compressed texture as uncompressed;
   the device logs each kind of such view the game makes ("Image views: uncompressed view").
+- **M4, the Metal-made image leak (fixed):** the device frees images through `~UniqueImage`,
+  which destroyed only the VkImage; `Destroy`, which also gives up the Metal texture of an image
+  made in Metal (M1), was not called there. Every such image the texture cache freed kept its
+  texture; since resources are made in Metal by default with the Metal frame, that was every one.
+  The destructor now does what `Destroy` does. Measured at the test save's place after loading:
+  526 live backend textures (795 MiB, every one made) against 336 (647 MiB), and 9,101 against
+  8,882 MiB on the Metal device. The memory line every few seconds now also prints the Metal
+  device's allocation and the backend's live textures ("Memory: Metal").
 
 ## Decisions
 
