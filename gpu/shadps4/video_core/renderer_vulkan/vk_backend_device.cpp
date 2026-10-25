@@ -146,6 +146,12 @@ Backend::BufferAllocation BackendDevice::Insert(UniqueBuffer&& buffer, bool spar
         result.mapped = std::span<u8>{static_cast<u8*>(buffer.metal_contents),
                                       static_cast<size_t>(buffer.metal_size)};
     }
+#if BB_METAL_BACKEND
+    // With the Metal frame, binding the buffer then asks MoltenVK nothing (M4).
+    if (!sparse) {
+        MetalLayer::BufferMade(reinterpret_cast<void*>(result.native));
+    }
+#endif
     std::scoped_lock lock{objects_mutex};
     result.handle = buffers.Insert(std::move(buffer));
     return result;
@@ -268,7 +274,11 @@ void BackendDevice::DestroyBuffer(Backend::BufferHandle buffer) {
         object = std::move(*entry);
         buffers.Erase(buffer);
     }
-    DeferRelease([object = std::move(object)] {});
+    DeferRelease([object = std::move(object)] {
+#if BB_METAL_BACKEND
+        MetalLayer::BufferGone(static_cast<VkBuffer>(object.buffer));
+#endif
+    });
 }
 
 void BackendDevice::FlushBuffer(Backend::BufferHandle buffer, u64 offset, u64 size) {

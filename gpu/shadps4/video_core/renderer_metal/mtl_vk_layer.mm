@@ -891,6 +891,20 @@ void Own(void* command_buffer) {
     OwnBuffer(static_cast<VkCommandBuffer>(command_buffer));
 }
 
+void BufferMade(void* buffer) {
+    if (frame_enabled && buffer) {
+        @autoreleasepool {
+            MetalFrame::BufferMade(static_cast<VkBuffer>(buffer));
+        }
+    }
+}
+
+void BufferGone(void* buffer) {
+    if (frame_enabled && buffer) {
+        MetalFrame::BufferGone(static_cast<VkBuffer>(buffer));
+    }
+}
+
 void Install(void* dispatcher_ptr) {
     const char* env = std::getenv("BB_METAL_TRACE");
     trace = env && env[0] == '1';

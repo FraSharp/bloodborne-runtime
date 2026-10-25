@@ -178,6 +178,9 @@ void SamplerDestroyed(VkSampler sampler);
 void ImageViewCreated(VkImageView view, const VkImageViewCreateInfo* info);
 void ImageViewDestroyed(VkImageView view);
 void DeviceAddressTaken(VkBuffer buffer);
+/// The device's buffers (MetalLayer::BufferMade): their MTLBuffer and offset, looked up once.
+void BufferMade(VkBuffer buffer);
+void BufferGone(VkBuffer buffer);
 
 // Commands.
 void Barrier(Owned& o);

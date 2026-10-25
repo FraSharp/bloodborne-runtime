@@ -50,4 +50,10 @@ bool PresentEnabled();
 /// by the Metal path; its commands do not reach MoltenVK.
 void Own(void* command_buffer);
 
+/// With the Metal frame: the render adapter's device made `buffer` (a VkBuffer). The Metal frame
+/// keeps its MTLBuffer and offset, so binding it asks MoltenVK nothing (docs/RENDER_ADAPTER.md,
+/// M4). BufferGone: right before the VkBuffer is destroyed.
+void BufferMade(void* buffer);
+void BufferGone(void* buffer);
+
 } // namespace MetalLayer

@@ -675,6 +675,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   image views (2,698) with their memory requirements and format queries (about 2,430 each), 429
   descriptor set and pipeline layouts, object names (5,660), samplers, shader modules, command
   pools and buffers, semaphores, fences, the device and its queries.
+- **M4 step 3, bound buffers:** the device registers each buffer it makes with the Metal frame
+  (`MetalLayer::BufferMade`: its MTLBuffer and offset, asked of MoltenVK once) and drops it in
+  the buffer's deferred release, right before the VkBuffer is destroyed (`BufferGone`); binding a
+  registered buffer reads the record (a per-thread last-buffer cache, then a shared map) instead
+  of two MoltenVK calls. Buffers the device did not make still ask MoltenVK. Measured (new
+  second): `vkGetBufferDeviceAddress` from 897,091 calls a second to none, 39.4 against 39.0 FPS,
+  4.16–4.44 against 4.21–4.29 µs per draw; Metal API validation: no object destroyed while still
+  required; frame correct. Validation also reports two older problems, already in the M2
+  validation run: pipelines with a depth or stencil format used in passes without that
+  attachment, and one compute shader reading 32 bytes from a 28-byte buffer.
 
 ## Decisions
 

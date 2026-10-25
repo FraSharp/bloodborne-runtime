@@ -9,6 +9,7 @@
 #include <cstdlib>
 #include <cstring>
 #include <mutex>
+#include <shared_mutex>
 #include <tuple>
 #include <unordered_map>
 #include "video_core/renderer_metal/mtl_frame.h"
@@ -93,9 +94,8 @@ struct BufferRef {
 };
 
 /// The MTLBuffer behind a VkBuffer and where the VkBuffer starts in it (MoltenVK suballocates
-/// buffers from device memory; the device address gives the offset). Resolved per use: VMA
-/// destroys buffers without the dispatcher, so a cache could outlive its handle.
-BufferRef ResolveBuffer(VkBuffer buffer) {
+/// buffers from device memory; the device address gives the offset), asked of MoltenVK.
+BufferRef ResolveFromDriver(VkBuffer buffer) {
     BufferRef ref;
     if (!buffer || !get_mtl_buffer) {
         return ref;
@@ -115,6 +115,35 @@ BufferRef ResolveBuffer(VkBuffer buffer) {
         }
     }
     return ref;
+}
+
+/// The device's buffers, resolved once when they are made (BufferMade) and dropped right before
+/// they are destroyed (BufferGone): VMA destroys buffers without the dispatcher, so only the
+/// device can say when an entry is stale. Anything else is asked of MoltenVK on every use.
+std::shared_mutex registered_mutex;
+std::unordered_map<VkBuffer, BufferRef> registered;
+std::atomic<u64> registered_generation{0};
+
+BufferRef ResolveBuffer(VkBuffer buffer) {
+    // The same few buffers (the guest pool, stream buffers) are bound over and over.
+    thread_local VkBuffer cached_buffer = VK_NULL_HANDLE;
+    thread_local __unsafe_unretained id<MTLBuffer> cached_mtl = nil;
+    thread_local u64 cached_offset = 0, cached_generation = ~0ull;
+    const u64 generation = registered_generation.load(std::memory_order_acquire);
+    if (buffer == cached_buffer && generation == cached_generation) {
+        return {cached_mtl, cached_offset};
+    }
+    {
+        std::shared_lock lock{registered_mutex};
+        if (auto it = registered.find(buffer); it != registered.end()) {
+            cached_buffer = buffer;
+            cached_mtl = it->second.buffer;
+            cached_offset = it->second.offset;
+            cached_generation = generation;
+            return it->second;
+        }
+    }
+    return ResolveFromDriver(buffer);
 }
 
 id<MTLTexture> ExportTexture(VkImage image, VkImageView view) {
@@ -782,6 +811,23 @@ void ImageViewDestroyed(VkImageView view) {
     std::scoped_lock lock{maps_mutex};
     views.erase(view);
     view_infos.erase(view);
+}
+
+void BufferMade(VkBuffer buffer) {
+    const BufferRef ref = ResolveFromDriver(buffer);
+    if (!ref.buffer) {
+        return;
+    }
+    std::unique_lock lock{registered_mutex};
+    registered[buffer] = ref;
+    registered_generation.fetch_add(1, std::memory_order_release); // a reused handle value
+}
+
+void BufferGone(VkBuffer buffer) {
+    std::unique_lock lock{registered_mutex};
+    if (registered.erase(buffer)) {
+        registered_generation.fetch_add(1, std::memory_order_release);
+    }
 }
 
 void DeviceAddressTaken(VkBuffer buffer) {
