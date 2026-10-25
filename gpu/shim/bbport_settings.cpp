@@ -436,7 +436,7 @@ constexpr LauncherOption LauncherOptions[LauncherKeyCount] = {
     {"present_mode", "BB_PRESENT_MODE", "Fifo"}, {"fps_mode", "BB_FPS", "uncap"},
     {"fps_limit", "BB_FPS_LIMIT", "0"},       {"metal_hud", "MTL_HUD_ENABLED", "false"},
     {"draw_pipe", "BB_DRAW_PIPE", ""},        {"readbacks", "BB_READBACKS", ""},
-    {"preupload", "BB_PREUPLOAD", ""},        {"renderer", "BB_METAL_FRAME", "moltenvk"},
+    {"preupload", "BB_PREUPLOAD", ""},        {"renderer", "BB_METAL_FRAME", "metal"},
 };
 std::string launcher_values[LauncherKeyCount], launcher_startup[LauncherKeyCount];
 std::atomic<int> fullscreen_request{-1};
@@ -452,7 +452,8 @@ std::string FromEnvironment(int key) {
     if (IsBoolOption(key)) {
         return value == "1" ? "true" : "false";
     }
-    // The renderer: BB_METAL_FRAME=1 is the Metal backend's frame path.
+    // The renderer: BB_METAL_FRAME=1 is the Metal backend's frame path (run.sh's default on
+    // Apple Silicon), 0 MoltenVK.
     if (key == LauncherRenderer) {
         return value == "1" ? "metal" : "moltenvk";
     }
@@ -468,7 +469,7 @@ std::string EnvText(int key, const std::string& value) {
         return value == "true" ? "1" : key == LauncherFullscreen ? "0" : "";
     }
     if (key == LauncherRenderer) {
-        return value == "metal" ? "1" : "";
+        return value == "metal" ? "1" : "0";
     }
     if (key == LauncherFpsLimit && std::atoi(value.c_str()) <= 0) {
         return "";

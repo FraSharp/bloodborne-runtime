@@ -26,6 +26,11 @@ if [[ $(uname -s) == Darwin ]]; then
         [[ $(sysctl -n hw.optional.arm64 2>/dev/null) == 1 ]] && BB_ARCH=arm64 || BB_ARCH=x86_64
     fi
     export BB_ARCH
+    # The Metal renderer by default on Apple Silicon (docs/RENDER_ADAPTER.md, M4);
+    # BB_METAL_FRAME=0 draws through MoltenVK instead, as Rosetta and other Vulkan drivers do.
+    if [[ $BB_ARCH == arm64 && -z ${BB_VK_DRIVER:-} ]]; then
+        export BB_METAL_FRAME=${BB_METAL_FRAME:-1}
+    fi
     # The MoltenVK from scripts/macos/build-deps.sh, unless a Vulkan driver is chosen.
     # BB_VK_DRIVER=kosmickrisp (native arm64, macOS 26+): Mesa's Vulkan-on-Metal 4 driver from
     # scripts/macos/build-kosmickrisp.sh instead.

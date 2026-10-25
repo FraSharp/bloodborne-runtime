@@ -11,7 +11,8 @@ committed in Metal. MoltenVK still holds the device, the queue and the resources
 ends its (empty) command buffers, and FSR 3.1's library and DLSS record through it. M3 is done:
 the upscaler is off by default, and the Metal renderer offers MetalFX only (decision 5). MetalFX
 itself still runs through the MoltenVK-era bridge (`vk_metalfx`); a Metal-native MetalFX is a
-later plan. M4 is next.
+later plan. M4 is in progress: step 1, Metal by default on Apple Silicon, is done; next is the
+inventory of the calls still reaching MoltenVK.
 The decisions are at the end.
 
 The render adapter is the project's own GPU interface. The renderer asks it for resources,
@@ -652,6 +653,16 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   images are Metal textures already: a `renderer_metal` MetalFX encoded in the frame's command
   buffer, reading and writing them directly, removes the copies, the CPU waits and the second
   queue. To be measured against native, at 1080p and above it.
+- **M4, the plan:** (1) Metal by default on Apple Silicon, MoltenVK selectable; (2) an
+  inventory of every call that still reaches MoltenVK with the Metal frame, at start and per
+  frame; (3) those replaced area by area (device and queue, memory and resources, descriptors,
+  semaphores and fences, command buffers, capabilities), each measured; (4) the macOS build
+  without MoltenVK and `mtl_vk_layer`, the Vulkan backend still built for Linux.
+- **M4 step 1, Metal by default:** `run.sh` sets `BB_METAL_FRAME=1` on Apple Silicon with the
+  bundled driver unless it is set (Rosetta and `BB_VK_DRIVER` stay on Vulkan); the launcher's
+  `renderer` defaults to `metal` and passes `BB_METAL_FRAME=0` for MoltenVK; the in-game menu's
+  launcher options follow. Checked: with nothing set the game runs the Metal frame (38.9 FPS at
+  the test save's place), with `BB_METAL_FRAME=0` MoltenVK (30.3 FPS).
 
 ## Decisions
 

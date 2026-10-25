@@ -1,8 +1,8 @@
 # bloodborne-runtime
 
 Runs Bloodborne (PS4, CUSA03173 1.09) outside a PS4: the loader, the PS4 system libraries
-(`src/runtime_*.c`) and the renderer (`gpu/`, derived from shadPS4; Vulkan through MoltenVK on
-macOS, or Metal directly behind `BB_METAL_FRAME=1`). Built on bbport. The game's code runs through
+(`src/runtime_*.c`) and the renderer (`gpu/`, derived from shadPS4; on Apple Silicon Metal
+directly by default, or Vulkan through MoltenVK with `BB_METAL_FRAME=0`; Vulkan elsewhere). Built on bbport. The game's code runs through
 bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled library
 (`BB_RECOMP_LIB`).
 

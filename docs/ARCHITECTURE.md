@@ -18,8 +18,8 @@ eboot.bin ──► loader (src/probe.c) ──► game image in memory
                                          │  saves, pad, audio, trophies, video out
                                          │
              GPU command buffers ────────┘  renderer (gpu/): PM4 packets and GCN shaders
-                                            → Vulkan → MoltenVK → Metal
-                                            (or Metal directly: BB_METAL_FRAME=1)
+                                            → Metal directly on Apple Silicon (the default)
+                                            (or Vulkan → MoltenVK: BB_METAL_FRAME=0)
 ```
 
 `run.sh` prepares a launch (checks the game folder, links the modules, writes patches, sizes
@@ -133,7 +133,8 @@ while it runs (`live_resolution` in the settings).
 moving characters, so a variant of their vertex shaders writes them, which makes FSR much sharper
 on characters for a few frames per second.
 
-**The Metal renderer** (experimental, the launcher's Advanced → Renderer, `BB_METAL_FRAME=1`): a
+**The Metal renderer** (the default on Apple Silicon since M4; the launcher's Advanced → Renderer;
+`BB_METAL_FRAME=1`, and `BB_METAL_FRAME=0` for MoltenVK): a
 layer under vulkan.hpp's dispatcher (`gpu/shadps4/video_core/renderer_metal/`) encodes the
 command buffers itself in Metal instead of passing them to MoltenVK. The renderer above it is
 unchanged, so Linux keeps real Vulkan. Pipelines are converted from SPIR-V to MSL with
