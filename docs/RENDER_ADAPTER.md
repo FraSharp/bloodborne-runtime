@@ -696,6 +696,19 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   `vkWaitSemaphores` from 349 to none, the memory query from 39 to none; 39.1 against 39.0 and
   38.9 against 39.0 FPS in the two pairs; no wait reached 10 s. Per second only
   `vkBeginCommandBuffer` and `vkEndCommandBuffer` still reach MoltenVK.
+- **M4 step 3, command buffers:** with the Metal frame, command pools and command buffers are the
+  layer's own handles (like the Metal-only pipelines): `vkCreateCommandPool` and
+  `vkAllocateCommandBuffers` make placeholders, begin makes the Metal encoding state, reset,
+  free and the pool's reset or destruction drop it, object names for them are not passed on, and
+  a submission that falls back to MoltenVK (a fence) gets its waits, signals and fence without
+  them, after their Metal work is committed. The query commands (opt-in occlusion queries,
+  timestamps) are taken by the layer as no-ops, so no placeholder reaches MoltenVK. Measured (new
+  second): no call reaches MoltenVK per second any more; 39.1 against 38.8 FPS, 4.20–4.49
+  against 4.28–4.48 µs per draw (skipping only begin and end measured slower in M2; this does
+  not); Metal API validation: nothing destroyed while still required; frame correct. What still
+  reaches MoltenVK is made once: image views (2,697 in the test) with their memory requirements
+  and format queries, object names (5,601), 429 descriptor set and pipeline layouts, buffer
+  addresses at creation (111), samplers, shader modules, and the device with its queries.
 
 ## Decisions
 

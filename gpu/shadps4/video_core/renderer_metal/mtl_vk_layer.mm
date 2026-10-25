@@ -59,6 +59,9 @@ using MetalFrame::Owned;
     X(vkCmdSetColorWriteMaskEXT) X(vkCmdSetLineWidth) X(vkCmdSetVertexInputEXT)                    \
     X(vkCmdBeginDebugUtilsLabelEXT) X(vkCmdEndDebugUtilsLabelEXT) X(vkCmdInsertDebugUtilsLabelEXT) \
     X(vkCmdWriteTimestamp) X(vkCmdWriteTimestamp2) X(vkCmdWriteBufferMarkerAMD)                    \
+    X(vkCmdBeginQuery) X(vkCmdEndQuery) X(vkCmdResetQueryPool) X(vkCmdCopyQueryPoolResults)        \
+    X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkResetCommandPool)                           \
+    X(vkAllocateCommandBuffers) X(vkFreeCommandBuffers) X(vkResetCommandBuffer)                    \
     X(vkCreateSampler) X(vkDestroySampler) X(vkDestroyImageView) X(vkDestroyPipeline)              \
     X(vkDestroySemaphore)                                                                          \
     X(vkGetBufferDeviceAddress) X(vkGetBufferDeviceAddressKHR) X(vkCreateShaderModule)            \
@@ -258,6 +261,30 @@ void OwnBuffer(VkCommandBuffer cb) {
     }
     owned_count.store(unsigned(owned.size()), std::memory_order_release);
     ++owned_generation;
+}
+
+/// With the Metal frame, command pools and buffers are the layer's own handles (M4): MoltenVK
+/// never makes or sees one. A pool lists its buffers; a buffer's Metal state is its Owned entry.
+constexpr uint64_t PoolTag = 0xBC10000000000000ull, BufferTag = 0xBCB0000000000000ull;
+std::mutex pools_mutex;
+std::unordered_map<VkCommandPool, std::vector<VkCommandBuffer>> pools;
+std::atomic<uint64_t> next_pool{1}, next_command_buffer{1};
+bool IsOurCommandBuffer(VkCommandBuffer cb) {
+    return (reinterpret_cast<uint64_t>(cb) & 0xFFF0000000000000ull) == BufferTag;
+}
+bool IsOurPool(VkCommandPool pool) {
+    return (reinterpret_cast<uint64_t>(pool) & 0xFFF0000000000000ull) == PoolTag;
+}
+/// Drops a command buffer's encoding state: reset, freed, or its pool reset or destroyed. What it
+/// encoded and never submitted is dropped with it.
+void DropOwned(VkCommandBuffer cb) {
+    std::scoped_lock lock{owned_mutex};
+    if (auto it = owned.find(cb); it != owned.end()) {
+        delete it->second;
+        owned.erase(it);
+        owned_count.store(unsigned(owned.size()), std::memory_order_release);
+        ++owned_generation;
+    }
 }
 
 /// Placeholder handles for the pipelines only the Metal path has (geometry shaders).
@@ -498,11 +525,24 @@ struct Hook<I, R (*)(A...)> {
                 return VK_SUCCESS;
             }
             ++vulkan_submits;
+            // MoltenVK gets the submit's waits, signals and fence; the layer's command buffers are
+            // committed in Metal first (same queue, so in order) and left out.
+            std::vector<VkSubmitInfo> stripped(submits, submits + count);
+            std::vector<std::vector<VkCommandBuffer>> kept(count);
+            for (uint32_t s = 0; s < count; ++s) {
+                for (uint32_t i = 0; i < submits[s].commandBufferCount; ++i) {
+                    if (!IsOurCommandBuffer(submits[s].pCommandBuffers[i])) {
+                        kept[s].push_back(submits[s].pCommandBuffers[i]);
+                    }
+                }
+                stripped[s].commandBufferCount = uint32_t(kept[s].size());
+                stripped[s].pCommandBuffers = kept[s].data();
+            }
             for (uint32_t s = 0; s < count; ++s) {
                 CommitOwned(submits[s].commandBufferCount,
                             [&](uint32_t i) { return submits[s].pCommandBuffers[i]; });
             }
-            return original(args...);
+            return original(vkqueue, count, stripped.data(), fence);
         } else if constexpr (I == Id_vkQueueSubmit2 || I == Id_vkQueueSubmit2KHR) {
             Report();
             const auto [vkqueue, count, submits, fence] = std::tuple{args...};
@@ -512,17 +552,89 @@ struct Hook<I, R (*)(A...)> {
                 });
             }
             return original(args...);
+        } else if constexpr (I == Id_vkCreateCommandPool) {
+            if (!frame_enabled) {
+                return original(args...);
+            }
+            const auto [dev, info, alloc, out] = std::tuple{args...};
+            *out = reinterpret_cast<VkCommandPool>(PoolTag | next_pool++);
+            std::scoped_lock lock{pools_mutex};
+            pools[*out];
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkDestroyCommandPool || I == Id_vkResetCommandPool) {
+            const VkCommandPool pool = std::get<1>(std::tuple{args...});
+            if (!IsOurPool(pool)) {
+                return original(args...);
+            }
+            std::vector<VkCommandBuffer> buffers;
+            {
+                std::scoped_lock lock{pools_mutex};
+                if (auto it = pools.find(pool); it != pools.end()) {
+                    buffers = it->second;
+                    if constexpr (I == Id_vkDestroyCommandPool) {
+                        pools.erase(it);
+                    }
+                }
+            }
+            for (VkCommandBuffer cb : buffers) {
+                DropOwned(cb);
+            }
+            if constexpr (!std::is_void_v<R>) {
+                return VK_SUCCESS;
+            }
+        } else if constexpr (I == Id_vkAllocateCommandBuffers) {
+            const auto [dev, info, out] = std::tuple{args...};
+            if (!IsOurPool(info->commandPool)) {
+                return original(args...);
+            }
+            std::scoped_lock lock{pools_mutex};
+            auto& list = pools[info->commandPool];
+            for (uint32_t i = 0; i < info->commandBufferCount; ++i) {
+                out[i] = reinterpret_cast<VkCommandBuffer>(BufferTag | next_command_buffer++);
+                list.push_back(out[i]);
+            }
+            return VK_SUCCESS;
+        } else if constexpr (I == Id_vkFreeCommandBuffers) {
+            const auto [dev, pool, count, buffers] = std::tuple{args...};
+            if (!IsOurPool(pool)) {
+                return original(args...);
+            }
+            for (uint32_t i = 0; i < count; ++i) {
+                DropOwned(buffers[i]);
+            }
+            std::scoped_lock lock{pools_mutex};
+            if (auto it = pools.find(pool); it != pools.end()) {
+                std::erase_if(it->second, [&](VkCommandBuffer cb) {
+                    return std::find(buffers, buffers + count, cb) != buffers + count;
+                });
+            }
+        } else if constexpr (I == Id_vkResetCommandBuffer) {
+            const VkCommandBuffer cb = std::get<0>(std::tuple{args...});
+            if (!IsOurCommandBuffer(cb)) {
+                return original(args...);
+            }
+            DropOwned(cb);
+            return VK_SUCCESS;
         } else if constexpr (I == Id_vkBeginCommandBuffer) {
+            const VkCommandBuffer cb = std::get<0>(std::tuple{args...});
+            if (IsOurCommandBuffer(cb)) {
+                OwnBuffer(cb); // MoltenVK has no command buffer behind it
+                return VK_SUCCESS;
+            }
             const R result = original(args...);
             if (frame_enabled) {
-                OwnBuffer(std::get<0>(std::tuple{args...}));
+                OwnBuffer(cb);
             }
             return result;
         } else if constexpr (I == Id_vkEndCommandBuffer) {
-            if (Owned* o = FindOwned(std::get<0>(std::tuple{args...}))) {
+            const VkCommandBuffer cb = std::get<0>(std::tuple{args...});
+            if (Owned* o = FindOwned(cb)) {
                 @autoreleasepool {
                     MetalFrame::EndEncoders(*o);
                 }
+            }
+            if (IsOurCommandBuffer(cb)) {
+                return VK_SUCCESS;
             }
             return original(args...);
         } else if constexpr (I == Id_vkCreateSampler) {
@@ -588,6 +700,12 @@ struct Hook<I, R (*)(A...)> {
             if (info && info->objectType == VK_OBJECT_TYPE_PIPELINE &&
                 IsPlaceholderPipeline(reinterpret_cast<VkPipeline>(info->objectHandle), false)) {
                 return VK_SUCCESS; // MoltenVK does not know the placeholder
+            }
+            if (info && (info->objectType == VK_OBJECT_TYPE_COMMAND_POOL ||
+                         info->objectType == VK_OBJECT_TYPE_COMMAND_BUFFER) &&
+                (IsOurPool(reinterpret_cast<VkCommandPool>(info->objectHandle)) ||
+                 IsOurCommandBuffer(reinterpret_cast<VkCommandBuffer>(info->objectHandle)))) {
+                return VK_SUCCESS; // likewise the layer's command pools and buffers
             }
             return original(args...);
         } else if constexpr (I == Id_vkGetDeviceProcAddr || I == Id_vkGetInstanceProcAddr) {
@@ -672,8 +790,11 @@ struct Hook<I, R (*)(A...)> {
                              I == Id_vkCmdInsertDebugUtilsLabelEXT || I == Id_vkCmdSetLineWidth ||
                              I == Id_vkCmdSetPrimitiveRestartEnable ||
                              I == Id_vkCmdSetDepthBoundsTestEnable || I == Id_vkCmdSetDepthBounds ||
-                             I == Id_vkCmdWriteTimestamp || I == Id_vkCmdWriteTimestamp2) {
-            // Nothing in Metal (primitive restart is always on for strips; no depth bounds test).
+                             I == Id_vkCmdWriteTimestamp || I == Id_vkCmdWriteTimestamp2 ||
+                             I == Id_vkCmdBeginQuery || I == Id_vkCmdEndQuery ||
+                             I == Id_vkCmdResetQueryPool || I == Id_vkCmdCopyQueryPoolResults) {
+            // Nothing in Metal (primitive restart is always on for strips; no depth bounds test;
+            // no occlusion queries or timestamps: their results stay as they were).
         } else if constexpr (I == Id_vkCmdBeginRendering || I == Id_vkCmdBeginRenderingKHR) {
             F::BeginRendering(o, std::get<1>(t));
         } else if constexpr (I == Id_vkCmdEndRendering || I == Id_vkCmdEndRenderingKHR) {
