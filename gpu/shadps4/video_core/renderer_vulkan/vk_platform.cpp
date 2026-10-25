@@ -21,6 +21,9 @@
 #include "common/path_util.h"
 #include "core/emulator_settings.h"
 #include "sdl_window.h"
+#ifdef BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_caps.h"
+#endif
 #include "video_core/renderer_vulkan/vk_platform.h"
 #include "video_core/renderer_vulkan/vk_dlss.h"
 
@@ -436,6 +439,10 @@ vk::UniqueInstance CreateInstance(Frontend::WindowSystemType window_type, bool e
                vk::to_string(instance_result));
 
     VULKAN_HPP_DEFAULT_DISPATCHER.init(*instance);
+#ifdef BB_METAL_BACKEND
+    // The Metal renderer: the device's capabilities are the Metal backend's (M4 step 4.2).
+    MetalCaps::UseMetalAnswers();
+#endif
 
     return std::move(instance);
 }

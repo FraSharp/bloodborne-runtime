@@ -815,6 +815,17 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   with extended usage, and reports 2^62 as the largest resource). On the M3 Pro: 0 differences
   (683 with nothing answered) and all 25 distinct image format queries the same. The other Apple
   Silicon generations (M1, M2) are to be compared before the answers are relied on (4.2).
+- **M4 step 4.2, the Metal answers in use:** with the Metal renderer `MetalCaps::UseMetalAnswers`
+  puts the Metal backend's entry points in the dispatcher right after it loads the instance's:
+  features and properties (both versions), format, memory (with the budget: the device's working
+  set and allocation, as MoltenVK reports them) and queue-family properties, device extensions,
+  image format queries, and tool properties (none). `BB_METAL_CAPS=moltenvk` keeps MoltenVK's; the
+  comparison keeps asking MoltenVK's own entry points. MoltenVK still makes the device from these
+  answers. Checked on the M3 Pro: the comparison stays at 0 differences, the game runs without
+  faults, frame correct. To do before relying on it elsewhere: the comparison on an M1 and an M2.
+  Still MoltenVK's: the external-buffer query and memory export the MetalFX bridge needs (MetalFX
+  becomes Metal-native in 4.3), and VMA's own function pointers (taken from MoltenVK when the
+  allocator is made; the buffers and images left on VMA move in 4.3).
 
 ## Decisions
 

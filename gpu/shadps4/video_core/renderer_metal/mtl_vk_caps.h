@@ -12,4 +12,9 @@ namespace MetalCaps {
 /// MoltenVK's) and logs the differences. Otherwise nothing.
 void CompareIfAsked(void* physical_device);
 
+/// Right after the dispatcher loads the instance's functions: with the Metal renderer
+/// (BB_METAL_FRAME=1) the physical-device queries are answered by the Metal backend (M4 step 4.2;
+/// BB_METAL_CAPS=moltenvk keeps MoltenVK's). The comparison still asks MoltenVK.
+void UseMetalAnswers();
+
 } // namespace MetalCaps

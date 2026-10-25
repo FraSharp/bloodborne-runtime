@@ -131,10 +131,11 @@ id<MTLDevice> Device() {
 struct Answered {
     VkStructureType type;
     const char* name;
+    size_t size;
 };
 template <typename T>
 constexpr Answered Entry(const char* name) {
-    return {VkStructureType(T::structureType), name};
+    return {VkStructureType(T::structureType), name, sizeof(T)};
 }
 const Answered answered[] = {
     Entry<vk::PhysicalDeviceVulkan11Features>("VkPhysicalDeviceVulkan11Features"),
@@ -163,7 +164,9 @@ void ApplyChain(void* head) {
     for (auto* s = static_cast<VkBaseOutStructure*>(head)->pNext; s; s = s->pNext) {
         for (const Answered& a : answered) {
             if (a.type == s->sType) {
-                // The profile covers the members after sType and pNext.
+                // Cleared after sType and pNext, then the profile's values.
+                std::memset(reinterpret_cast<u8*>(s) + sizeof(VkBaseOutStructure), 0,
+                            a.size - sizeof(VkBaseOutStructure));
                 ApplyProfile(a.name, s);
             }
         }
@@ -171,12 +174,14 @@ void ApplyChain(void* head) {
 }
 
 void FillFeatures(VkPhysicalDeviceFeatures2* features) {
+    features->features = {};
     ApplyProfile("VkPhysicalDeviceFeatures", &features->features);
     ApplyChain(features);
 }
 
 void FillProperties(VkPhysicalDeviceProperties2* properties) {
     auto& p = properties->properties;
+    p = {};
     ApplyProfile("VkPhysicalDeviceProperties", &p);
     ApplyProfile("VkPhysicalDeviceLimits", &p.limits);
     ApplyProfile("VkPhysicalDeviceSparseProperties", &p.sparseProperties);
@@ -197,6 +202,13 @@ void FillProperties(VkPhysicalDeviceProperties2* properties) {
 }
 
 void FillFormat(VkFormat format, VkFormatProperties2* properties) {
+    properties->formatProperties = {};
+    for (auto* s = static_cast<VkBaseOutStructure*>(static_cast<void*>(properties))->pNext; s; s = s->pNext) {
+        if (s->sType == VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3) {
+            auto* p3 = reinterpret_cast<VkFormatProperties3*>(s);
+            p3->linearTilingFeatures = p3->optimalTilingFeatures = p3->bufferFeatures = 0;
+        }
+    }
     struct Masks {
         u32 format;
         u64 linear, optimal, buffer;
@@ -359,6 +371,114 @@ std::vector<std::string> Extensions() {
     };
 }
 
+
+// ---- The entry points (step 4.2) --------------------------------------------------------------
+
+VKAPI_ATTR void VKAPI_CALL GetFeatures2(VkPhysicalDevice, VkPhysicalDeviceFeatures2* features) {
+    FillFeatures(features);
+}
+VKAPI_ATTR void VKAPI_CALL GetFeatures(VkPhysicalDevice, VkPhysicalDeviceFeatures* features) {
+    *features = {};
+    ApplyProfile("VkPhysicalDeviceFeatures", features);
+}
+VKAPI_ATTR void VKAPI_CALL GetProperties2(VkPhysicalDevice, VkPhysicalDeviceProperties2* properties) {
+    @autoreleasepool {
+        FillProperties(properties);
+    }
+}
+VKAPI_ATTR void VKAPI_CALL GetProperties(VkPhysicalDevice, VkPhysicalDeviceProperties* properties) {
+    VkPhysicalDeviceProperties2 p2{VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_PROPERTIES_2};
+    @autoreleasepool {
+        FillProperties(&p2);
+    }
+    *properties = p2.properties;
+}
+VKAPI_ATTR void VKAPI_CALL GetFormatProperties2(VkPhysicalDevice, VkFormat format, VkFormatProperties2* p) {
+    FillFormat(format, p);
+}
+VKAPI_ATTR void VKAPI_CALL GetFormatProperties(VkPhysicalDevice, VkFormat format, VkFormatProperties* p) {
+    VkFormatProperties2 p2{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2};
+    FillFormat(format, &p2);
+    *p = p2.formatProperties;
+}
+VKAPI_ATTR void VKAPI_CALL GetMemoryProperties(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties* memory) {
+    FillMemory(memory);
+}
+VKAPI_ATTR void VKAPI_CALL GetMemoryProperties2(VkPhysicalDevice, VkPhysicalDeviceMemoryProperties2* memory) {
+    FillMemory(&memory->memoryProperties);
+    for (auto* s = static_cast<VkBaseOutStructure*>(static_cast<void*>(memory))->pNext; s; s = s->pNext) {
+        if (s->sType == VK_STRUCTURE_TYPE_PHYSICAL_DEVICE_MEMORY_BUDGET_PROPERTIES_EXT) {
+            // As MoltenVK reports it: the device's working set and what it has allocated.
+            auto* budget = reinterpret_cast<VkPhysicalDeviceMemoryBudgetPropertiesEXT*>(s);
+            std::memset(budget->heapBudget, 0, sizeof(budget->heapBudget));
+            std::memset(budget->heapUsage, 0, sizeof(budget->heapUsage));
+            budget->heapBudget[0] = Device().recommendedMaxWorkingSetSize;
+            budget->heapUsage[0] = Device().currentAllocatedSize;
+        }
+    }
+}
+VKAPI_ATTR void VKAPI_CALL GetQueueFamilies(VkPhysicalDevice, u32* count, VkQueueFamilyProperties* out) {
+    const auto families = QueueFamilies();
+    if (!out) {
+        *count = u32(families.size());
+        return;
+    }
+    *count = std::min(*count, u32(families.size()));
+    std::copy_n(families.begin(), *count, out);
+}
+VKAPI_ATTR void VKAPI_CALL GetQueueFamilies2(VkPhysicalDevice, u32* count, VkQueueFamilyProperties2* out) {
+    const auto families = QueueFamilies();
+    if (!out) {
+        *count = u32(families.size());
+        return;
+    }
+    *count = std::min(*count, u32(families.size()));
+    for (u32 i = 0; i < *count; ++i) {
+        out[i].queueFamilyProperties = families[i];
+    }
+}
+VKAPI_ATTR VkResult VKAPI_CALL EnumerateExtensions(VkPhysicalDevice, const char* layer, u32* count,
+                                                  VkExtensionProperties* out) {
+    if (layer) {
+        *count = 0;
+        return VK_ERROR_LAYER_NOT_PRESENT;
+    }
+    const auto names = Extensions();
+    if (!out) {
+        *count = u32(names.size());
+        return VK_SUCCESS;
+    }
+    const u32 n = std::min(*count, u32(names.size()));
+    for (u32 i = 0; i < n; ++i) {
+        out[i] = {};
+        std::strncpy(out[i].extensionName, names[i].c_str(), VK_MAX_EXTENSION_NAME_SIZE - 1);
+        out[i].specVersion = 1;
+    }
+    *count = n;
+    return n < names.size() ? VK_INCOMPLETE : VK_SUCCESS;
+}
+VKAPI_ATTR VkResult VKAPI_CALL GetImageFormat2(VkPhysicalDevice, const VkPhysicalDeviceImageFormatInfo2* info,
+                                              VkImageFormatProperties2* out) {
+    @autoreleasepool {
+        return ImageFormat(info, out);
+    }
+}
+VKAPI_ATTR VkResult VKAPI_CALL GetToolProperties(VkPhysicalDevice, u32* count, VkPhysicalDeviceToolProperties*) {
+    *count = 0;
+    return VK_SUCCESS;
+}
+
+/// MoltenVK's own entry points, kept for the comparison once ours are in the dispatcher.
+struct MoltenVkQueries {
+    PFN_vkGetPhysicalDeviceFeatures2 features2;
+    PFN_vkGetPhysicalDeviceProperties2 properties2;
+    PFN_vkGetPhysicalDeviceFormatProperties2 format2;
+    PFN_vkGetPhysicalDeviceMemoryProperties memory;
+    PFN_vkGetPhysicalDeviceQueueFamilyProperties families;
+    PFN_vkEnumerateDeviceExtensionProperties extensions;
+    PFN_vkGetPhysicalDeviceImageFormatProperties2 image_format2;
+} mvk;
+
 // ---- The comparison ---------------------------------------------------------------------------
 
 std::string Value(const Field& f, const u8* p) {
@@ -431,7 +551,7 @@ int CompareFeatures(VkPhysicalDevice physical) {
         vk::PhysicalDeviceShaderMixedFloatDotProductFeaturesVALVE,
         vk::PhysicalDeviceCooperativeMatrixFeaturesKHR, vk::PhysicalDeviceShaderFloat8FeaturesEXT>;
     Chain moltenvk, metal;
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceFeatures2(
+    mvk.features2(
         physical, reinterpret_cast<VkPhysicalDeviceFeatures2*>(&moltenvk.get<vk::PhysicalDeviceFeatures2>()));
     FillFeatures(reinterpret_cast<VkPhysicalDeviceFeatures2*>(&metal.get<vk::PhysicalDeviceFeatures2>()));
     int n = CompareStructure("VkPhysicalDeviceFeatures", &moltenvk.get<vk::PhysicalDeviceFeatures2>().features,
@@ -461,7 +581,7 @@ int CompareProperties(VkPhysicalDevice physical) {
                                      vk::PhysicalDevicePushDescriptorPropertiesKHR,
                                      vk::PhysicalDeviceDriverProperties>;
     Chain moltenvk, metal;
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceProperties2(
+    mvk.properties2(
         physical, reinterpret_cast<VkPhysicalDeviceProperties2*>(&moltenvk.get<vk::PhysicalDeviceProperties2>()));
     FillProperties(reinterpret_cast<VkPhysicalDeviceProperties2*>(&metal.get<vk::PhysicalDeviceProperties2>()));
     const auto& a = moltenvk.get<vk::PhysicalDeviceProperties2>().properties;
@@ -485,7 +605,7 @@ int CompareFormats(VkPhysicalDevice physical) {
     for (u32 f = 1; f <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK; ++f) {
         VkFormatProperties3 a3{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3}, b3{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_3};
         VkFormatProperties2 a{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, &a3}, b{VK_STRUCTURE_TYPE_FORMAT_PROPERTIES_2, &b3};
-        VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceFormatProperties2(physical, VkFormat(f), &a);
+        mvk.format2(physical, VkFormat(f), &a);
         FillFormat(VkFormat(f), &b);
         const auto report = [&](const char* what, u64 x, u64 y) {
             if (x != y) {
@@ -506,7 +626,7 @@ int CompareFormats(VkPhysicalDevice physical) {
 int CompareMemoryAndQueues(VkPhysicalDevice physical) {
     int n = 0;
     VkPhysicalDeviceMemoryProperties a{}, b{};
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceMemoryProperties(physical, &a);
+    mvk.memory(physical, &a);
     FillMemory(&b);
     if (a.memoryTypeCount != b.memoryTypeCount || a.memoryHeapCount != b.memoryHeapCount) {
         std::printf("Metal caps: memory: MoltenVK %u types in %u heaps, Metal %u in %u\n",
@@ -530,9 +650,9 @@ int CompareMemoryAndQueues(VkPhysicalDevice physical) {
         }
     }
     u32 count = 0;
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, nullptr);
+    mvk.families(physical, &count, nullptr);
     std::vector<VkQueueFamilyProperties> families(count);
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceQueueFamilyProperties(physical, &count, families.data());
+    mvk.families(physical, &count, families.data());
     const auto ours = QueueFamilies();
     for (u32 i = 0; i < count; ++i) {
         const bool same = i < ours.size() && std::memcmp(&families[i], &ours[i], sizeof(families[i])) == 0;
@@ -555,9 +675,9 @@ int CompareMemoryAndQueues(VkPhysicalDevice physical) {
 
 int CompareExtensions(VkPhysicalDevice physical) {
     u32 count = 0;
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, nullptr);
+    mvk.extensions(physical, nullptr, &count, nullptr);
     std::vector<VkExtensionProperties> list(count);
-    VULKAN_HPP_DEFAULT_DISPATCHER.vkEnumerateDeviceExtensionProperties(physical, nullptr, &count, list.data());
+    mvk.extensions(physical, nullptr, &count, list.data());
     std::set<std::string> moltenvk, metal;
     for (const auto& e : list) {
         moltenvk.insert(e.extensionName);
@@ -591,6 +711,18 @@ int CompareExtensions(VkPhysicalDevice physical) {
 }
 
 PFN_vkGetPhysicalDeviceImageFormatProperties2 moltenvk_image_format;
+
+/// MoltenVK's entry points from the dispatcher, before any of ours replace them.
+void SaveMoltenVk() {
+    if (mvk.features2) {
+        return;
+    }
+    auto& d = VULKAN_HPP_DEFAULT_DISPATCHER;
+    mvk = {d.vkGetPhysicalDeviceFeatures2, d.vkGetPhysicalDeviceProperties2,
+                d.vkGetPhysicalDeviceFormatProperties2, d.vkGetPhysicalDeviceMemoryProperties,
+                d.vkGetPhysicalDeviceQueueFamilyProperties, d.vkEnumerateDeviceExtensionProperties,
+                d.vkGetPhysicalDeviceImageFormatProperties2};
+}
 
 /// In compare mode the renderer's image format queries go through here: MoltenVK answers (as
 /// before) and each distinct query whose Metal answer differs is logged once.
@@ -633,6 +765,7 @@ void CompareIfAsked(void* physical_device) {
         return;
     }
     const auto physical = static_cast<VkPhysicalDevice>(physical_device);
+    SaveMoltenVk();
     @autoreleasepool {
         const int features = CompareFeatures(physical);
         const int properties = CompareProperties(physical);
@@ -640,7 +773,7 @@ void CompareIfAsked(void* physical_device) {
         const int memory = CompareMemoryAndQueues(physical);
         const int extensions = CompareExtensions(physical);
         // The image format queries happen later (the texture cache): compared as they come.
-        moltenvk_image_format = VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceImageFormatProperties2;
+        moltenvk_image_format = mvk.image_format2;
         VULKAN_HPP_DEFAULT_DISPATCHER.vkGetPhysicalDeviceImageFormatProperties2 = CompareImageFormat;
         {
             // Instance::CollectImageFormatInfo's block-texel-view query, made before this.
@@ -658,6 +791,31 @@ void CompareIfAsked(void* physical_device) {
                     features + properties + formats + memory + extensions, features, properties,
                     formats, memory, extensions);
     }
+}
+
+void UseMetalAnswers() {
+    const char* frame = std::getenv("BB_METAL_FRAME");
+    const char* caps = std::getenv("BB_METAL_CAPS");
+    if (!frame || frame[0] != '1' || (caps && std::strcmp(caps, "moltenvk") == 0)) {
+        return;
+    }
+    SaveMoltenVk();
+    auto& d = VULKAN_HPP_DEFAULT_DISPATCHER;
+    d.vkGetPhysicalDeviceFeatures2 = d.vkGetPhysicalDeviceFeatures2KHR = GetFeatures2;
+    d.vkGetPhysicalDeviceFeatures = GetFeatures;
+    d.vkGetPhysicalDeviceProperties2 = d.vkGetPhysicalDeviceProperties2KHR = GetProperties2;
+    d.vkGetPhysicalDeviceProperties = GetProperties;
+    d.vkGetPhysicalDeviceFormatProperties2 = d.vkGetPhysicalDeviceFormatProperties2KHR = GetFormatProperties2;
+    d.vkGetPhysicalDeviceFormatProperties = GetFormatProperties;
+    d.vkGetPhysicalDeviceMemoryProperties = GetMemoryProperties;
+    d.vkGetPhysicalDeviceMemoryProperties2 = d.vkGetPhysicalDeviceMemoryProperties2KHR = GetMemoryProperties2;
+    d.vkGetPhysicalDeviceQueueFamilyProperties = GetQueueFamilies;
+    d.vkGetPhysicalDeviceQueueFamilyProperties2 = d.vkGetPhysicalDeviceQueueFamilyProperties2KHR = GetQueueFamilies2;
+    d.vkEnumerateDeviceExtensionProperties = EnumerateExtensions;
+    d.vkGetPhysicalDeviceImageFormatProperties2 = d.vkGetPhysicalDeviceImageFormatProperties2KHR = GetImageFormat2;
+    d.vkGetPhysicalDeviceToolProperties = d.vkGetPhysicalDeviceToolPropertiesEXT = GetToolProperties;
+    std::printf("Metal caps: the device's features, properties, formats, memory, queues and "
+                "extensions are the Metal backend's (BB_METAL_CAPS=moltenvk: MoltenVK's)\n");
 }
 
 } // namespace MetalCaps
