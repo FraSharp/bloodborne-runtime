@@ -118,24 +118,18 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
     ActiveStreamEncoder().Barrier(cmdbuf, {.memoryBarrierCount = 1, .pMemoryBarriers = &before});
     for (const auto& image : images) {
         const VkDeviceSize size = VkDeviceSize(image.width) * image.height * image.bytes_per_pixel;
-        const VkBufferCreateInfo buffer_ci{
-            .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
-            .size = size,
-            .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
-        };
-        const VmaAllocationCreateInfo alloc_ci{
-            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
-                     VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
-            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
-        };
-        VkBuffer buffer{};
-        VmaAllocation allocation{};
-        VmaAllocationInfo info{};
-        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
-                            &info) != VK_SUCCESS) {
+        auto& backend = BackendDevice::From(instance);
+        const auto readback = backend.CreateBuffer({
+            .size_bytes = size,
+            .uses = VideoCore::Backend::BufferUse::TransferDestination,
+            .memory = VideoCore::Backend::MemoryClass::HostCached,
+        }, "image dump readback");
+        if (!readback.handle || readback.mapped.size() < size) {
+            if (readback.handle) backend.DestroyBuffer(readback.handle);
             std::printf("Dump: no host memory for %s\n", image.name);
             continue;
         }
+        const vk::Buffer buffer{reinterpret_cast<VkBuffer>(readback.native)};
         const vk::BufferImageCopy region{
             .imageSubresource = {image.aspect, 0, 0, 1},
             .imageExtent = {image.width, image.height, 1},
@@ -146,14 +140,14 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
         std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
                       image.name, image.width, image.height, image.format);
         scheduler.DeferPriorityOperation(
-            [allocator = instance.GetAllocator(), buffer, allocation, info, size,
+            [&backend, handle = readback.handle, mapped = readback.mapped.data(), size,
              file = std::string{path}] {
-                vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+                backend.InvalidateBuffer(handle, 0, size);
                 if (FILE* f = std::fopen(file.c_str(), "wb")) {
-                    std::fwrite(info.pMappedData, 1, size, f);
+                    std::fwrite(mapped, 1, size, f);
                     std::fclose(f);
                 }
-                vmaDestroyBuffer(allocator, buffer, allocation);
+                backend.DestroyBuffer(handle);
             });
     }
     const vk::MemoryBarrier2 after{
