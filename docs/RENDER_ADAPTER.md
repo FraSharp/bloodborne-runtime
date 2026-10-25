@@ -735,6 +735,21 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   526 live backend textures (795 MiB, every one made) against 336 (647 MiB), and 9,101 against
   8,882 MiB on the Metal device. The memory line every few seconds now also prints the Metal
   device's allocation and the backend's live textures ("Memory: Metal").
+- **M4 step 3, images only in Metal:** with the Metal frame an image the backend can make exactly
+  in Metal is no longer imported into MoltenVK: the device keeps the texture under a placeholder
+  VkImage (`MetalLayer::MetalOnlyImage`), the residency set takes the texture itself, and the
+  image is destroyed without MoltenVK. `vkCreateImageView` of such an image makes the view in
+  Metal (`MetalFrame::MakeView`: the view's format, or the stencil plane of a depth-stencil
+  texture; its type, levels and layers; the component mapping composed with the format's
+  swizzle) under a placeholder view. Block-compressed images now qualify (made without shader
+  writes; no uncompressed view of one was seen). The device registers its MoltenVK images' textures
+  with the Metal frame once (they were exported on every copy, clear and blit). Left to MoltenVK:
+  3D images viewed as 2D slices and formats Metal has no exact twin of. Measured (new second):
+  2,247 textures made by the Metal backend (447 before); image views reaching MoltenVK from
+  2,697 to 3 and image memory queries from 1,912 to 2 in a run; 39.1 against 38.2 FPS,
+  4.13–4.18 against 4.10–4.33 µs per draw; the Metal device 8,878 against 9,007 MiB; MetalFX
+  Balanced 33.8 FPS; Metal API validation: nothing destroyed while still required, no view Metal
+  could not make; frames correct.
 
 ## Decisions
 

@@ -181,6 +181,13 @@ void DeviceAddressTaken(VkBuffer buffer);
 /// The device's buffers (MetalLayer::BufferMade): their MTLBuffer and offset, looked up once.
 void BufferMade(VkBuffer buffer);
 void BufferGone(VkBuffer buffer);
+/// Images' textures (M4): `texture` for an image only Metal has, nil to export a MoltenVK image's
+/// once. ImageGone drops the record.
+void ImageMade(VkImage image, id<MTLTexture> texture);
+void ImageGone(VkImage image);
+/// A view of an image only Metal has, made in Metal and recorded under `view` (a placeholder);
+/// false when Metal cannot make it.
+bool MakeView(VkImageView view, const VkImageViewCreateInfo* info);
 
 // Commands.
 void Barrier(Owned& o);

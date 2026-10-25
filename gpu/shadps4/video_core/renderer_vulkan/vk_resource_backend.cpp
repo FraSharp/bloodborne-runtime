@@ -8,6 +8,9 @@
 #include "bbport_toggles.h"
 #include "video_core/buffer_cache/buffer.h"
 #include "video_core/renderer_metal/mtl_resources.h"
+#if BB_METAL_BACKEND
+#include "video_core/renderer_metal/mtl_vk_layer.h"
+#endif
 #include "video_core/renderer_vulkan/vk_instance.h"
 #include "video_core/renderer_vulkan/vk_platform.h"
 
@@ -258,7 +261,14 @@ void UniqueImage::Destroy() {
     if (image) {
         BbStats::vk_image_bytes.fetch_sub(size_bytes, std::memory_order_relaxed);
         BbMetalResidency::RemoveImage(image);
-        if (metal_texture) {
+        if (metal_only) {
+#if BB_METAL_BACKEND
+            MetalLayer::ImageGone(static_cast<VkImage>(image));
+#endif
+            MetalResources::Release(metal_texture);
+            metal_texture = nullptr;
+            metal_only = false;
+        } else if (metal_texture) {
             device.destroyImage(image);
             MetalResources::Release(metal_texture);
             metal_texture = nullptr;
@@ -275,12 +285,21 @@ bool UniqueImage::CreateInMetal(const vk::ImageCreateInfo& image_ci) {
     if (!MetalResources::Enabled()) {
         return false;
     }
-    constexpr auto unsupported =
+#if BB_METAL_BACKEND
+    // With the Metal frame the image is the texture alone (M4): views are made in Metal, so
+    // block-compressed images that might be viewed uncompressed qualify (the game was measured
+    // making no such view; the device logs one if it does).
+    const bool frame = MetalLayer::FrameEnabled();
+#else
+    const bool frame = false;
+#endif
+    vk::ImageCreateFlags unsupported =
         vk::ImageCreateFlagBits::eSparseBinding | vk::ImageCreateFlagBits::eSparseResidency |
         vk::ImageCreateFlagBits::eSparseAliased | vk::ImageCreateFlagBits::eCubeCompatible |
-        vk::ImageCreateFlagBits::e2DArrayCompatible |
-        vk::ImageCreateFlagBits::eBlockTexelViewCompatible |
-        vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
+        vk::ImageCreateFlagBits::e2DArrayCompatible | vk::ImageCreateFlagBits::e2DViewCompatibleEXT;
+    if (!frame) {
+        unsupported |= vk::ImageCreateFlagBits::eBlockTexelViewCompatible;
+    }
     if ((image_ci.flags & unsupported) || image_ci.tiling != vk::ImageTiling::eOptimal) {
         return false;
     }
@@ -305,7 +324,7 @@ bool UniqueImage::CreateInMetal(const vk::ImageCreateInfo& image_ci) {
         .samples = u32(image_ci.samples),
         .shader_read = bool(usage & (Usage::eSampled | Usage::eInputAttachment | Usage::eStorage |
                                      Usage::eTransferSrc | Usage::eTransferDst)),
-        .shader_write = bool(usage & Usage::eStorage),
+        .shader_write = !compressed && bool(usage & Usage::eStorage), // Metal: no compressed writes
         // MoltenVK clears and some copies through render passes.
         .render_target = attachment || (!compressed && bool(usage & Usage::eTransferDst)),
         .format_views = bool(image_ci.flags & vk::ImageCreateFlagBits::eMutableFormat) ||
@@ -315,6 +334,18 @@ bool UniqueImage::CreateInMetal(const vk::ImageCreateInfo& image_ci) {
     if (!texture.object) {
         return false;
     }
+#if BB_METAL_BACKEND
+    if (frame) {
+        this->image_ci = image_ci;
+        image = vk::Image{static_cast<VkImage>(MetalLayer::MetalOnlyImage(texture.object))};
+        metal_texture = texture.object;
+        metal_only = true;
+        size_bytes = texture.size_bytes;
+        BbMetalResidency::AddImageTexture(image, texture.object);
+        BbStats::vk_image_bytes.fetch_add(size_bytes, std::memory_order_relaxed);
+        return true;
+    }
+#endif
     const VkImportMetalTextureInfoEXT import_info{
         .sType = VK_STRUCTURE_TYPE_IMPORT_METAL_TEXTURE_INFO_EXT,
         .pNext = image_ci.pNext,

@@ -64,7 +64,7 @@ using MetalFrame::Owned;
     X(vkCreateCommandPool) X(vkDestroyCommandPool) X(vkResetCommandPool)                           \
     X(vkAllocateCommandBuffers) X(vkFreeCommandBuffers) X(vkResetCommandBuffer)                    \
     X(vkDestroyShaderModule) X(vkCreatePipelineLayout) X(vkDestroyPipelineLayout)                  \
-    X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout)                                 \
+    X(vkCreateDescriptorSetLayout) X(vkDestroyDescriptorSetLayout) X(vkDestroyImage)               \
     X(vkCreateSampler) X(vkDestroySampler) X(vkDestroyImageView) X(vkDestroyPipeline)              \
     X(vkDestroySemaphore)                                                                          \
     X(vkGetBufferDeviceAddress) X(vkGetBufferDeviceAddressKHR) X(vkCreateShaderModule)            \
@@ -276,7 +276,8 @@ std::atomic<uint64_t> next_pool{1}, next_command_buffer{1};
 /// from the create info), shader modules (their SPIR-V goes to the Metal builder), and the
 /// layouts (no pipeline reaches MoltenVK; push descriptors and constants are encoded in Metal).
 constexpr uint64_t SamplerTag = 0xBC50000000000000ull, ModuleTag = 0xBC60000000000000ull,
-                   PipelineLayoutTag = 0xBC70000000000000ull, SetLayoutTag = 0xBC80000000000000ull;
+                   PipelineLayoutTag = 0xBC70000000000000ull, SetLayoutTag = 0xBC80000000000000ull,
+                   ImageTag = 0xBC90000000000000ull, ViewTag = 0xBCA0000000000000ull;
 std::atomic<uint64_t> next_object{1};
 template <typename H>
 H OurHandle(uint64_t tag) {
@@ -670,6 +671,11 @@ struct Hook<I, R (*)(A...)> {
                 }
             }
             return result;
+        } else if constexpr (I == Id_vkDestroyImage) {
+            if (IsOurs(std::get<1>(std::tuple{args...}), ImageTag)) {
+                return; // the device gives up the texture (UniqueImage::Destroy)
+            }
+            return original(args...);
         } else if constexpr (I == Id_vkCreateShaderModule) {
             const auto [dev, info, alloc, out] = std::tuple{args...};
             if (frame_enabled) {
@@ -719,6 +725,22 @@ struct Hook<I, R (*)(A...)> {
             return result;
         } else if constexpr (I == Id_vkCreateImageView) {
             const auto [dev, info, alloc, out] = std::tuple{args...};
+            if (frame_enabled && IsOurs(info->image, ImageTag)) {
+                // A view of an image only Metal has: made in Metal too.
+                const VkImageView view = OurHandle<VkImageView>(ViewTag);
+                bool made = false;
+                @autoreleasepool {
+                    made = MetalFrame::MakeView(view, info);
+                }
+                if (!made) {
+                    std::printf("Metal layer: no Metal view of format %d (type %d) for an image "
+                                "only Metal has\n",
+                                int(info->format), int(info->viewType));
+                    return VK_ERROR_FORMAT_NOT_SUPPORTED;
+                }
+                *out = view;
+                return VK_SUCCESS;
+            }
             const R result = original(args...);
             if (result == VK_SUCCESS && (present_enabled || frame_enabled)) {
                 MetalFrame::ImageViewCreated(*out, info);
@@ -799,8 +821,12 @@ struct Hook<I, R (*)(A...)> {
             }
             return original(args...);
         } else if constexpr (I == Id_vkDestroyImageView) {
+            const VkImageView view = std::get<1>(std::tuple{args...});
             if (present_enabled || frame_enabled) {
-                MetalFrame::ImageViewDestroyed(std::get<1>(std::tuple{args...}));
+                MetalFrame::ImageViewDestroyed(view);
+            }
+            if (IsOurs(view, ViewTag)) {
+                return;
             }
             return original(args...);
         } else if constexpr (I == Id_vkDestroyPipeline) {
@@ -1080,6 +1106,33 @@ void BufferMade(void* buffer) {
 void BufferGone(void* buffer) {
     if (frame_enabled && buffer) {
         MetalFrame::BufferGone(static_cast<VkBuffer>(buffer));
+    }
+}
+
+void* MetalOnlyImage(void* texture) {
+    if (!frame_enabled || !texture) {
+        return nullptr;
+    }
+    const VkImage image = OurHandle<VkImage>(ImageTag);
+    MetalFrame::ImageMade(image, (__bridge id<MTLTexture>)texture);
+    return image;
+}
+
+bool IsMetalOnlyImage(void* image) {
+    return IsOurs(static_cast<VkImage>(image), ImageTag);
+}
+
+void ImageMade(void* image) {
+    if (frame_enabled && image && !IsMetalOnlyImage(image)) {
+        @autoreleasepool {
+            MetalFrame::ImageMade(static_cast<VkImage>(image), nil);
+        }
+    }
+}
+
+void ImageGone(void* image) {
+    if (frame_enabled && image) {
+        MetalFrame::ImageGone(static_cast<VkImage>(image));
     }
 }
 

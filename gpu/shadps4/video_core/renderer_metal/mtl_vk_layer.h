@@ -65,5 +65,14 @@ bool WaitEvent(void* event, unsigned long long value, unsigned long long timeout
 /// With the Metal frame: the GPU memory in use and the working-set budget of MoltenVK's Metal
 /// device (what MoltenVK's VK_EXT_memory_budget reports); false when the frame is off.
 bool MemoryUsage(unsigned long long* used, unsigned long long* budget);
+/// With the Metal frame (M4): an image only Metal has. Returns a placeholder VkImage for `texture`
+/// (id<MTLTexture>; the caller keeps its reference), registered with the Metal frame; null when
+/// the frame is off. Its views are made in Metal (vkCreateImageView with it returns a placeholder
+/// view). ImageGone before the texture is released.
+void* MetalOnlyImage(void* texture);
+bool IsMetalOnlyImage(void* image);
+/// A MoltenVK image the device made (a VkImage): the frame keeps its texture, exported once.
+void ImageMade(void* image);
+void ImageGone(void* image);
 
 } // namespace MetalLayer

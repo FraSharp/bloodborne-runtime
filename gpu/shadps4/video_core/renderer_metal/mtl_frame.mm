@@ -172,8 +172,34 @@ id<MTLTexture> TextureOfView(VkImageView view) {
     return texture;
 }
 
+/// Images' textures (M4): those only Metal has, and the device's MoltenVK images exported once.
+/// Anything else is exported on every use.
+std::shared_mutex images_mutex;
+std::unordered_map<VkImage, id<MTLTexture>> image_textures;
+std::atomic<u64> images_generation{0};
+
 id<MTLTexture> TextureOfImage(VkImage image) {
-    return image ? ExportTexture(image, VK_NULL_HANDLE) : nil;
+    if (!image) {
+        return nil;
+    }
+    // Copies, clears and blits name the same images over and over.
+    thread_local VkImage cached_image = VK_NULL_HANDLE;
+    thread_local __unsafe_unretained id<MTLTexture> cached_texture = nil;
+    thread_local u64 cached_generation = ~0ull;
+    const u64 generation = images_generation.load(std::memory_order_acquire);
+    if (image == cached_image && generation == cached_generation) {
+        return cached_texture;
+    }
+    {
+        std::shared_lock lock{images_mutex};
+        if (auto it = image_textures.find(image); it != image_textures.end()) {
+            cached_image = image;
+            cached_texture = it->second;
+            cached_generation = generation;
+            return it->second;
+        }
+    }
+    return ExportTexture(image, VK_NULL_HANDLE);
 }
 
 // ---- Encoders ----
@@ -811,6 +837,123 @@ void ImageViewDestroyed(VkImageView view) {
     std::scoped_lock lock{maps_mutex};
     views.erase(view);
     view_infos.erase(view);
+}
+
+void ImageMade(VkImage image, id<MTLTexture> texture) {
+    if (!texture) {
+        texture = ExportTexture(image, VK_NULL_HANDLE);
+    }
+    if (!texture) {
+        return;
+    }
+    std::unique_lock lock{images_mutex};
+    image_textures[image] = texture;
+    images_generation.fetch_add(1, std::memory_order_release); // a reused handle value
+}
+
+void ImageGone(VkImage image) {
+    std::unique_lock lock{images_mutex};
+    if (image_textures.erase(image)) {
+        images_generation.fetch_add(1, std::memory_order_release);
+    }
+}
+
+bool MakeView(VkImageView view, const VkImageViewCreateInfo* info) {
+    namespace VkToMtl = Metal::VkToMtl;
+    id<MTLTexture> base = nil;
+    {
+        std::shared_lock lock{images_mutex};
+        if (auto it = image_textures.find(info->image); it != image_textures.end()) {
+            base = it->second;
+        }
+    }
+    if (!base) {
+        return false;
+    }
+    const auto format = vk::Format(info->format);
+    auto pixel_format = MTLPixelFormat(VkToMtl::PixelFormat(format));
+    if (pixel_format == MTLPixelFormatInvalid) {
+        return false;
+    }
+    const VkImageSubresourceRange& range = info->subresourceRange;
+    const bool depth_stencil = VkToMtl::IsDepthPixelFormat(u32(base.pixelFormat)) ||
+                               VkToMtl::HasStencilPixelFormat(u32(base.pixelFormat));
+    if (depth_stencil) {
+        // A stencil-only view reads the stencil plane; a depth view the texture itself.
+        pixel_format = base.pixelFormat;
+        if (range.aspectMask == VK_IMAGE_ASPECT_STENCIL_BIT &&
+            VkToMtl::IsDepthPixelFormat(u32(base.pixelFormat))) {
+            pixel_format = base.pixelFormat == MTLPixelFormatDepth32Float_Stencil8
+                               ? MTLPixelFormatX32_Stencil8
+                               : MTLPixelFormatX24_Stencil8;
+        }
+    }
+    const NSUInteger levels = range.levelCount == VK_REMAINING_MIP_LEVELS
+                                  ? base.mipmapLevelCount - range.baseMipLevel
+                                  : range.levelCount;
+    const bool volume = base.textureType == MTLTextureType3D;
+    const NSUInteger base_slices =
+        base.textureType == MTLTextureTypeCube ? 6 : base.arrayLength;
+    const NSUInteger layers = range.layerCount == VK_REMAINING_ARRAY_LAYERS
+                                  ? base_slices - range.baseArrayLayer
+                                  : range.layerCount;
+    const bool multisample = base.sampleCount > 1;
+    MTLTextureType type = MTLTextureType2D;
+    switch (info->viewType) {
+    case VK_IMAGE_VIEW_TYPE_3D:
+        type = MTLTextureType3D;
+        break;
+    case VK_IMAGE_VIEW_TYPE_CUBE:
+        type = MTLTextureTypeCube;
+        break;
+    case VK_IMAGE_VIEW_TYPE_CUBE_ARRAY:
+        type = MTLTextureTypeCubeArray;
+        break;
+    case VK_IMAGE_VIEW_TYPE_1D_ARRAY:
+    case VK_IMAGE_VIEW_TYPE_2D_ARRAY:
+        type = multisample ? MTLTextureType2DMultisampleArray : MTLTextureType2DArray;
+        break;
+    default: // 1D images are 2D textures (NewTexture)
+        type = multisample ? MTLTextureType2DMultisample : MTLTextureType2D;
+        break;
+    }
+    const NSRange level_range = NSMakeRange(range.baseMipLevel, levels);
+    const NSRange slice_range = volume ? NSMakeRange(0, 1) : NSMakeRange(range.baseArrayLayer, layers);
+    const auto swizzle = depth_stencil ? VkToMtl::IdentitySwizzle
+                                       : VkToMtl::ComposeSwizzle(vk::ComponentMapping{
+                                                                     vk::ComponentSwizzle(info->components.r),
+                                                                     vk::ComponentSwizzle(info->components.g),
+                                                                     vk::ComponentSwizzle(info->components.b),
+                                                                     vk::ComponentSwizzle(info->components.a)},
+                                                                 format);
+    id<MTLTexture> texture = nil;
+    if (pixel_format == base.pixelFormat && type == base.textureType && range.baseMipLevel == 0 &&
+        levels == base.mipmapLevelCount && (volume || (range.baseArrayLayer == 0 && layers == base_slices)) &&
+        swizzle == VkToMtl::IdentitySwizzle) {
+        texture = base; // the whole texture as it is
+    } else if (swizzle == VkToMtl::IdentitySwizzle) {
+        texture = [base newTextureViewWithPixelFormat:pixel_format
+                                          textureType:type
+                                               levels:level_range
+                                               slices:slice_range];
+    } else {
+        texture = [base newTextureViewWithPixelFormat:pixel_format
+                                          textureType:type
+                                               levels:level_range
+                                               slices:slice_range
+                                              swizzle:MTLTextureSwizzleChannelsMake(
+                                                          MTLTextureSwizzle(swizzle.r),
+                                                          MTLTextureSwizzle(swizzle.g),
+                                                          MTLTextureSwizzle(swizzle.b),
+                                                          MTLTextureSwizzle(swizzle.a))];
+    }
+    if (!texture) {
+        return false;
+    }
+    std::scoped_lock lock{maps_mutex};
+    views[view] = texture;
+    view_infos[view] = {info->image, info->format, range};
+    return true;
 }
 
 void BufferMade(VkBuffer buffer) {

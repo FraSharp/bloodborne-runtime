@@ -212,6 +212,21 @@ void AddImage(VkImage image) {
     Commit(s);
 }
 
+void AddImageTexture(VkImage image, void* texture) {
+    auto& s = Get();
+    if (!s.set || !image || !texture) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    if (s.images.contains(image)) {
+        return;
+    }
+    const id object = static_cast<id>(texture);
+    s.images.emplace(image, object);
+    SendObject(s.set, "addAllocation:", object);
+    Commit(s);
+}
+
 void RemoveImage(VkImage image) {
     auto& s = Get();
     if (!s.set || !image) {
@@ -266,6 +281,7 @@ bool AddMemory(VkDeviceMemory) {
 }
 void RemoveMemory(VkDeviceMemory) {}
 void AddImage(VkImage) {}
+void AddImageTexture(VkImage, void*) {}
 void RemoveImage(VkImage) {}
 void SetTicks(std::uint64_t (*)(void*), std::uint64_t (*)(void*), void*) {}
 void ReleaseRetired() {}

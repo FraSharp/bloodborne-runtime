@@ -409,6 +409,12 @@ Backend::ImageAllocation BackendDevice::CreateImage(const Backend::ImageDesc& de
         record->image.Create(create_info);
     }
     SetObjectName(instance.GetDevice(), record->image.image, name);
+#if BB_METAL_BACKEND
+    // A MoltenVK image: the Metal frame exports its texture once, not on every use (M4).
+    if (!record->image.metal_only) {
+        MetalLayer::ImageMade(static_cast<VkImage>(record->image.image));
+    }
+#endif
     Backend::ImageAllocation result{
         .native = reinterpret_cast<u64>(static_cast<VkImage>(record->image.image)),
         .size_bytes = record->image.size_bytes,
@@ -433,7 +439,13 @@ void BackendDevice::DestroyImage(Backend::ImageHandle image) {
         object = std::move(*entry);
         images.Erase(image);
     }
-    DeferRelease([object = std::move(object)] {});
+    DeferRelease([object = std::move(object)] {
+#if BB_METAL_BACKEND
+        if (!object->image.metal_only) {
+            MetalLayer::ImageGone(static_cast<VkImage>(object->image.image));
+        }
+#endif
+    });
 }
 
 u64 BackendDevice::NativeHandle(Backend::ImageHandle image) {
