@@ -966,6 +966,17 @@ void BufferMade(VkBuffer buffer) {
     registered_generation.fetch_add(1, std::memory_order_release); // a reused handle value
 }
 
+void MetalBufferMade(VkBuffer buffer, id<MTLBuffer> mtl) {
+    std::unique_lock lock{registered_mutex};
+    registered[buffer] = {mtl, 0};
+    registered_generation.fetch_add(1, std::memory_order_release);
+}
+
+u64 BufferAddress(VkBuffer buffer) {
+    const BufferRef ref = ResolveBuffer(buffer);
+    return ref.buffer ? ref.buffer.gpuAddress + ref.offset : 0;
+}
+
 void BufferGone(VkBuffer buffer) {
     std::unique_lock lock{registered_mutex};
     if (registered.erase(buffer)) {

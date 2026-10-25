@@ -181,6 +181,10 @@ void DeviceAddressTaken(VkBuffer buffer);
 /// The device's buffers (MetalLayer::BufferMade): their MTLBuffer and offset, looked up once.
 void BufferMade(VkBuffer buffer);
 void BufferGone(VkBuffer buffer);
+/// A buffer only Metal has (placeholder `buffer`, `mtl` at offset 0).
+void MetalBufferMade(VkBuffer buffer, id<MTLBuffer> mtl);
+/// A registered buffer's device address (gpuAddress plus its offset), 0 when unknown.
+u64 BufferAddress(VkBuffer buffer);
 /// Images' textures (M4): `texture` for an image only Metal has, nil to export a MoltenVK image's
 /// once. ImageGone drops the record.
 void ImageMade(VkImage image, id<MTLTexture> texture);

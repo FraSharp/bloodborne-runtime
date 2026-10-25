@@ -277,7 +277,8 @@ std::atomic<uint64_t> next_pool{1}, next_command_buffer{1};
 /// layouts (no pipeline reaches MoltenVK; push descriptors and constants are encoded in Metal).
 constexpr uint64_t SamplerTag = 0xBC50000000000000ull, ModuleTag = 0xBC60000000000000ull,
                    PipelineLayoutTag = 0xBC70000000000000ull, SetLayoutTag = 0xBC80000000000000ull,
-                   ImageTag = 0xBC90000000000000ull, ViewTag = 0xBCA0000000000000ull;
+                   ImageTag = 0xBC90000000000000ull, ViewTag = 0xBCA0000000000000ull,
+                   MetalBufferTag = 0xBCC0000000000000ull;
 std::atomic<uint64_t> next_object{1};
 template <typename H>
 H OurHandle(uint64_t tag) {
@@ -836,7 +837,10 @@ struct Hook<I, R (*)(A...)> {
                 return;
             }
             return original(args...);
-        } else if constexpr (I == Id_vkGetBufferDeviceAddress || I == Id_vkGetBufferDeviceAddressKHR) {
+        } else if constexpr ((I == Id_vkGetBufferDeviceAddress || I == Id_vkGetBufferDeviceAddressKHR)) {
+            if (IsOurs(std::get<1>(std::tuple{args...})->buffer, MetalBufferTag)) {
+                return R(MetalOnlyBufferAddress(std::get<1>(std::tuple{args...})->buffer));
+            }
             const R address = original(args...);
             if (frame_enabled) {
                 MetalFrame::DeviceAddressTaken(std::get<1>(std::tuple{args...})->buffer);
@@ -1095,8 +1099,25 @@ void Own(void* command_buffer) {
     OwnBuffer(static_cast<VkCommandBuffer>(command_buffer));
 }
 
+void* MetalOnlyBuffer(void* buffer) {
+    if (!frame_enabled || !buffer) {
+        return nullptr;
+    }
+    const VkBuffer handle = OurHandle<VkBuffer>(MetalBufferTag);
+    MetalFrame::MetalBufferMade(handle, (__bridge id<MTLBuffer>)buffer);
+    return handle;
+}
+
+unsigned long long MetalOnlyBufferAddress(void* buffer) {
+    const VkBuffer handle = static_cast<VkBuffer>(buffer);
+    @autoreleasepool {
+        MetalFrame::DeviceAddressTaken(handle);
+        return MetalFrame::BufferAddress(handle);
+    }
+}
+
 void BufferMade(void* buffer) {
-    if (frame_enabled && buffer) {
+    if (frame_enabled && buffer && !IsOurs(static_cast<VkBuffer>(buffer), MetalBufferTag)) {
         @autoreleasepool {
             MetalFrame::BufferMade(static_cast<VkBuffer>(buffer));
         }

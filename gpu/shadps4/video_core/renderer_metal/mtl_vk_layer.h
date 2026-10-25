@@ -55,6 +55,12 @@ void Own(void* command_buffer);
 /// M4). BufferGone: right before the VkBuffer is destroyed.
 void BufferMade(void* buffer);
 void BufferGone(void* buffer);
+/// With the Metal frame (M4): a buffer only Metal has. Returns a placeholder VkBuffer for
+/// `buffer` (id<MTLBuffer>, at offset 0; the caller keeps its reference), registered with the
+/// Metal frame. MetalOnlyBufferAddress: its device address (the MTLBuffer's gpuAddress), and the
+/// frame keeps it resident for shaders that reach it by address.
+void* MetalOnlyBuffer(void* buffer);
+unsigned long long MetalOnlyBufferAddress(void* buffer);
 /// With the Metal frame: a timeline semaphore's MTLSharedEvent (id<MTLSharedEvent>, owned by the
 /// layer until vkDestroySemaphore), or null. Every signal of the semaphore reaches it, from Metal
 /// submissions and from MoltenVK's. EventValue: its signaled value; WaitEvent: blocks until it

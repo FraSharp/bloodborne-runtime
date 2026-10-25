@@ -66,7 +66,14 @@ UniqueBuffer::UniqueBuffer(vk::Device device_, VmaAllocator allocator_)
 UniqueBuffer::~UniqueBuffer() { Destroy(); }
 
 void UniqueBuffer::Destroy() {
-  if (allocation) {
+  if (metal_only) {
+#if BB_METAL_BACKEND
+    BbMetalResidency::RemoveMetalBuffer(static_cast<VkBuffer>(buffer));
+    MetalLayer::BufferGone(static_cast<VkBuffer>(buffer));
+#endif
+    MetalResources::Release(metal_buffer);
+    metal_only = false;
+  } else if (allocation) {
     vmaDestroyBuffer(allocator, buffer, allocation);
   } else if (buffer) {
     device.destroyBuffer(buffer);
@@ -94,6 +101,23 @@ void UniqueBuffer::CreateInMetal(vk::BufferCreateInfo &buffer_ci,
       : mem_type == MemoryType::HostCached
           ? MetalResources::Storage::Shared
           : MetalResources::Storage::SharedWriteCombined;
+#if BB_METAL_BACKEND
+  if (MetalLayer::FrameEnabled()) {
+    // The Metal buffer alone (M4): MoltenVK makes no buffer and imports no memory.
+    const auto metal = MetalResources::NewBuffer((buffer_ci.size + 255) & ~vk::DeviceSize{255},
+                                                 storage);
+    metal_buffer = metal.object;
+    metal_contents = metal.contents;
+    metal_size = buffer_ci.size;
+    metal_only = true;
+    buffer = vk::Buffer{static_cast<VkBuffer>(MetalLayer::MetalOnlyBuffer(metal_buffer))};
+    BbMetalResidency::AddMetalBuffer(static_cast<VkBuffer>(buffer), metal_buffer);
+    if (buffer_ci.usage & vk::BufferUsageFlagBits::eShaderDeviceAddress) {
+      bda_addr = MetalLayer::MetalOnlyBufferAddress(static_cast<VkBuffer>(buffer));
+    }
+    return;
+  }
+#endif
   buffer = Vulkan::Check(device.createBuffer(buffer_ci));
   // The Metal buffer is the memory: as large as the buffer requires.
   const auto requirements = device.getBufferMemoryRequirements(buffer);

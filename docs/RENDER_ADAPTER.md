@@ -750,6 +750,15 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   4.13–4.18 against 4.10–4.33 µs per draw; the Metal device 8,878 against 9,007 MiB; MetalFX
   Balanced 33.8 FPS; Metal API validation: nothing destroyed while still required, no view Metal
   could not make; frames correct.
+- **M4 step 3, buffers only in Metal:** with the Metal frame a buffer the backend makes in Metal is
+  no longer imported into MoltenVK: the device keeps the MTLBuffer under a placeholder VkBuffer
+  (`MetalLayer::MetalOnlyBuffer`, registered with the Metal frame at offset 0), its device address
+  is the MTLBuffer's `gpuAddress` (the frame keeps it resident for shaders that reach it by
+  address), the residency set takes the buffer itself, and it is destroyed without MoltenVK.
+  Measured: buffers made by MoltenVK from 34 to 3 in a run (the guest memory pool and two of the
+  upscaler's), address queries from 99 to 6; 39.1 against 39.5 FPS new second and 38.8 against
+  38.5 new first (median 25.3 ms both, then 25.5 against 25.7); Metal API validation: nothing
+  destroyed while still required; frame correct.
 
 ## Decisions
 

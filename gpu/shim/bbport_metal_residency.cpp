@@ -35,6 +35,7 @@ struct State {
     id set = nullptr;
     /// Allocations in the set: memory (MTLBuffer and its count) and images (MTLTexture).
     std::unordered_map<VkDeviceMemory, std::pair<id, u32>> memories;
+    std::unordered_map<VkBuffer, id> metal_buffers; ///< buffers only Metal has (M4)
     std::unordered_map<VkImage, id> images;
     /// Removed objects, retained until the GPU completes the tick open at their removal.
     std::deque<std::pair<id, u64>> retired;
@@ -227,6 +228,35 @@ void AddImageTexture(VkImage image, void* texture) {
     Commit(s);
 }
 
+void AddMetalBuffer(VkBuffer key, void* buffer) {
+    auto& s = Get();
+    if (!s.set || !key || !buffer) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    if (s.metal_buffers.emplace(key, static_cast<id>(buffer)).second) {
+        SendObject(s.set, "addAllocation:", static_cast<id>(buffer));
+        Commit(s);
+    }
+}
+
+void RemoveMetalBuffer(VkBuffer key) {
+    auto& s = Get();
+    if (!s.set || !key) {
+        return;
+    }
+    std::scoped_lock lock{s.mutex};
+    const auto it = s.metal_buffers.find(key);
+    if (it == s.metal_buffers.end()) {
+        return;
+    }
+    SendObject(s.set, "removeAllocation:", it->second);
+    Commit(s);
+    Retire(s, it->second);
+    s.metal_buffers.erase(it);
+    ReleaseCompleted(s);
+}
+
 void RemoveImage(VkImage image) {
     auto& s = Get();
     if (!s.set || !image) {
@@ -282,6 +312,8 @@ bool AddMemory(VkDeviceMemory) {
 void RemoveMemory(VkDeviceMemory) {}
 void AddImage(VkImage) {}
 void AddImageTexture(VkImage, void*) {}
+void AddMetalBuffer(VkBuffer, void*) {}
+void RemoveMetalBuffer(VkBuffer) {}
 void RemoveImage(VkImage) {}
 void SetTicks(std::uint64_t (*)(void*), std::uint64_t (*)(void*), void*) {}
 void ReleaseRetired() {}

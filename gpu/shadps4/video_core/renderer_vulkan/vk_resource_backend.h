@@ -120,7 +120,8 @@ struct UniqueBuffer {
           metal_memory{std::exchange(other.metal_memory, VK_NULL_HANDLE)},
           metal_buffer{std::exchange(other.metal_buffer, nullptr)},
           metal_contents{std::exchange(other.metal_contents, nullptr)},
-          metal_size{std::exchange(other.metal_size, 0)} {}
+          metal_size{std::exchange(other.metal_size, 0)},
+          metal_only{std::exchange(other.metal_only, false)} {}
 
     UniqueBuffer& operator=(UniqueBuffer&& other) noexcept {
         if (this != &other) {
@@ -134,6 +135,7 @@ struct UniqueBuffer {
             metal_buffer = std::exchange(other.metal_buffer, nullptr);
             metal_contents = std::exchange(other.metal_contents, nullptr);
             metal_size = std::exchange(other.metal_size, 0);
+            metal_only = std::exchange(other.metal_only, false);
         }
         return *this;
     }
@@ -141,7 +143,8 @@ struct UniqueBuffer {
     void Create(vk::BufferCreateInfo& buffer_ci, VideoCore::MemoryType mem_type,
                 VmaAllocationInfo* out_alloc_info);
     /// BB_GFX_BACKEND=metal (M1): the buffer's memory is a Metal buffer made by the backend and
-    /// imported into MoltenVK.
+    /// imported into MoltenVK; with the Metal frame (M4) not imported: `buffer` is a placeholder
+    /// only the Metal frame knows (metal_only), its device address the MTLBuffer's.
     void CreateInMetal(vk::BufferCreateInfo& buffer_ci, VideoCore::MemoryType mem_type);
 
     void Destroy();
@@ -153,6 +156,7 @@ struct UniqueBuffer {
     VmaAllocation allocation{};
     vk::DeviceMemory metal_memory{}; ///< CreateInMetal: the imported memory
     void* metal_buffer{};            ///< its id<MTLBuffer>, retained
+    bool metal_only{};               ///< CreateInMetal with the Metal frame: MoltenVK has none
     void* metal_contents{};          ///< mapped, unless private
     u64 metal_size{};
 };
