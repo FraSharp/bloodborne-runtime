@@ -820,7 +820,8 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   A reversed A/B pair measured 36.9 FPS on the new build against 36.8 on main, median
   26.6 against 26.8 ms, p90 28.9 ms both, and GPU-thread median 4.17 against 4.13 µs/draw.
   The manual Linux workflow built the Vulkan backend and passed its resource, adapter, upload
-  and trophy tests on [run 40310567847](https://github.com/bloodborne-native/bloodborne-runtime/actions/runs/40310567847).
+  and trophy tests on [run 40314805527](https://github.com/bloodborne-native/bloodborne-runtime/actions/runs/40314805527),
+  including the native-resolution renderer fix.
   The Rosetta build reaches device initialization but faults before a frame at the same guest
   offset and thread as an isolated main build on this Mac; the x86_64 fallback remains available.
   The Rosetta build reaches device initialization but faults before a frame at the same guest
