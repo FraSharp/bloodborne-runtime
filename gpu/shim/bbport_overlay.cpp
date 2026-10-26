@@ -3,6 +3,7 @@
 #include "bbport_overlay.h"
 
 #include <algorithm>
+#include <array>
 #include <atomic>
 #include <chrono>
 #include <cmath>
@@ -158,6 +159,7 @@ std::vector<std::string> display_names;
 std::atomic<bool> displays_wanted{true};
 // Xbox-style pads get A/B/X/Y hints; PlayStation and others the shapes.
 std::atomic<bool> xbox_buttons{false};
+std::atomic<bool> keyboard_buttons{false};
 
 // Present rate for the FPS counter, and the last frame times for its graph.
 std::chrono::steady_clock::time_point last_present{};
@@ -216,6 +218,8 @@ ImGuiKey KeyFromSdl(SDL_Keycode key) {
     case SDLK_RSHIFT: return ImGuiKey_RightShift;
     case SDLK_LALT: return ImGuiKey_LeftAlt;
     case SDLK_RALT: return ImGuiKey_RightAlt;
+    case SDLK_Q: return ImGuiKey_Q;
+    case SDLK_E: return ImGuiKey_E;
     default: return ImGuiKey_None;
     }
 }
@@ -934,10 +938,13 @@ void Menu() {
     ImGui::PopStyleVar();
     help_text = nullptr;
 
-    // Tabs: L1/R1 (or Q/E... the shoulder buttons only, keys type in sliders) switch them.
-    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false)) {
+    // Q/E follow the game's keyboard shoulder bindings; don't steal text while editing a value.
+    const bool keys_for_tabs = !ImGui::GetIO().WantTextInput && !ImGui::IsAnyItemActive();
+    if (ImGui::IsKeyPressed(ImGuiKey_GamepadL1, false) ||
+        (keys_for_tabs && ImGui::IsKeyPressed(ImGuiKey_Q, false))) {
         tab = (tab + TabCount - 1) % TabCount;
-    } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false)) {
+    } else if (ImGui::IsKeyPressed(ImGuiKey_GamepadR1, false) ||
+               (keys_for_tabs && ImGui::IsKeyPressed(ImGuiKey_E, false))) {
         tab = (tab + 1) % TabCount;
     }
     // Circle (B) leaves the menu when nothing is being edited.
@@ -1071,10 +1078,11 @@ void Menu() {
     bool close = ImGui::Button(T("menu.close"));
 
     ImGui::Dummy(ImVec2(0, S(2)));
-    HintItem(ButtonName("✕", "A"), T("hints.select"));
-    HintItem(ButtonName("○", "B"), T("hints.back"));
-    HintItem(ButtonName("L1 R1", "LB RB"), T("hints.tabs"));
-    HintItem("L3+R3", T("hints.close"));
+    const bool keys = keyboard_buttons.load(std::memory_order_relaxed);
+    HintItem(keys ? "Enter" : ButtonName("✕", "A"), T("hints.select"));
+    HintItem(keys ? "Esc" : ButtonName("○", "B"), T("hints.back"));
+    HintItem(keys ? "Q E" : ButtonName("L1 R1", "LB RB"), T("hints.tabs"));
+    HintItem(keys ? "F1" : "L3+R3", T("hints.close"));
     ImGui::NewLine();
     ImGui::End();
     if (close) {
@@ -1264,6 +1272,12 @@ struct KeyboardState {
     bool shift = false, symbols = false;
     float stick_x = 0.0f, stick_y = 0.0f; // the left stick, for one step per push
 } keyboard;
+struct KeyboardKeyHit {
+    ImVec2 min{}, max{};
+    int row = 0, column = 0;
+};
+std::array<KeyboardKeyHit, 50> keyboard_hits{};
+int keyboard_hit_count = 0; // rebuilt with the prompt's current size and position each frame
 constexpr int KeyColumns = 10, KeyRows = 5;
 const char* const LetterRows[4] = {"1234567890", "qwertyuiop", "asdfghjkl'", "zxcvbnm,.-"};
 const char* const SymbolRows[4] = {"!@#$%^&*()", "-_=+[]{};:", "\"/?<>|\\~`'", ",.!?&#*-_+"};
@@ -1391,7 +1405,9 @@ void TextPrompt() {
         ImGui::Dummy(ImVec2(board, b.y - a.y));
     }
     ImGui::Dummy(ImVec2(0, S(8)));
-    // The keys.
+    // The keys. Keep the hit rectangles in screen pixels for HandleEvent on the window thread;
+    // drawing and event delivery both hold imgui_mutex.
+    keyboard_hit_count = 0;
     const ImVec2 origin = ImGui::GetCursorScreenPos();
     const char* const* rows = keyboard.symbols ? SymbolRows : LetterRows;
     for (int r = 0; r < KeyRows; ++r) {
@@ -1416,13 +1432,17 @@ void TextPrompt() {
             }
             const ImVec2 a(origin.x + c * (key + gap), origin.y + r * (key + gap));
             const ImVec2 b(a.x + key * span + gap * (span - 1), a.y + key);
+            keyboard_hits[keyboard_hit_count++] = {a, b, r, c};
             const bool selected = r == keyboard.row &&
                                   (r < 4 ? c == keyboard.column
                                          : BottomCommands[c] == BottomCommands[keyboard.column]);
             const bool lit = (r == 4 && BottomCommands[c] == KeyShift && keyboard.shift) ||
                              (r == 4 && BottomCommands[c] == KeyDone);
+            const ImVec2 mouse = ImGui::GetIO().MousePos;
+            const bool hovered = mouse.x >= a.x && mouse.x < b.x && mouse.y >= a.y && mouse.y < b.y;
             draw->AddRectFilled(a, b,
                                 ImGui::GetColorU32(selected ? Theme::Primary
+                                                   : hovered ? Theme::AccentHover
                                                    : lit    ? Theme::AccentHover
                                                             : Theme::Accent),
                                 S(8));
@@ -1823,6 +1843,7 @@ bool HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_KEY_DOWN:
     case SDL_EVENT_KEY_UP: {
         const bool down = event.type == SDL_EVENT_KEY_DOWN;
+        if (down) keyboard_buttons = true;
         if (down && !event.key.repeat &&
             (event.key.key == MenuKey || event.key.key == SDLK_INSERT ||
              (is_open && event.key.key == SDLK_ESCAPE))) {
@@ -1846,6 +1867,7 @@ bool HandleEvent(const SDL_Event& event) {
     case SDL_EVENT_GAMEPAD_BUTTON_DOWN:
     case SDL_EVENT_GAMEPAD_BUTTON_UP: {
         const bool down = event.type == SDL_EVENT_GAMEPAD_BUTTON_DOWN;
+        if (down) keyboard_buttons = false;
         const u8 button = event.gbutton.button;
         if (button == SDL_GAMEPAD_BUTTON_LEFT_STICK) {
             l3_down = down;
@@ -1875,18 +1897,40 @@ bool HandleEvent(const SDL_Event& event) {
         return true;
     }
     case SDL_EVENT_MOUSE_MOTION: {
-        if (!is_open) {
+        if (!is_open && !prompt_active) {
             return false;
         }
         const float density = PixelDensity(event.motion.windowID);
+        keyboard_buttons = true;
         io.AddMousePosEvent(event.motion.x * density, event.motion.y * density);
         return true;
     }
     case SDL_EVENT_MOUSE_BUTTON_DOWN:
     case SDL_EVENT_MOUSE_BUTTON_UP: {
-        if (!is_open) {
+        if (!is_open && !prompt_active) {
             return false;
         }
+        if (prompt_active && !is_open) {
+            if (event.type == SDL_EVENT_MOUSE_BUTTON_DOWN) {
+                if (event.button.button == SDL_BUTTON_RIGHT) {
+                    Edit(TextEdit::Cancel);
+                } else if (event.button.button == SDL_BUTTON_LEFT) {
+                    const float density = PixelDensity(event.button.windowID);
+                    const float x = event.button.x * density, y = event.button.y * density;
+                    for (int i = 0; i < keyboard_hit_count; ++i) {
+                        const auto& hit = keyboard_hits[i];
+                        if (x >= hit.min.x && x < hit.max.x && y >= hit.min.y && y < hit.max.y) {
+                            keyboard.row = hit.row;
+                            keyboard.column = hit.column;
+                            PressKey(hit.row, hit.column);
+                            break;
+                        }
+                    }
+                }
+            }
+            return true;
+        }
+        keyboard_buttons = true;
         const int button = event.button.button == SDL_BUTTON_LEFT    ? 0
                            : event.button.button == SDL_BUTTON_RIGHT  ? 1
                            : event.button.button == SDL_BUTTON_MIDDLE ? 2
@@ -1900,6 +1944,7 @@ bool HandleEvent(const SDL_Event& event) {
         if (!is_open) {
             return false;
         }
+        keyboard_buttons = true;
         io.AddMouseWheelEvent(event.wheel.x, event.wheel.y);
         return true;
     default:

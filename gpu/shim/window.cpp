@@ -318,6 +318,39 @@ bool WindowSDL::PollEvents() {
         BbOverlay::UpdateTextInput(window);
     }
     BbOverlay::ApplyWindowSettings(window);
+    // BB_TEST_MOUSE_FILE (copied-save UI tests): one window-point click/hover over the game's
+    // text dialog. Deliver normal SDL events, so the prompt's real hit testing is exercised.
+    if (text_active) {
+        static const char* test_mouse = std::getenv("BB_TEST_MOUSE_FILE");
+        if (test_mouse) {
+            if (FILE* file = std::fopen(test_mouse, "r")) {
+                float x = 0.0f, y = 0.0f;
+                char action[16] = {};
+                const int read = std::fscanf(file, "%f %f %15s", &x, &y, action);
+                std::fclose(file);
+                std::remove(test_mouse);
+                if (read >= 2) {
+                    SDL_Event motion{};
+                    motion.type = SDL_EVENT_MOUSE_MOTION;
+                    motion.motion.windowID = SDL_GetWindowID(window);
+                    motion.motion.x = x;
+                    motion.motion.y = y;
+                    SDL_PushEvent(&motion);
+                    if (read == 3 && (!std::strcmp(action, "click") || !std::strcmp(action, "right"))) {
+                        SDL_Event button{};
+                        button.type = SDL_EVENT_MOUSE_BUTTON_DOWN;
+                        button.button.windowID = motion.motion.windowID;
+                        button.button.button = !std::strcmp(action, "right") ? SDL_BUTTON_RIGHT : SDL_BUTTON_LEFT;
+                        button.button.x = x;
+                        button.button.y = y;
+                        SDL_PushEvent(&button);
+                        button.type = SDL_EVENT_MOUSE_BUTTON_UP;
+                        SDL_PushEvent(&button);
+                    }
+                }
+            }
+        }
+    }
     // A game module's menu wants the mouse as a pointer (bbgpu_add_pointer_query).
     const bool pointer = bbgpu_pointer_wanted() != 0;
     SDL_Event event;
@@ -468,7 +501,7 @@ void WindowSDL::UpdateCursor() {
     // In a game menu (pointer_shown) it also goes after 1.5 s without moving, so that the tail of a
     // closing menu does not leave it hanging over the game; any motion brings it back.
     const u64 idle = SDL_GetTicks() - last_mouse_motion_ms;
-    const bool hide = !BbOverlay::MenuOpen() &&
+    const bool hide = !BbOverlay::CapturesInput() &&
                       (mouse_captured.load(std::memory_order_relaxed) ||
                        (pointer_shown ? idle > 1500 : (fullscreen || idle > 3000)));
     if (hide != cursor_hidden) {
