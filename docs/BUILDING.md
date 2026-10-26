@@ -33,14 +33,15 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
   `bash build.sh --test` also runs the native tests.
 - `deps/` (MoltenVK, SDL3, FFmpeg, ...; for FSR 4.1.1 on Metal also DXC, the spirv-cross command
   and the fsr4-native-macos tree, without AMD's initializers) is built by
-  `scripts/macos/build-deps.sh`. Its libraries
-  record absolute paths: a moved or copied `deps/` must be rebuilt (remove `deps/macos-arm64`,
-  then `BB_ARCH=arm64 bash scripts/macos/build-deps.sh`).
-- On macOS `build.sh` applies `gpu/patches/fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`
-  to the FSR-Vulkan submodule once. It links that library to Vulkan headers, while the native
-  Metal path loads no Vulkan library. The patch is checked before application, so a repeated
-  build leaves the submodule pointer unchanged. Linux uses the existing Vulkan build path and
-  does not apply this macOS patch.
+  `scripts/macos/build-deps.sh`, which runs `deps/CMakeLists.txt`. `deps/packages.cmake` has every
+  version and the SHA256 of its archive; a package whose stamp is there is not touched, and
+  bumping one rebuilds it alone. `cmake --build build/deps-arm64 --target deps-clean` installs
+  everything again (the downloaded archives are kept). The packages are installed with `@rpath`
+  ids and pkg-config files that find their prefix, so moving the checkout costs no rebuild.
+- The port's changes to FSR-Vulkan (`gpu/patches/`) are applied to a copy under the build
+  directory, not to the submodule: the checkout keeps matching the submodule's commit. On macOS
+  it is `fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`, which links
+  that library to the Vulkan headers while the native Metal path loads no Vulkan library.
 - From a checkout, saves and caches go to `user/` and settings to `bbport.ini`.
 - The macOS app (launcher, DMG, releases) is
   [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac), which builds this

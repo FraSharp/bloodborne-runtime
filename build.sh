@@ -26,12 +26,9 @@ if [[ $(uname -s) == Darwin ]]; then
     fi
     macarch=$BB_ARCH
     deps=$PWD/deps/macos-$macarch
-    # Also when deps/ predates FSR 4.1.1 on Metal and its tools can be built (spirv-val).
-    if [[ ! -f $deps/.built-ffmpeg ]] ||
-        { [[ ! -f $deps/.built-fsr4-native-macos ]] && command -v spirv-val >/dev/null &&
-            command -v clang-format >/dev/null; }; then
-        BB_ARCH=$macarch bash scripts/macos/build-deps.sh
-    fi
+    # The libraries the game links against, in deps/macos-<arch> (deps/packages.cmake holds the
+    # versions and the checksums). Installing again does not rebuild a package that is there.
+    BB_ARCH=$macarch bash scripts/macos/build-deps.sh
     export PKG_CONFIG_LIBDIR=$deps/lib/pkgconfig:$deps/share/pkgconfig
     export PATH=$deps/bin:$PATH
     CC=${CC:-/usr/bin/clang}
@@ -110,7 +107,9 @@ gpu=(-Lout/gpu -lbbgpu -Wl,-rpath,'$ORIGIN/gpu' -Wl,-rpath,"$PWD/out/gpu" -rdyna
 probe_flags=(-no-pie)
 warnings=()
 if (( macos )); then
-    gpu=(-L"$gpudir" -lbbgpu -Wl,-rpath,@executable_path/gpu -Wl,-rpath,"$PWD/$gpudir")
+    # deps/lib: the libraries there are @rpath ones (deps/steps/relocatable.cmake).
+    gpu=(-L"$gpudir" -lbbgpu -Wl,-rpath,@executable_path/gpu -Wl,-rpath,"$PWD/$gpudir"
+        -Wl,-rpath,"$deps/lib")
     probe_flags=()
     warnings=(-Wno-unknown-warning-option -Wno-unused-but-set-global)
     gpu+=(-framework Foundation) # platform.c: NSProcessInfo (bb_latency_critical)
