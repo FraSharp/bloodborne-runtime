@@ -46,8 +46,25 @@ elseif (BB_PGO STREQUAL "use")
                         -fprofile-correction -Wno-missing-profile -Wno-coverage-mismatch)
 endif()
 
+# deps/ before the machine's own copies. CMake imports a package's include directories as
+# -isystem, and Apple's clang searches its builtin /usr/local/include *before* any -isystem path:
+# the LunarG Vulkan SDK a Mac may have installed there replaced the pinned headers, and the build
+# failed on that Mac only (mtl_vk_layer.mm wanted a function 1.4.357 does not have). Imported
+# includes are -I here, which clang searches first, so deps/ is authoritative.
+set(CMAKE_NO_SYSTEM_FROM_IMPORTED ON)
+
 if (APPLE)
     find_package(VulkanHeaders CONFIG REQUIRED)
+    # A Vulkan SDK installed on the machine (the LunarG one installs into /usr/local) must never be
+    # the one the build uses, as a CMake choice or through the compiler's own search order.
+    get_target_property(bb_vulkan_includes Vulkan::Headers INTERFACE_INCLUDE_DIRECTORIES)
+    string(REPLACE ";" "|" bb_deps_prefixes "${CMAKE_PREFIX_PATH}")
+    foreach(bb_include IN LISTS bb_vulkan_includes)
+        if (NOT bb_include MATCHES "^(${bb_deps_prefixes})/")
+            message(FATAL_ERROR "Vulkan headers from ${bb_include}, not from the deps prefix "
+                                "(${CMAKE_PREFIX_PATH})")
+        endif()
+    endforeach()
     add_library(Vulkan::Vulkan INTERFACE IMPORTED GLOBAL)
     target_link_libraries(Vulkan::Vulkan INTERFACE Vulkan::Headers)
 else()
