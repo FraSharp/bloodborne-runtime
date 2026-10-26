@@ -44,6 +44,9 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
   bumping one rebuilds it alone. `cmake --build build/deps-arm64 --target deps-clean` installs
   everything again (the downloaded archives are kept). The packages are installed with `@rpath`
   ids and pkg-config files that find their prefix, so moving the checkout costs no rebuild.
+  `deps/macos-<arch>` keeps each package's sources and build tree in `.build/` as well (a few GB):
+  deleting that one directory is what makes everything install again, and nothing outside it
+  decides what is installed.
 - The port's changes to FSR-Vulkan (`gpu/patches/`) are applied to a copy under the build
   directory, not to the submodule: the checkout keeps matching the submodule's commit. On macOS
   it is `fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`, which links
