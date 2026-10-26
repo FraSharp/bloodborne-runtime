@@ -21,7 +21,7 @@ fi
 # macOS: on MoltenVK; natively on Apple Silicon (BB_ARCH=arm64), or as an x86-64 process under Rosetta 2.
 if [[ $(uname -s) == Darwin ]]; then
     # Apple Silicon: the native arm64 build (bbcpu translates the game's code); BB_ARCH=x86_64
-    # runs the Rosetta 2 build instead. build.sh, started below, follows it.
+    # runs the Rosetta 2 build instead. build.sh builds for the same one.
     if [[ -z ${BB_ARCH:-} ]]; then
         [[ $(sysctl -n hw.optional.arm64 2>/dev/null) == 1 ]] && BB_ARCH=arm64 || BB_ARCH=x86_64
     fi
@@ -75,6 +75,15 @@ fi
 data=${BB_DATA_DIR:-.}
 out=$data/out
 mkdir -p "$out"
+# run.sh runs the game, build.sh builds it (the test runners call it first): a checkout that has not
+# been built says so instead of building behind the player's back, and the packaged app carries its
+# own program (BB_PREBUILT).
+if [[ -n ${BB_PREBUILT:-} ]]; then
+    probe=${BB_PROBE:-bin/bb-probe}
+else
+    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
+fi
+[[ -x $probe ]] || { echo "No $probe: run bash build.sh first." >&2; exit 1; }
 # The GPU library's caches (shaders, pipelines) under the saves' folder: without it a fresh
 # release folder fell back to shadPS4's own directory (macOS: ~/Library/Application Support/shadPS4).
 mkdir -p "${BB_USER_DIR:-$data/user}"
@@ -276,12 +285,7 @@ fi
 if [[ -z ${BB_PREBUILT:-} && -d fsr4_shaders ]] && command -v spirv-cross >/dev/null; then
     bash tools/fsr4_optimize.sh || echo 'FSR 4: optimized post passes not built' >&2
 fi
-if [[ -n ${BB_PREBUILT:-} ]]; then
-    probe=${BB_PROBE:-bin/bb-probe}
-else
-    bash build.sh
-    probe=${BB_PROBE:-out/bb-probe}  # BB_PROBE: a wrapper (gdb) around it
-fi
+
 # Online play (BB_ONLINE=1, launcher: Online; the online module gpu/bbnet): the game's own server
 # goes to the community server, summon signs to the shadNet WebAPI (scripts/online.py).
 if [[ ${BB_ONLINE:-0} == 1 && -f scripts/online.py ]]; then
