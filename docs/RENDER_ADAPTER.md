@@ -784,9 +784,12 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   Metal run. The fallback remains until M4 acceptance.
 - **M4 step 4.3, diagnostic resources:** the present dump and temporal-upscaler readbacks use
   adapter buffers; the optional Vulkan readback queue and GPU breadcrumbs are skipped on native
-  Metal. Eight game-frame grabs during 1,816 gameplay frames had no frame over 150 ms (127.8 ms
-  maximum while loading). A single reported 1.8-second pause could not be reproduced in that
-  session; the readback path remains under observation.
+  Metal. A reported 1.6-second grab pause prompted a follow-up: MoltenVK's diagnostic captures
+  again use their earlier VMA staging path; native Metal copies the finished readback into owned
+  bytes and writes the raw file on a separate thread, publishing it only when complete. In two
+  copied-save 1080p sessions with two grabs each, gameplay had no frames over 150 ms; the
+  largest gameplay frames were 74.6 ms on Metal and 57.9 ms on MoltenVK. The reported pause was
+  not reproduced on this Mac, so the maintainer's conditions still need a check.
 - **M4 step 4.3, MetalFX:** the temporal scaler encodes on the native frame command buffer and
   takes native textures. Depth/stencil is converted to a MetalFX-compatible depth texture.
   A copied-save comparison measured 34.5 mean FPS against 30.8 with the exported-texture bridge

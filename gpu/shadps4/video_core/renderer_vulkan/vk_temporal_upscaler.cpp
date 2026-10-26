@@ -15,7 +15,10 @@
 #include <cstdlib>
 #include <cstring>
 #include <deque>
+#include <functional>
 #include <string>
+#include <thread>
+#include <vector>
 
 #include <boost/container/static_vector.hpp>
 #include <vk_mem_alloc.h>
@@ -118,37 +121,83 @@ void DumpImages(const Instance& instance, Scheduler& scheduler, vk::CommandBuffe
     ActiveStreamEncoder().Barrier(cmdbuf, {.memoryBarrierCount = 1, .pMemoryBarriers = &before});
     for (const auto& image : images) {
         const VkDeviceSize size = VkDeviceSize(image.width) * image.height * image.bytes_per_pixel;
-        auto& backend = BackendDevice::From(instance);
-        const auto readback = backend.CreateBuffer({
-            .size_bytes = size,
-            .uses = VideoCore::Backend::BufferUse::TransferDestination,
-            .memory = VideoCore::Backend::MemoryClass::HostCached,
-        }, "image dump readback");
-        if (!readback.handle || readback.mapped.size() < size) {
-            if (readback.handle) backend.DestroyBuffer(readback.handle);
-            std::printf("Dump: no host memory for %s\n", image.name);
-            continue;
+        VkBuffer buffer{};
+        std::function<void(const std::string&)> finish;
+        if (MetalFrameOn()) {
+            auto& backend = BackendDevice::From(instance);
+            const auto readback = backend.CreateBuffer({
+                .size_bytes = size,
+                .uses = VideoCore::Backend::BufferUse::TransferDestination,
+                .memory = VideoCore::Backend::MemoryClass::HostCached,
+            }, "image dump readback");
+            if (!readback.handle || readback.mapped.size() < size) {
+                if (readback.handle) backend.DestroyBuffer(readback.handle);
+                std::printf("Dump: no host memory for %s\n", image.name);
+                continue;
+            }
+            buffer = reinterpret_cast<VkBuffer>(readback.native);
+            finish = [&backend, handle = readback.handle, mapped = readback.mapped.data(), size]
+                     (const std::string& file) {
+                backend.InvalidateBuffer(handle, 0, size);
+                // The GPU has finished. Copy only the bytes, then let file I/O run off the
+                // recorder thread; the raw file appears atomically when it is complete.
+                std::vector<u8> bytes(mapped, mapped + size);
+                backend.DestroyBuffer(handle);
+                std::thread([file, bytes = std::move(bytes)] {
+                    const std::string temporary = file + ".tmp";
+                    if (FILE* f = std::fopen(temporary.c_str(), "wb")) {
+                        const bool complete = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+                        const bool closed = std::fclose(f) == 0;
+                        if (complete && closed) {
+                            std::rename(temporary.c_str(), file.c_str());
+                        } else {
+                            std::remove(temporary.c_str());
+                        }
+                    }
+                }).detach();
+            };
+        } else {
+            // Keep the original VMA readback on Vulkan. The adapter buffer path added a
+            // large grab pause on MoltenVK and offers no benefit for this diagnostic.
+            const VkBufferCreateInfo buffer_ci{
+                .sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                .size = size,
+                .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT,
+            };
+            const VmaAllocationCreateInfo alloc_ci{
+                .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT |
+                         VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+                .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST,
+            };
+            VmaAllocation allocation{};
+            VmaAllocationInfo info{};
+            if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer,
+                                &allocation, &info) != VK_SUCCESS) {
+                std::printf("Dump: no host memory for %s\n", image.name);
+                continue;
+            }
+            finish = [allocator = instance.GetAllocator(), buffer, allocation, info, size]
+                     (const std::string& file) {
+                vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+                if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                    std::fwrite(info.pMappedData, 1, size, f);
+                    std::fclose(f);
+                }
+                vmaDestroyBuffer(allocator, buffer, allocation);
+            };
         }
-        const vk::Buffer buffer{reinterpret_cast<VkBuffer>(readback.native)};
         const vk::BufferImageCopy region{
             .imageSubresource = {image.aspect, 0, 0, 1},
             .imageExtent = {image.width, image.height, 1},
         };
-        ActiveStreamEncoder().CopyImageToBuffer(cmdbuf, image.image, buffer, {&region, 1},
+        ActiveStreamEncoder().CopyImageToBuffer(cmdbuf, image.image, vk::Buffer{buffer}, {&region, 1},
                                                 vk::ImageLayout::eGeneral);
         char path[512];
         std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), frame,
                       image.name, image.width, image.height, image.format);
-        scheduler.DeferPriorityOperation(
-            [&backend, handle = readback.handle, mapped = readback.mapped.data(), size,
-             file = std::string{path}] {
-                backend.InvalidateBuffer(handle, 0, size);
-                if (FILE* f = std::fopen(file.c_str(), "wb")) {
-                    std::fwrite(mapped, 1, size, f);
-                    std::fclose(f);
-                }
-                backend.DestroyBuffer(handle);
-            });
+        scheduler.DeferPriorityOperation([finish = std::move(finish), file = std::string{path}] {
+            finish(file);
+        });
     }
     const vk::MemoryBarrier2 after{
         .srcStageMask = vk::PipelineStageFlagBits2::eTransfer,

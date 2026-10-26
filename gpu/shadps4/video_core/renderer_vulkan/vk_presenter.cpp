@@ -33,6 +33,7 @@
 #include <cstring>
 #include <ctime>
 #include <filesystem>
+#include <functional>
 #include <fstream>
 #include <iomanip>
 #include <limits>
@@ -40,6 +41,7 @@
 #include <span>
 #include <sstream>
 #include <system_error>
+#include <thread>
 #include <vector>
 #include <vk_mem_alloc.h>
 
@@ -537,37 +539,78 @@ void DumpColorImage(const Instance& instance, Scheduler& scheduler, vk::CommandB
     const char* dir_env = std::getenv("BB_DUMP_DIR");
     const std::string dir{dir_env && dir_env[0] ? dir_env : "out/dump"};
     const VkDeviceSize size = VkDeviceSize(width) * height * 4;
-    auto& backend = BackendDevice::From(instance);
-    const auto readback = backend.CreateBuffer({
-        .size_bytes = size,
-        .uses = VideoCore::Backend::BufferUse::TransferDestination,
-        .memory = VideoCore::Backend::MemoryClass::HostCached,
-    }, "present dump readback");
-    if (!readback.handle || readback.mapped.size() < size) {
-        if (readback.handle) backend.DestroyBuffer(readback.handle);
-        return;
+    VkBuffer buffer{};
+    std::function<void(const std::string&)> finish;
+#if BB_METAL_BACKEND
+    if (MetalLayer::FrameEnabled()) {
+        auto& backend = BackendDevice::From(instance);
+        const auto readback = backend.CreateBuffer({
+            .size_bytes = size,
+            .uses = VideoCore::Backend::BufferUse::TransferDestination,
+            .memory = VideoCore::Backend::MemoryClass::HostCached,
+        }, "present dump readback");
+        if (!readback.handle || readback.mapped.size() < size) {
+            if (readback.handle) backend.DestroyBuffer(readback.handle);
+            return;
+        }
+        buffer = reinterpret_cast<VkBuffer>(readback.native);
+        finish = [&backend, handle = readback.handle, mapped = readback.mapped.data(), size]
+                 (const std::string& file) {
+            backend.InvalidateBuffer(handle, 0, size);
+            std::vector<u8> bytes(mapped, mapped + size);
+            backend.DestroyBuffer(handle);
+            std::thread([file, bytes = std::move(bytes)] {
+                const std::string temporary = file + ".tmp";
+                if (FILE* f = std::fopen(temporary.c_str(), "wb")) {
+                    const bool complete = std::fwrite(bytes.data(), 1, bytes.size(), f) == bytes.size();
+                    const bool closed = std::fclose(f) == 0;
+                    if (complete && closed) {
+                        std::rename(temporary.c_str(), file.c_str());
+                    } else {
+                        std::remove(temporary.c_str());
+                    }
+                }
+            }).detach();
+        };
+    } else
+#endif
+    {
+        const VkBufferCreateInfo buffer_ci{.sType = VK_STRUCTURE_TYPE_BUFFER_CREATE_INFO,
+                                           .size = size,
+                                           .usage = VK_BUFFER_USAGE_TRANSFER_DST_BIT};
+        const VmaAllocationCreateInfo alloc_ci{
+            .flags = VMA_ALLOCATION_CREATE_MAPPED_BIT | VMA_ALLOCATION_CREATE_HOST_ACCESS_RANDOM_BIT,
+            .usage = VMA_MEMORY_USAGE_AUTO_PREFER_HOST};
+        VmaAllocation allocation{};
+        VmaAllocationInfo info{};
+        if (vmaCreateBuffer(instance.GetAllocator(), &buffer_ci, &alloc_ci, &buffer, &allocation,
+                            &info) != VK_SUCCESS) {
+            return;
+        }
+        finish = [allocator = instance.GetAllocator(), buffer, allocation, info, size]
+                 (const std::string& file) {
+            vmaInvalidateAllocation(allocator, allocation, 0, VK_WHOLE_SIZE);
+            if (FILE* f = std::fopen(file.c_str(), "wb")) {
+                std::fwrite(info.pMappedData, 1, size, f);
+                std::fclose(f);
+            }
+            vmaDestroyBuffer(allocator, buffer, allocation);
+        };
     }
-    const vk::Buffer buffer{reinterpret_cast<VkBuffer>(readback.native)};
+    const vk::Buffer vk_buffer{buffer};
     const vk::MemoryBarrier barrier{.srcAccessMask = vk::AccessFlagBits::eMemoryWrite,
                                     .dstAccessMask = vk::AccessFlagBits::eTransferRead};
     cmdbuf.pipelineBarrier(vk::PipelineStageFlagBits::eAllCommands,
                            vk::PipelineStageFlagBits::eTransfer, {}, barrier, {}, {});
     const vk::BufferImageCopy region{.imageSubresource = {vk::ImageAspectFlagBits::eColor, 0, 0, 1},
                                      .imageExtent = {width, height, 1}};
-    cmdbuf.copyImageToBuffer(image, layout, buffer, region);
+    cmdbuf.copyImageToBuffer(image, layout, vk_buffer, region);
     const bool bgra = format == vk::Format::eB8G8R8A8Unorm || format == vk::Format::eB8G8R8A8Srgb;
     char path[512];
     std::snprintf(path, sizeof(path), "%s/f%03d_%s_%ux%u_%s.raw", dir.c_str(), index++, tag,
                   width, height, bgra ? "bgra" : "rgba");
-    scheduler.DeferPriorityOperation([&backend, handle = readback.handle,
-                                      mapped = readback.mapped.data(), size,
-                                      file = std::string{path}] {
-        backend.InvalidateBuffer(handle, 0, size);
-        if (FILE* f = std::fopen(file.c_str(), "wb")) {
-            std::fwrite(mapped, 1, size, f);
-            std::fclose(f);
-        }
-        backend.DestroyBuffer(handle);
+    scheduler.DeferPriorityOperation([finish = std::move(finish), file = std::string{path}] {
+        finish(file);
     });
 }
 } // namespace
