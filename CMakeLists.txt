@@ -132,13 +132,54 @@ if (APPLE)
     # The GPU library sits in gpu/ next to the executable, in the build directory and in out/
     # alike; the libraries deps/ installed are @rpath ones in their prefix.
     set_target_properties(bbprobe PROPERTIES
-        BUILD_RPATH "@executable_path/gpu;${BB_DEPS}/lib" INSTALL_RPATH "@executable_path/gpu")
+        BUILD_RPATH "@executable_path/gpu;${BB_DEPS}/lib"
+        INSTALL_RPATH "@executable_path/../Frameworks")
 endif()
 
 # The GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 add_executable(bb-gpu-capabilities tools/gpu_capabilities.c)
 target_compile_options(bb-gpu-capabilities PRIVATE -std=c11 ${BB_WARNINGS})
 target_link_libraries(bb-gpu-capabilities PRIVATE PkgConfig::SDL3)
+
+# --- the app bundle's payload ---------------------------------------------------------------
+# cmake --install <build> --prefix <Bloodborne.app> puts what the game runs with in the layout
+# packaging/macos.sh signs and ships: the executables in MacOS/, the libraries they link in
+# Frameworks/ (CMake rewrites their references and collects the dependencies of deps/ itself), the
+# scripts and the assets the game reads in Resources/game/, and the Python the scripts need in
+# Resources/python/. The bundle's own launcher (launcher/) is the app's, not this project's.
+if (APPLE)
+    set_target_properties(bbgpu PROPERTIES INSTALL_NAME_DIR "@rpath")
+    install(TARGETS bbprobe bb-gpu-capabilities RUNTIME_DEPENDENCY_SET bb-payload
+            RUNTIME DESTINATION Contents/MacOS)
+    install(TARGETS bbgpu RUNTIME_DEPENDENCY_SET bb-payload LIBRARY DESTINATION Contents/Frameworks)
+    install(RUNTIME_DEPENDENCY_SET bb-payload RUNTIME DESTINATION Contents/MacOS
+            LIBRARY DESTINATION Contents/Frameworks)
+    install(PROGRAMS ${BB_DEPS}/app-runtime/bin/bash DESTINATION Contents/MacOS)
+    # MoltenVK is the driver run.sh hands to the loader (VK_DRIVER_FILES), not something any
+    # binary links: both, and the manifest that points at them, are installed here.
+    # The loader: deps/ has libvulkan.1.4.365.dylib and the libvulkan.1.dylib symlink run.sh points
+    # at, and the bundle keeps both names (the file's own @rpath id is the versioned one).
+    file(GLOB BB_VULKAN_LOADER ${BB_DEPS}/lib/libvulkan.1.*.dylib)
+    get_filename_component(BB_VULKAN_LOADER_NAME ${BB_VULKAN_LOADER} NAME)
+    install(FILES ${BB_DEPS}/lib/libMoltenVK.dylib ${BB_VULKAN_LOADER}
+            DESTINATION Contents/Frameworks)
+    install(CODE "execute_process(COMMAND \${CMAKE_COMMAND} -E create_symlink
+                \"${BB_VULKAN_LOADER_NAME}\"
+                \"\$ENV{DESTDIR}\${CMAKE_INSTALL_PREFIX}/Contents/Frameworks/libvulkan.1.dylib\")")
+    configure_file(install/MoltenVK_icd.json.in ${CMAKE_BINARY_DIR}/MoltenVK_icd.json @ONLY)
+    install(FILES ${CMAKE_BINARY_DIR}/MoltenVK_icd.json
+            DESTINATION Contents/Resources/game/share/vulkan/icd.d)
+    install(PROGRAMS run.sh DESTINATION Contents/Resources/game)
+    install(DIRECTORY scripts patches DESTINATION Contents/Resources/game USE_SOURCE_PERMISSIONS
+            PATTERN "__pycache__" EXCLUDE PATTERN "*.pyc" EXCLUDE)
+    install(PROGRAMS tools/fsr4_metal_initializers.sh DESTINATION Contents/Resources/game/tools)
+    install(DIRECTORY ${CMAKE_SOURCE_DIR}/out/fsr4_metal DESTINATION Contents/Resources/game OPTIONAL)
+    install(FILES LICENSE README.md DESTINATION Contents/Resources/game)
+    install(DIRECTORY ${BB_DEPS}/app-runtime/python DESTINATION Contents/Resources
+            USE_SOURCE_PERMISSIONS)
+    install(CODE "message(STATUS \"Stripping the build's search paths from the bundle\")")
+    install(SCRIPT install/strip-rpaths.cmake)
+endif()
 
 # The DLSS bridge (NVIDIA RTX, Linux): its own project, built when the SDK is at hand.
 set(BB_DLSS_SDK_ROOT "" CACHE PATH "NVIDIA DLSS SDK checkout (builds the DLSS bridge)")

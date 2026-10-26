@@ -49,6 +49,10 @@ set(BB_DEPS_MIN_MACOS 15.0)
 set(BB_DEPS_DOWNLOAD "${CMAKE_BINARY_DIR}/download" CACHE PATH "Downloaded archives")
 set(BB_DEPS_STEPS "${CMAKE_CURRENT_SOURCE_DIR}/steps")
 file(MAKE_DIRECTORY "${BB_DEPS_PREFIX}" "${BB_DEPS_DOWNLOAD}")
+# The steps are part of the manifest (a package's key hashes them): configure again when one
+# changes.
+file(GLOB BB_DEPS_STEP_FILES CONFIGURE_DEPENDS ${BB_DEPS_STEPS}/*.cmake)
+set_property(DIRECTORY APPEND PROPERTY CMAKE_CONFIGURE_DEPENDS ${BB_DEPS_STEP_FILES})
 
 # FSR 4.1.1 on Metal needs DXC and SPIRV-Cross commands, clang-format for DXC's generated sources
 # and spirv-val to check the kernels.

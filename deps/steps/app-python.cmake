@@ -16,11 +16,11 @@ foreach(dir IN LISTS bb_python_lib)
     file(REMOVE_RECURSE
         "${dir}/test" "${dir}/idlelib" "${dir}/tkinter" "${dir}/turtledemo" "${dir}/ensurepip"
         "${dir}/lib2to3" "${dir}/pydoc_data" "${dir}/unittest/test" "${dir}/sqlite3/test"
-        "${dir}/ctypes/test" "${dir}/site-packages/pip" "${BB_PREFIX}/app-runtime/python/include"
-        "${BB_PREFIX}/app-runtime/python/share")
+        "${dir}/ctypes/test" "${dir}/site-packages/pip")
     file(GLOB bb_tkinter "${dir}/lib-dynload/_tkinter"*)
     file(REMOVE ${bb_tkinter})
 endforeach()
+file(REMOVE_RECURSE "${BB_PREFIX}/app-runtime/python/include" "${BB_PREFIX}/app-runtime/python/share")
 # and the commands that go with them.
 file(GLOB bb_scripts "${BB_PREFIX}/app-runtime/python/bin/pip*"
                      "${BB_PREFIX}/app-runtime/python/bin/idle*"
