@@ -123,10 +123,31 @@ static int list_displays(void) {
     return 0;
 }
 
-/* --read-input key|pad: a small window; prints "key <SDL key name>" ("Mouse Left", "Wheel Up", ...
- * for the mouse) or "pad <SDL button name>"|pad: a small window; prints "key <SDL key name>" or "pad <SDL button name>"
- * (lefttrigger/righttrigger for the triggers) for the first key or gamepad button pressed, the
- * names bbport.ini's key.* and pad.* lines take. Escape, closing it or 15 s: nothing. */
+/* --read-input key|pad: a small window; prints names accepted by bbport.ini's key.* and pad.*
+ * lines. A held Shift/Ctrl/Alt plus a key or mouse button is one chord. Escape, closing the
+ * window or waiting 15 s cancels. */
+static int modifier_key(SDL_Scancode code) {
+    return code == SDL_SCANCODE_LSHIFT || code == SDL_SCANCODE_RSHIFT ||
+           code == SDL_SCANCODE_LCTRL || code == SDL_SCANCODE_RCTRL ||
+           code == SDL_SCANCODE_LALT || code == SDL_SCANCODE_RALT;
+}
+
+static const char *held_modifier(SDL_Scancode key) {
+    const bool *down = SDL_GetKeyboardState(NULL);
+    const SDL_Scancode mods[] = {SDL_SCANCODE_LSHIFT, SDL_SCANCODE_RSHIFT,
+                                 SDL_SCANCODE_LCTRL, SDL_SCANCODE_RCTRL,
+                                 SDL_SCANCODE_LALT, SDL_SCANCODE_RALT};
+    for (size_t i = 0; i < sizeof(mods) / sizeof(*mods); ++i) {
+        if (mods[i] != key && down[mods[i]]) return SDL_GetScancodeName(mods[i]);
+    }
+    return NULL;
+}
+
+static void print_key_binding(const char *name, SDL_Scancode key) {
+    const char *mod = held_modifier(key);
+    printf("key %s%s%s\n", mod ? mod : "", mod ? "+" : "", name);
+}
+
 static int read_input(const char *kind) {
     const int want_key = strcmp(kind, "pad") != 0, want_pad = strcmp(kind, "key") != 0;
     if (!SDL_Init(SDL_INIT_VIDEO | SDL_INIT_GAMEPAD)) {
@@ -149,6 +170,7 @@ static int read_input(const char *kind) {
     SDL_free(ids);
     const Uint64 end = SDL_GetTicks() + 15000;
     int done = 0;
+    SDL_Scancode pending_modifier = SDL_SCANCODE_UNKNOWN;
     while (!done && SDL_GetTicks() < end) {
         SDL_SetRenderDrawColor(renderer, 24, 24, 28, 255);
         SDL_RenderClear(renderer);
@@ -170,7 +192,17 @@ static int read_input(const char *kind) {
                 if (e.key.scancode == SDL_SCANCODE_ESCAPE) {
                     done = 1;
                 } else if (want_key) {
-                    printf("key %s\n", SDL_GetScancodeName(e.key.scancode));
+                    if (modifier_key(e.key.scancode)) {
+                        pending_modifier = e.key.scancode;
+                    } else {
+                        print_key_binding(SDL_GetScancodeName(e.key.scancode), e.key.scancode);
+                        done = 1;
+                    }
+                }
+                break;
+            case SDL_EVENT_KEY_UP:
+                if (want_key && e.key.scancode == pending_modifier) {
+                    printf("key %s\n", SDL_GetScancodeName(pending_modifier));
                     done = 1;
                 }
                 break;
@@ -178,14 +210,14 @@ static int read_input(const char *kind) {
                 if (want_key && e.button.button >= SDL_BUTTON_LEFT && e.button.button <= SDL_BUTTON_X2) {
                     static const char *const names[] = {"", "Mouse Left", "Mouse Middle", "Mouse Right",
                                                         "Mouse X1", "Mouse X2"};
-                    printf("key %s\n", names[e.button.button]);
+                    print_key_binding(names[e.button.button], SDL_SCANCODE_UNKNOWN);
                     done = 1;
                 }
                 break;
             case SDL_EVENT_MOUSE_WHEEL:
                 if (want_key && e.wheel.y != 0) {
                     const float y = e.wheel.direction == SDL_MOUSEWHEEL_FLIPPED ? -e.wheel.y : e.wheel.y;
-                    printf("key %s\n", y > 0 ? "Wheel Up" : "Wheel Down");
+                    print_key_binding(y > 0 ? "Wheel Up" : "Wheel Down", SDL_SCANCODE_UNKNOWN);
                     done = 1;
                 }
                 break;

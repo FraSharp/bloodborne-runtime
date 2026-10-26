@@ -40,6 +40,7 @@ class GraphicsPipeline;
 class Runtime;
 
 class NullResources; // bbport: vk_null_resources.h
+class PromptImages; // bbport 0.6: key guides for the active input device
 class Rasterizer {
 public:
     explicit Rasterizer(VideoCore::Backend::Device& device, const Instance& instance,
@@ -478,6 +479,7 @@ private:
     std::unique_ptr<DrawPreparation> draw_prep;
     std::unique_ptr<CameraMotion> camera_motion; // bbport: motion vectors (bbport's docs/upscaler.md)
     std::unique_ptr<SceneTargets> scene_targets;
+    std::unique_ptr<PromptImages> prompts;
     bool scene_started = false;
     std::unique_ptr<ObjectMotion> object_motion;
     bool motion_draw = false;

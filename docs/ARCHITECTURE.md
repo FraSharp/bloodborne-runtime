@@ -62,6 +62,13 @@ the pad (SDL3 controllers and the keyboard), audio (AT9 through LibAtrac9), vide
 (AvPlayer on FFmpeg), the clock, trophies (`TROPHIES.md`) and the network stubs. Platform
 differences (Linux and macOS) are in `src/platform.{c,h}`.
 
+**Button prompts.** The game draws its key guides with PlayStation icons. The renderer knows those
+icons and the HUD atlases that hold them by their bytes, hashed from the game's own files at start
+(`gpu/shim/bbport_button_prompts.cpp`), and while the keyboard and mouse or a non-PlayStation pad
+was used last it samples icons drawn by the port instead: the bound key or mouse button, or that
+pad's button (`runtime_pad_prompt`; `vk_prompt_images.cpp`, the same on Metal and MoltenVK). No
+game data is stored. `BB_BUTTON_PROMPTS=0`: the game's icons always.
+
 **Memory.** Direct memory is 5,056 MiB as on the PS4. Outputs above 1080p need more for their
 larger targets: `run.sh` sets `BB_DMEM_MB` to 5,056 MiB plus 448 bytes per scene pixel above
 1080p, in 64 MiB steps. `BB_DMEM_EXTRA_MB` (512 by default) adds memory past the game's size that

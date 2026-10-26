@@ -126,6 +126,9 @@ public:
     ImageId depth_id{};
     u64 depth_uid{};
     u64 image_uid{};
+    u8 prompt_icon{};  ///< bbport 0.6: the game's key-guide icon identified from its own bytes
+    u8 prompt_atlas{}; ///< HUD atlas containing key-guide icons
+    u32 prompt_upload{};
 
     ImageInfo info;
     Backend::Device* device{};

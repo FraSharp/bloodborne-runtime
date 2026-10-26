@@ -19,8 +19,9 @@ project it is based on.
   shadp2p/BBSC forks), Laurence's cinematic fixes, the live effects and the SSAO check
   (`bbport_game_hooks.cpp`, `bbport_effect_flags.h`), aspect ratios (camera, markers, UI viewport
   and HUD hooks, the UI edge stretch), the keyboard and mouse (`runtime_pad.c` and `window.cpp`
-  merged from 0.6, `bbport_cursor.cpp`, native mouse look) and the menu pointer
-  (`gpu/games/bloodborne_menu_pointer.cpp`; its findings first published in a fork of bbport).
+  merged from 0.6, `bbport_cursor.cpp`, native mouse look), the menu pointer
+  (`gpu/games/bloodborne_menu_pointer.cpp`; its findings first published in a fork of bbport) and
+  the button prompts for the device in use (`bbport_button_prompts.cpp`, `vk_prompt_images.cpp`).
 - [**shadPS4**](https://github.com/shadps4-emu/shadPS4): the video core and shader recompiler
   (GPL-2.0+), and [sirit](https://github.com/shadps4-emu/sirit).
 - **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the online module

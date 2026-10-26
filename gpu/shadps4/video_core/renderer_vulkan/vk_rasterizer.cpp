@@ -18,6 +18,7 @@
 #include "bbport_free_check.h"
 #include "bbport_guest_memory.h"
 #include "video_core/renderer_vulkan/vk_frame_capture.h"
+#include "video_core/renderer_vulkan/vk_prompt_images.h"
 #include "common/hash.h"
 #include "common/debug.h"
 #include "core/debug_state.h"
@@ -130,6 +131,7 @@ Rasterizer::Rasterizer(VideoCore::Backend::Device& device, const Instance& insta
     // Before the rasterizer is bound: Liverpool enqueues buffers only once it sees it.
     draw_prep = std::make_unique<DrawPreparation>(pipeline_cache);
     scene_targets = std::make_unique<SceneTargets>(device, runtime_, texture_cache);
+    prompts = std::make_unique<PromptImages>(device, runtime_, buffer_cache);
     // Object motion first: it fixes the buffer addresses the motion shader variants embed.
     object_motion = std::make_unique<ObjectMotion>(device);
     camera_motion = std::make_unique<CameraMotion>(device, texture_cache, runtime_);
@@ -2490,7 +2492,7 @@ bool Rasterizer::TexturesBindableOnHelper(const Shader::Info& stage,
         }
         if (image->binding.needs_rebind || image->pending_clear ||
             !texture_cache.IsUpToDate(image_id) ||
-            scene_targets->Tracks(image->image_uid) ||
+            scene_targets->Tracks(image->image_uid) || image->prompt_icon || image->prompt_atlas ||
             (upscaler->Enabled() && upscaler->RedirectsSampled(image_id))) {
             return false;
         }
@@ -3840,6 +3842,7 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
                               Shader::Backend::Bindings& binding, u32& write_index,
                               bool& barrier, bool on_helper) {
     BB_SECTION(BindTextures);
+    if (!on_helper) prompts->Update();
     const u32 first_image_idx = image_infos.size();
     TextureSet* set_slot = nullptr;
     if (!on_helper && BindTexturesFromSet(stage, prepared, first_image_idx, barrier, set_slot)) {
@@ -4028,6 +4031,20 @@ void Rasterizer::BindTextures(const Shader::Info& stage, const PreparedStage* pr
             auto& image_view = texture_cache.FindTexture(
                 image_id, desc, memo_entry ? &memo_entry->view_memo : nullptr, !on_helper);
             const auto binding = image.binding;
+
+            // bbport 0.6: the game's key guides sample our icon for the last input device.
+            // The shared adapter owns the replacement, on Metal and MoltenVK alike.
+            if (prompts->Active() && !is_storage) {
+                VideoCore::Backend::ImageBinding guide{};
+                if (image.prompt_atlas) guide = prompts->AtlasView(image, desc.view_info);
+                else if (image.prompt_icon) guide = prompts->View(image.prompt_icon, desc.view_info);
+                if (guide.view) {
+                    image.usage.texture = 1u;
+                    image_infos.push_back(guide);
+                    set_ok = false;
+                    continue;
+                }
+            }
 
             // bbport: a proxied scene image sampled with normalized coordinates reads the proxy:
             // no resample to the native size (the native image is not touched).
@@ -4235,6 +4252,7 @@ bool Rasterizer::BindTexturesFromSet(const Shader::Info& stage, const PreparedSt
             continue;
         }
         const auto& image = texture_cache.GetImage(entry.id);
+        if (prompts->Active() && (image.prompt_icon || image.prompt_atlas)) return false;
         // Proxy entries need a current proxy; native entries of a proxied image go through
         // BindTextures, which may sample the proxy instead.
         const bool proxies_on = !BbToggle::Disabled(BbToggle::SampleSceneProxies);

@@ -9,6 +9,7 @@
 #include <cstring>
 
 #include "bbport_toggles.h"
+#include "bbport_button_prompts.h"
 #include "bbport_free_check.h"
 #include "common/assert.h"
 #include "common/debug.h"
@@ -983,6 +984,18 @@ void TextureCache::RefreshImage(Image& image) {
 
     const u32 num_layers = image.info.resources.layers;
     const u32 num_mips = image.info.resources.levels;
+    // bbport 0.6 (8185b88): recognise the game's key-guide images by their bytes. Hash only
+    // candidate sizes; generated prompt pixels stay in the renderer, never in guest memory.
+    if (num_layers == 1 && num_mips == 1 && image.info.props.is_block) {
+        const auto* bytes = reinterpret_cast<const u8*>(image.info.guest_address);
+        image.prompt_icon = image.info.size.width == 32 && image.info.size.height == 32 &&
+                                    image.info.guest_size >= BbPrompts::GameIconSize *
+                                                                    BbPrompts::GameIconSize
+                                ? u8(BbPrompts::IconOf(bytes, 1024)) : 0;
+        image.prompt_atlas = u8(BbPrompts::AtlasOf(bytes, image.info.guest_size,
+                                                   image.info.size.width, image.info.size.height));
+        if (image.prompt_atlas) ++image.prompt_upload;
+    }
     const bool is_gpu_modified = True(image.flags & ImageFlagBits::GpuModified);
     const bool is_gpu_dirty = True(image.flags & ImageFlagBits::GpuDirty);
     static const bool sync_log = std::getenv("BB_IMAGE_SYNC_LOG") != nullptr;
