@@ -920,7 +920,14 @@ void Presenter::PresentMetal(Frame* frame, bool is_game_frame) {
         swapchain.PresentFrame(
             frame->image, fit,
             [](void* command_buffer, void* target, u32 width, u32 height) {
+#if BB_METAL_BACKEND
                 BbOverlay::RenderMetal(command_buffer, target, width, height);
+#else
+                (void)command_buffer;
+                (void)target;
+                (void)width;
+                (void)height;
+#endif
             },
             [this, frame] {
                 std::scoped_lock lock{metal_present_mutex};
