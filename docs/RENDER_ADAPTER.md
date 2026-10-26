@@ -2,9 +2,10 @@
 
 [← Documentation](README.md) · [Native renderer](NATIVE_RENDERER.md)
 
-**State:** approved on 2026-10-22. A0–A6 and M1–M3 are done. M4 steps 1–4 are implemented,
-but M4 is **not accepted**: capability comparisons on M1 and M2 Macs and the maintainer's
-release-candidate play session remain. Native Metal owns its device, queue, resources,
+**State:** approved on 2026-10-22. A0–A6 and M1–M3 are done. M4 steps 1–4 are implemented and
+the maintainer's play sessions passed (2026-10-26); M4 is **not accepted** until players' reports
+on the 0.9.0 release candidate, including capability comparisons on M1 and M2 Macs
+(`BB_METAL_CAPS=compare`), come back clean. Native Metal owns its device, queue, resources,
 synchronization and MetalFX work without loading Vulkan or MoltenVK. The app still bundles a
 MoltenVK fallback, selected with `BB_METAL_FRAME=0`; only that path loads the Vulkan loader and
 ICD. The shared renderer still uses Vulkan types and dispatch signatures internally. Linux keeps
