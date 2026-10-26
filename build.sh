@@ -69,34 +69,11 @@ if [[ -z $pgo ]]; then
     if [[ -n $(find pgo -name '*.gcda' -print -quit 2>/dev/null) ]]; then pgo=use; else pgo=off; fi
 fi
 mkdir -p pgo
-# Submodules (git clone --recursive, or: git submodule update --init) and this port's changes
-# to FSR-Vulkan (gpu/patches/fsr-vulkan), applied to its working tree once. Not on macOS: they
-# only instrument the FSR 4 provider, which Apple GPUs cannot run (the submodule stays clean).
+# Submodules (git clone --recursive, or: git submodule update --init). The port's changes to
+# FSR-Vulkan (gpu/patches/) are applied to a copy in the GPU library's build directory
+# (gpu/CMakeLists.txt), so the submodule keeps matching its commit.
 if [[ ! -f gpu/third_party/fsr-vulkan/CMakeLists.txt || ! -f gpu/third_party/imgui/imgui.h ]]; then
     git submodule update --init --recursive
-fi
-# Issue #124: a checkout updated from an earlier version keeps that version's patch applied, and
-# the new one applies neither way ("patch does not apply"): the submodule's tree holds nothing but
-# these patches, so it is reset and they are applied again.
-fsr_patches_apply() {
-    for patch in gpu/patches/fsr-vulkan/*.patch; do
-        if ! git -C gpu/third_party/fsr-vulkan apply --reverse --check "$PWD/$patch" 2>/dev/null; then
-            git -C gpu/third_party/fsr-vulkan apply "$@" "$PWD/$patch" || return 1
-        fi
-    done
-}
-if (( ! macos )); then
-    if ! fsr_patches_apply --check 2>/dev/null; then
-        echo 'FSR-Vulkan: an earlier version of the port changed it; resetting it and patching again'
-        git -C gpu/third_party/fsr-vulkan checkout -- .
-    fi
-    fsr_patches_apply
-else
-    for patch in gpu/patches/fsr-vulkan-macos/*.patch; do
-        if ! git -C gpu/third_party/fsr-vulkan apply --unidiff-zero --reverse --check "$PWD/$patch" 2>/dev/null; then
-            git -C gpu/third_party/fsr-vulkan apply --unidiff-zero "$PWD/$patch"
-        fi
-    done
 fi
 cmake_platform=()
 gpudir=out/gpu

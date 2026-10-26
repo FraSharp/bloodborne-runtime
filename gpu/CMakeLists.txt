@@ -89,9 +89,41 @@ set(SIRIT_USE_SYSTEM_SPIRV_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 
 # bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
+# The port's changes to it (patches/) go to a copy under the build directory: the submodule keeps
+# matching its commit, two builds cannot fight over one tree, and a checkout updated to a newer
+# FSR-Vulkan always gets the patches of its own version.
+if (APPLE)
+    set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan-macos)
+else()
+    set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan)
+endif()
+file(GLOB bb_fsr_patches ${BB_FSR_PATCHES}/*.patch)
+set(bb_fsr_patch_hash "")
+foreach(patch IN LISTS bb_fsr_patches)
+    file(READ ${patch} text)
+    string(SHA256 hash "${text}")
+    string(APPEND bb_fsr_patch_hash "${hash}")
+endforeach()
+string(SHA256 bb_fsr_key "${bb_fsr_patch_hash}")
+string(SUBSTRING "${bb_fsr_key}" 0 8 bb_fsr_key)
+set(BB_FSR_COPY ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan-patched)
+set(BB_FSR_MARKER ${BB_FSR_COPY}/.patched-${bb_fsr_key})
+if (NOT EXISTS ${BB_FSR_MARKER})
+    file(REMOVE_RECURSE ${BB_FSR_COPY})
+    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/ DESTINATION ${BB_FSR_COPY}
+         PATTERN ".git" EXCLUDE PATTERN "build" EXCLUDE)
+    foreach(patch IN LISTS bb_fsr_patches)
+        execute_process(COMMAND git apply --unidiff-zero ${patch}
+                        WORKING_DIRECTORY ${BB_FSR_COPY} RESULT_VARIABLE bb_patch_result)
+        if (bb_patch_result)
+            message(FATAL_ERROR "${patch} does not apply to the FSR-Vulkan submodule")
+        endif()
+    endforeach()
+    file(TOUCH ${BB_FSR_MARKER})
+endif()
 set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
 set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
-add_subdirectory(third_party/fsr-vulkan EXCLUDE_FROM_ALL)
+add_subdirectory(${BB_FSR_COPY} ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan EXCLUDE_FROM_ALL)
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
 set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders)
