@@ -790,6 +790,14 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   copied-save 1080p sessions with two grabs each, gameplay had no frames over 150 ms; the
   largest gameplay frames were 74.6 ms on Metal and 57.9 ms on MoltenVK. The reported pause was
   not reproduced on this Mac, so the maintainer's conditions still need a check.
+- **Native 1080p test override:** an explicit `BB_RENDER_RES=1920x1080` selected the older
+  scaled-session UI path even though the game was already at that size. In copied-save tests it
+  exposed the item atlas over gameplay and made the coat appear dark. The normal 1080p launch
+  was clean; `run.sh` now removes an explicit native-size override before the renderer starts,
+  and the patch compiler skips its redundant resolution writes. The texture collector freed
+  zero images in the failing run, so this was separate from the 0.8.2 lighting fix. A normal
+  native 1440p Metal run with the same copied save also had a clean item mask and coat
+  (1,139 frames, 33.1 ms median, no frame over 150 ms).
 - **M4 step 4.3, MetalFX:** the temporal scaler encodes on the native frame command buffer and
   takes native textures. Depth/stencil is converted to a MetalFX-compatible depth texture.
   A copied-save comparison measured 34.5 mean FPS against 30.8 with the exported-texture bridge
@@ -810,6 +818,8 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
   remain acceptance gates.
   A reversed A/B pair measured 36.9 FPS on the new build against 36.8 on main, median
   26.6 against 26.8 ms, p90 28.9 ms both, and GPU-thread median 4.17 against 4.13 µs/draw.
+  The manual Linux workflow built the Vulkan backend and passed its resource, adapter, upload
+  and trophy tests on [run 40310567847](https://github.com/bloodborne-native/bloodborne-runtime/actions/runs/40310567847).
   The Rosetta build reaches device initialization but faults before a frame at the same guest
   offset and thread as an isolated main build on this Mac; the x86_64 fallback remains available.
 - **M4 step 4.1, the comparison:** `renderer_metal/mtl_vk_caps.mm` answers the start-up queries
