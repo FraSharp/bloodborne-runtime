@@ -17,6 +17,10 @@ macos=0
 arch=()
 if [[ $(uname -s) == Darwin ]]; then
     macos=1
+    # The minimum macOS: the same number as the launcher's minimumSystemVersion and deps/'s build
+    # (scripts/macos/build-deps.sh). Left to the SDK of the machine that builds, a build on a newer
+    # macOS recorded a newer minimum and the app refused to start on the documented one.
+    export MACOSX_DEPLOYMENT_TARGET=${MACOSX_DEPLOYMENT_TARGET:-15.0}
     if [[ -z ${BB_ARCH:-} ]]; then
         [[ $(sysctl -n hw.optional.arm64 2>/dev/null) == 1 ]] && BB_ARCH=arm64 || BB_ARCH=x86_64
     fi

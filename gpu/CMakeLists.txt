@@ -1,6 +1,12 @@
 # bbport GPU library: shadPS4 video core + shader recompiler + Gnm/VideoOut
 # drivers, adapted to the native_probe runtime through shims in shim/.
 cmake_minimum_required(VERSION 3.24)
+# The minimum macOS, the launcher's minimumSystemVersion and deps/'s deployment target are this
+# one number: without it the SDK of the machine that builds decides. A build on macOS 26 with the
+# 26 SDK recorded minos 26.0, so the app refused to start before 26.0 while its manifest said 13.0.
+if (APPLE AND NOT CMAKE_OSX_DEPLOYMENT_TARGET)
+    set(CMAKE_OSX_DEPLOYMENT_TARGET 15.0)
+endif()
 project(bbgpu LANGUAGES C CXX)
 set(CMAKE_CXX_STANDARD 23)
 set(CMAKE_CXX_STANDARD_REQUIRED ON)
