@@ -1,6 +1,21 @@
 # bbport GPU library: shadPS4 video core + shader recompiler + Gnm/VideoOut
 # drivers, adapted to the native_probe runtime through shims in shim/.
 cmake_minimum_required(VERSION 3.24)
+# ctest, for a standalone build of this project; runtime/CMakeLists.txt (which includes it) does it
+# for the game.
+if (CMAKE_SOURCE_DIR STREQUAL CMAKE_CURRENT_SOURCE_DIR)
+    include(CTest)
+endif()
+# Where the library goes: runtime/CMakeLists.txt points this at its build directory's gpu/, and a
+# standalone build of this project does the same.
+if (NOT BB_GPU_OUT)
+    set(BB_GPU_OUT ${CMAKE_BINARY_DIR}/gpu)
+endif()
+# The FSR 4 benchmark is run by hand (tools/fsr4_verify.sh): out/gpu, where those scripts look.
+if (NOT BB_BENCH_OUT)
+    set(BB_BENCH_OUT ${CMAKE_BINARY_DIR})
+endif()
+
 # The minimum macOS, the launcher's minimumSystemVersion and deps/'s deployment target are this
 # one number: without it the SDK of the machine that builds decides. A build on macOS 26 with the
 # 26 SDK recorded minos 26.0, so the app refused to start before 26.0 while its manifest said 13.0.
@@ -23,6 +38,7 @@ add_compile_options(-fno-omit-frame-pointer)
 # runs on the Steam Deck.
 option(BB_LTO "Link-time optimization of bbgpu" ON)
 set(BB_PGO "off" CACHE STRING "Profile-guided optimization: off, generate, use")
+message(STATUS "GPU library: PGO ${BB_PGO}, LTO ${BB_LTO}")
 set(BB_PGO_DIR "${CMAKE_CURRENT_SOURCE_DIR}/../pgo" CACHE PATH "Profile directory")
 if (BB_LTO)
     include(CheckIPOSupported)
@@ -199,6 +215,7 @@ add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} $
     shadps4/core/libraries/kernel/equeue.cpp ${AVPLAYER}
     shadps4/core/libraries/videodec/video_utils.cpp)
 add_dependencies(bbgpu host_shaders)
+set_target_properties(bbgpu PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${BB_GPU_OUT})
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
@@ -430,10 +447,34 @@ add_executable(upscaler-support-test EXCLUDE_FROM_ALL ../tests/test_upscaler_sup
 target_include_directories(upscaler-support-test PRIVATE shim)
 target_compile_options(upscaler-support-test PRIVATE -UNDEBUG)
 
-add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
-    shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
-target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
-target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
+# What ctest runs, and what bash build.sh --test builds: neither launches the game nor needs a
+# Vulkan device.
+#
+# Not here, because they stopped compiling when the code moved under them (they were not built by
+# anything before): motion-shader-test (missing symbols at link time), scene-resolution-test
+# (SceneTargets takes other arguments), taa-shader-test and camera-motion-test (UniqueImage is
+# Vulkan::UniqueImage now), translation-memory-test (BufferCopyShaderHash is gone). Their targets
+# stay, so a repair has somewhere to start.
+if (BUILD_TESTING)
+    set(BBGPU_TESTS image-upload-hash-test slot-vector-test handle-table-test avplayer-queue-test
+        avplayer-clock-test fixed-quad-tessellation-test motion-history-test ui-composition-test
+        cp-decoder-test settings-test trophy-queue-test upscaler-support-test)
+    foreach(test IN LISTS BBGPU_TESTS)
+        add_test(NAME ${test} COMMAND ${test})
+    endforeach()
+    add_custom_target(bbgpu-tests DEPENDS ${BBGPU_TESTS})
+endif()
+
+# The FSR 4 benchmark (tools/fsr4_verify.sh, tools/fsr4cap/): the Vulkan path's provider, so Linux
+# only — it links the Vulkan entry points and macOS has no loader to give it.
+if (NOT APPLE)
+    add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
+        shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
+    set_target_properties(fsr4-bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BB_BENCH_OUT})
+    target_include_directories(fsr4-bench PRIVATE shadps4/video_core/renderer_vulkan/fsr411)
+    target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan
+        ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
+endif()
 
 # bbport online module (gpu/bbnet, libbbnet.so): built when its libraries are there (shell.nix);
 # BB_NET=OFF leaves it out. Without it the port plays offline.

@@ -29,8 +29,14 @@ bash build.sh                                  # the first run also builds deps/
 BB_GAME_DIR=/path/to/your/game bash run.sh
 ```
 
-- `build.sh` builds `out/bb-probe`, the GPU library and bbcpu (from the `recomp/` submodule).
-  `bash build.sh --test` also runs the native tests.
+- `build.sh` is a wrapper around `CMakeLists.txt`: one preset per configuration in
+  `CMakePresets.json` (`macos-arm64`, `macos-arm64-debug`, `macos-arm64-asan`, `macos-x86_64`,
+  `linux`), Ninja underneath. It builds `out/bb-probe`, the GPU library, bbcpu (from the `recomp/`
+  submodule) and `bb-gpu-capabilities`; `bash build.sh --test` builds the tests and runs them with
+  `ctest`. Everything is built into `build/<preset>/` and then copied to `out/`, which is where
+  `run.sh`, the launcher and the test scripts look (the game's own files live there too).
+  `cmake --preset macos-arm64-asan` and then `--build`/`ctest --preset` is the same build with the
+  address and undefined sanitizers, `BB_SANITIZE` passes them by hand.
 - `deps/` (MoltenVK, SDL3, FFmpeg, ...; for FSR 4.1.1 on Metal also DXC, the spirv-cross command
   and the fsr4-native-macos tree, without AMD's initializers) is built by
   `scripts/macos/build-deps.sh`, which runs `deps/CMakeLists.txt`. `deps/packages.cmake` has every

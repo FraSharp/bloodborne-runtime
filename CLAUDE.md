@@ -30,7 +30,9 @@ bbcpu from the `recomp/` submodule (bloodborne-recomp), or as its recompiled lib
 ## Build and test
 
 ```sh
-bash build.sh [--test]                      # macOS: builds deps/ the first time (~1 h)
+bash build.sh [--test]                      # preset + ninja; deps/ the first time (~1 h)
+cmake --preset macos-arm64-asan             # the same with address,undefined (or macos-arm64-debug)
+cmake --build --preset macos-arm64 --target bb-tests && ctest --preset macos-arm64
 tools/test_run.sh NAME [VAR=VALUE...]       # background run with a copy of the player's save
 tools/test_opening_video.sh NAME            # new save through the opening video
 cd tests && python3 -m unittest discover -p 'test_*.py'
