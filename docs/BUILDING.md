@@ -83,9 +83,14 @@ Switches for single features are listed where the feature is described in
 
 ## Tests
 
-- `bash build.sh --test`: the native tests (settings, the AV player's clock and queue, stable
-  slot storage, texture upload hashing, ...). They need no game or GPU and also run in Linux CI,
-  which is started by hand for now; it compiles the Linux build but does not check its rendering.
+- `bash build.sh --test`: the native tests through `ctest` (settings, the AV player's clock and
+  queue, stable slot storage, texture upload hashing, the runtime's services, ...). They need no
+  game and no GPU. `ctest --preset macos-arm64` runs them again without rebuilding, `-R` picks one,
+  and `ctest --preset macos-arm64 -N` lists them with the two that are disabled on macOS and why
+  (guest TLS executes x86-64 code, the loader test builds 4 KiB pages; under `BB_SANITIZE` three
+  more cannot run, because they map the guest's address space). Five GPU tests stopped compiling
+  when the code moved under them and are not registered (`gpu/CMakeLists.txt` names them).
+  Linux CI is started by hand for now; it compiles the Linux build but does not check its rendering.
 - `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS the
   Linux-only cases fail (`test_packaged_vulkan`, the Intel tonemap check), and
   `test_probe.LoaderTests` fails (its images use 4 KiB segments; Macs have 16 KiB pages): known,
