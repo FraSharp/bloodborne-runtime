@@ -793,8 +793,9 @@ FSR 3.1). Their code is taken where it fits and credited in the commit that brin
 - **Native 1080p test override:** an explicit `BB_RENDER_RES=1920x1080` selected the older
   scaled-session UI path even though the game was already at that size. In copied-save tests it
   exposed the item atlas over gameplay and made the coat appear dark. The normal 1080p launch
-  was clean; `run.sh` now removes an explicit native-size override before the renderer starts,
-  and the patch compiler skips its redundant resolution writes. The texture collector freed
+  was clean; the renderer now classifies an explicit native size as native, and the patch
+  compiler skips its redundant resolution writes. Copied-save frames with the override
+  reaching the renderer were clean on Metal and MoltenVK. The texture collector freed
   zero images in the failing run, so this was separate from the 0.8.2 lighting fix. A normal
   native 1440p Metal run with the same copied save also had a clean item mask and coat
   (1,139 frames, 33.1 ms median, no frame over 150 ms).

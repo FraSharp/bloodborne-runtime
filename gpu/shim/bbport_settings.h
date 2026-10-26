@@ -171,7 +171,7 @@ void Load();
 void ConfigureUpscalerSupport(bool fsr4, bool fsr411, bool metalfx = false, bool metalfx_only = false);
 /// After device creation: DLSS availability; a DLSS setting falls back to FSR 3.1 without it.
 void ConfigureDlssSupport(bool available, const char* problem);
-/// Startup-patched scene dimensions cannot change until run.sh prepares a new image.
+/// A nonnative startup-patched scene cannot change until run.sh prepares a new image.
 bool FixedRenderSession();
 int RenderPreset();
 bool ResolutionNeedsRestart();

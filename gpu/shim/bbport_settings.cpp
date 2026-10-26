@@ -347,7 +347,10 @@ void ConfigureDlssSupport(bool available, const char* problem) {
 
 bool FixedRenderSession() {
     const char* size = std::getenv("BB_RENDER_RES");
-    return size && size[0];
+    unsigned width = 0, height = 0;
+    char trailing = 0;
+    return size && std::sscanf(size, "%ux%u%c", &width, &height, &trailing) == 2 &&
+           width && height && (width != OutputDefault.width || height != OutputDefault.height);
 }
 
 int RenderPreset() {

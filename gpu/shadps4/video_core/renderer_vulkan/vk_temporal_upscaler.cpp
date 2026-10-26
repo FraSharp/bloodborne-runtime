@@ -284,9 +284,9 @@ TemporalUpscaler::TemporalUpscaler(const Instance& instance_, Scheduler& schedul
             target_height = h;
         }
     }
-    // Explicit resolution overrides retain the old compatibility path. Normal presets
-    // keep guest allocations/UI native and change only host raster targets at frame boundaries.
-    scaled_session = std::getenv("BB_RENDER_RES") && std::getenv("BB_RENDER_RES")[0];
+    // Only an explicit nonnative scene uses the old compatibility path. The native
+    // 1920x1080 override must keep its UI and depth targets on the native path.
+    scaled_session = BbSettings::FixedRenderSession();
     render_width = 1920;
     render_height = 1080;
     if (const char* res = std::getenv("BB_RENDER_RES")) {

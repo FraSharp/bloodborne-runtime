@@ -193,8 +193,7 @@ def render_size(settings,override=''):
     if override:
         w,h=(int(v) for v in override.lower().split('x'))
         # The game's unmodified scene is already 1920x1080. No resolution
-        # writes are needed; run.sh also drops this native-size override so the
-        # renderer does not enter its scaled-session UI path.
+        # writes are needed. The renderer accepts the explicit value as native.
         return None if (w,h)==OUTPUT_SIZE else (w,h)
     if settings.get('upscaler','off')=='off': return None
     preset=int(settings.get('preset','0') or 0)
