@@ -75,6 +75,7 @@ class NativeUiTests(unittest.TestCase):
     def test_native_and_disabled_upscaler_need_no_resolution_patch(self):
         self.assertIsNone(render_size({'preset': '0'}))
         self.assertIsNone(render_size({'upscaler': 'off', 'preset': '3'}))
+        self.assertIsNone(render_size({}, '1920x1080'))
 
     def test_output_other_than_1080p_scales_the_scene(self):
         # Native 1080p stays unpatched; a 1080p preset renders the whole game smaller.

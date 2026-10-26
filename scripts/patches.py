@@ -192,7 +192,10 @@ def render_size(settings,override=''):
     """Render resolution for the upscaler preset, or None for native."""
     if override:
         w,h=(int(v) for v in override.lower().split('x'))
-        return (w,h)
+        # The game's unmodified scene is already 1920x1080. Applying the community
+        # resolution patch at that same size changes more than its dimensions and
+        # can break item masks and scene lighting.
+        return None if (w,h)==OUTPUT_SIZE else (w,h)
     if settings.get('upscaler','off')=='off': return None
     preset=int(settings.get('preset','0') or 0)
     scale=PRESET_SCALES[max(0,min(preset,len(PRESET_SCALES)-1))]

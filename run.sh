@@ -190,6 +190,12 @@ elif [[ -n ${scaled_output:-} ]]; then
     fi
     echo "Output ${scaled_output}: scene ${scaled_render}, direct memory ${BB_DMEM_MB:-default} MiB (live_resolution=1: live changes)"
 fi
+# An explicit native size needs neither the resolution patch nor the scaled-session
+# renderer path. Leaving BB_RENDER_RES set at 1920x1080 makes the UI treat native
+# draws as scaled and can expose the item atlas over gameplay.
+if [[ ${BB_RENDER_RES:-} == 1920x1080 && ${BB_OUTPUT_RES:-1920x1080} == 1920x1080 ]]; then
+    unset BB_RENDER_RES BB_OUTPUT_RES
+fi
 "$PYTHON" scripts/patches.py --out "$out" --fps "$fps" --extra "${BB_PATCHES:-}" --settings "$BB_CONFIG" --game-dir "$game" --render-res "${BB_RENDER_RES:-}" --output-res "${BB_OUTPUT_RES:-}" \
     --patches-dir "${BB_PATCHES_DIR:-$data/patches}" --patches-config "${BB_PATCHES_CONFIG:-$data/patches.json}"
 # Background upload of the game's GPU memory into VRAM ahead of use (BufferCache::Preupload):
