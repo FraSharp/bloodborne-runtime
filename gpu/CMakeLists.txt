@@ -383,7 +383,11 @@ target_link_libraries(fsr4-bench PRIVATE ffx-vulkan::fsr4-v07-vulkan ffx-vulkan:
 # bbport online module (gpu/bbnet, libbbnet.so): built when its libraries are there (shell.nix);
 # BB_NET=OFF leaves it out. Without it the port plays offline.
 option(BB_NET "Build the online module (shadNet)" ON)
-if (BB_NET)
+if (BB_NET AND APPLE)
+    # This module (shadp2p's network code) does not build on macOS (no epoll); the macOS online
+    # module is shadPS4 0.20's (planned). Without it the port plays offline.
+    message(STATUS "Online module: off (not on macOS yet)")
+elseif (BB_NET)
     find_package(Protobuf CONFIG QUIET)
     find_package(nlohmann_json CONFIG QUIET)
     find_package(OpenSSL QUIET)
