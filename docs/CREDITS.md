@@ -24,8 +24,18 @@ project it is based on.
   the button prompts for the device in use (`bbport_button_prompts.cpp`, `vk_prompt_images.cpp`).
 - [**shadPS4**](https://github.com/shadps4-emu/shadPS4): the video core and shader recompiler
   (GPL-2.0+), and [sirit](https://github.com/shadps4-emu/sirit).
-- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the online module
+- **shadp2p** (a shadPS4 fork, GPL-2.0): the network and PSN libraries of the Linux online module
   (`gpu/bbnet`, shadNet), from bbport 0.51.
+- **shadPS4 v0.20.0's network code** ([`529ceb3`](https://github.com/shadps4-emu/shadPS4/tree/529ceb32f5546b820588f194b903cc39d08015fe),
+  GPL-2.0-or-later): the network, NP and shadNet libraries of the macOS online module
+  (`gpu/bbnet20`), unchanged but for three marked changes.
+- [**droogie/bbhost**](https://github.com/droogie/bbhost/tree/566184a74f071166299bb656c4af479e5bbe2771)
+  (GPL-3.0-or-later): the network side of its emulator, adapted as the online module's backend for
+  The Hunter's Dream pool (`gpu/bbnet20/thd`). Its license makes the online module
+  GPL-3.0-or-later (`gpu/bbnet20/LICENSE.GPL-3.0`, also in the app).
+- [**Supermedo/bloodborne_pc**](https://github.com/Supermedo/bloodborne_pc/releases/tag/windows-v1.8.1)
+  (Windows 1.8 and 1.8.1, "Awaken", 2026-10-15): the first to put shadPS4 0.20's network code and
+  bbhost's backend together in a bbport build, which the online module follows.
 
 ## From other forks
 
