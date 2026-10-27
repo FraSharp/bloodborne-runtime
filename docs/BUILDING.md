@@ -47,6 +47,12 @@ BB_GAME_DIR=/path/to/your/game bash run.sh
   `deps/macos-<arch>` keeps each package's sources and build tree in `.build/` as well (a few GB):
   deleting that one directory is what makes everything install again, and nothing outside it
   decides what is installed.
+- `run.sh` only runs the game and `build.sh` builds it: after pulling a checkout, one
+  `bash build.sh` before `bash run.sh`. The test runners do it themselves (`tools/mac_bench.sh`,
+  and through it `tools/test_run.sh` and the opening video test).
+- A `deps/` from an earlier version is not reused: each package is keyed by its version and by the
+  steps that build it, so the first build after updating installs all of them again (about an hour,
+  the download is the same as before).
 - The port's changes to FSR-Vulkan (`gpu/patches/`) are applied to a copy under the build
   directory, not to the submodule: the checkout keeps matching the submodule's commit. On macOS
   it is `fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`, which links
