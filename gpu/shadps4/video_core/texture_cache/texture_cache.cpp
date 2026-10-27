@@ -151,6 +151,14 @@ TextureCache::TextureCache(Backend::Device& device_, VideoCore::Backend::Transfe
 
 TextureCache::~TextureCache() = default;
 
+bool TextureCache::CanView(const ImageInfo& base, const ImageInfo& view) const {
+    // Without block-texel views (Metal), a compressed image and an uncompressed one are
+    // separate images, as for any other incompatible formats.
+    return IsVulkanFormatCompatible(base.pixel_format, view.pixel_format) &&
+           (base.props.is_block == view.props.is_block ||
+            device.GetCapabilities().block_texel_views);
+}
+
 std::string TextureCache::DescribeImagesIn(VAddr addr, u64 size) {
     std::unique_lock lock{mutex, std::try_to_lock}; // the caller may hold it already
     if (!lock.owns_lock()) {
@@ -483,9 +491,7 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
             image_info.guest_size <= cache_image.info.guest_size || pow2_padding_only) {
             auto result_id = merged_image_id ? merged_image_id : cache_image_id;
             const auto& result_image = slot_images[result_id];
-            const bool is_compatible =
-                IsVulkanFormatCompatible(result_image.info.pixel_format, image_info.pixel_format);
-            return {is_compatible ? result_id : ImageId{}, -1, -1};
+            return {CanView(result_image.info, image_info) ? result_id : ImageId{}, -1, -1};
         }
 
         // Size and resources are greater, expand the image.
@@ -625,6 +631,9 @@ std::tuple<ImageId, int, int> TextureCache::ResolveOverlap(const ImageInfo& imag
     if (image_info.guest_address > cache_image.info.guest_address) {
         if (auto mip = image_info.MipOf(cache_image.info); mip >= 0) {
             if (auto slice = image_info.SliceOf(cache_image.info, mip); slice >= 0) {
+                if (!CanView(cache_image.info, image_info)) {
+                    return {{}, -1, -1}; // a separate image (see CanView)
+                }
                 return {cache_image_id, mip, slice};
             }
         }
@@ -745,7 +754,7 @@ ImageId TextureCache::FindImage(ImageDesc& desc, bool exact_fmt) {
         if (cache_image.info.size != info.size) {
             continue;
         }
-        if (!IsVulkanFormatCompatible(cache_image.info.pixel_format, info.pixel_format) ||
+        if (!CanView(cache_image.info, info) ||
             (cache_image.info.type != info.type && info.size != Extent3D{1, 1, 1})) {
             continue;
         }

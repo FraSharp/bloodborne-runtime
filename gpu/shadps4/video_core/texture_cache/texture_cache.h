@@ -397,6 +397,9 @@ private:
     void GarbageCollectSamplers();
 
 private:
+    /// Whether an image of `base` can be viewed as `view` on this device.
+    bool CanView(const ImageInfo& base, const ImageInfo& view) const;
+
     Backend::Device& device;
     VideoCore::Backend::Transfers& runtime;
     AmdGpu::Liverpool* liverpool;

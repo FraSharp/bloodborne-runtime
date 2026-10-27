@@ -87,6 +87,7 @@ BackendDevice::BackendDevice(Frontend::WindowSDL& window, s32 physical_device_in
     capabilities.precise_occlusion = instance.IsOcclusionQueryPrecise();
     capabilities.vertex_stores =
         instance.GetPhysicalDevice().getFeatures().vertexPipelineStoresAndAtomics;
+    capabilities.block_texel_views = instance.IsBlockTexelViewSupported();
     VideoCore::Backend::SelectedApi();
     GpuProfiler::Init(instance, scheduler);
 }
