@@ -6,10 +6,12 @@
 #include "runtime.h"
 #include "gpu/bbnet/bbnet.h"
 #include <dlfcn.h>
+#include <errno.h>
 #include <limits.h>
 #include <stdio.h>
 #include <stdlib.h>
 #include <string.h>
+#include <sys/stat.h>
 #include <unistd.h>
 #ifdef __APPLE__
 #include <mach-o/dyld.h>
@@ -27,7 +29,24 @@ void runtime_net_configure(const char *app0, const char *serial, const char *tit
 
 int runtime_net_enabled(void) {
     static int enabled=-1;
-    if (enabled<0) { const char *v=getenv("BB_ONLINE"); enabled=v && v[0]=='1'; }
+    if (enabled<0) {
+        const char *v=getenv("BB_ONLINE");
+        enabled=v && v[0]=='1';
+        if (enabled) {
+            char path[PATH_MAX];
+            struct stat st;
+            int n=snprintf(path,sizeof(path),"%s/savedata",runtime_file_user_dir());
+            if (n<0 || (size_t)n>=sizeof(path) ||
+                (lstat(path,&st)==0 ? !S_ISDIR(st.st_mode) : errno!=ENOENT)) enabled=0;
+            n=snprintf(path,sizeof(path),"%s/savedata/.bb-edited",runtime_file_user_dir());
+            // The launcher marks an edited save set here. A link or unreadable marker also
+            // blocks online play; a missing marker is the only clean state.
+            if (!enabled || n<0 || (size_t)n>=sizeof(path) || lstat(path,&st)==0 || errno!=ENOENT) {
+                enabled=0;
+                printf("Online: edited save set or invalid marker; offline play\n");
+            }
+        }
+    }
     return enabled;
 }
 
@@ -44,7 +63,28 @@ int runtime_net_symbol(const char *symbol) {
     return match;
 }
 
-/* The module: BB_NET_MODULE, else gpu/libbbnet.so beside bb-probe (where libbbgpu.so is). */
+static void *module_handle;
+
+void runtime_net_image_mapped(uint8_t *image, uint64_t size) {
+    if (!module_handle) return;
+    const BbNetImageMappedFn fn=(BbNetImageMappedFn)dlsym(module_handle,"bbnet_image_mapped");
+    if (fn) fn(image,size);
+}
+
+void runtime_net_image_ready(uintptr_t base, uint64_t size) {
+    if (!module_handle) return;
+    const BbNetImageReadyFn fn=(BbNetImageReadyFn)dlsym(module_handle,"bbnet_image_ready");
+    if (fn) fn(base,size);
+}
+
+void runtime_net_start(void) {
+    if (!module_handle) return;
+    const BbNetStartFn fn=(BbNetStartFn)dlsym(module_handle,"bbnet_start");
+    if (fn) fn();
+}
+
+/* The module: BB_NET_MODULE, else beside libbbgpu: gpu/ next to bb-probe (a build's out/), or on
+ * macOS the app's Frameworks/ (bb-probe is in MacOS/). */
 static BbNetResolveFn module_resolve(void) {
     static int tried;
     static BbNetResolveFn resolve;
@@ -63,7 +103,7 @@ static BbNetResolveFn module_resolve(void) {
             printf("Online: the online module is not available (no executable path): offline play\n");
             return NULL;
         }
-        const char *name="libbbnet.dylib";
+        const char *name="libbbnet20.dylib";
 #else
         const ssize_t n=readlink("/proc/self/exe",exe,sizeof(exe)-1);
         if (n<=0) return NULL;
@@ -73,6 +113,9 @@ static BbNetResolveFn module_resolve(void) {
         char *slash=strrchr(exe,'/');
         if (slash) *slash=0;
         snprintf(path,sizeof(path),"%s/gpu/%s",exe,name);
+#ifdef __APPLE__
+        if (access(path,R_OK)!=0) snprintf(path,sizeof(path),"%s/../Frameworks/%s",exe,name);
+#endif
     }
     /* RTLD_LOCAL: its C++ (network and NP libraries) stays out of the process's symbol scope. */
     void *module=dlopen(path,RTLD_NOW|RTLD_LOCAL);
@@ -83,15 +126,19 @@ static BbNetResolveFn module_resolve(void) {
     const BbNetInitFn init=(BbNetInitFn)dlsym(module,"bbnet_init");
     const BbNetResolveFn found=(BbNetResolveFn)dlsym(module,"bbnet_resolve");
     const BbNetHost host={
-        .abi=BBNET_ABI_VERSION, .app0=game_folder, .serial=game_serial, .title=game_title,
+        /* The old fallback module uses ABI 1. The 0.6 module exposes image hooks and uses 2. */
+        .abi=dlsym(module,"bbnet_image_ready") ? BBNET20_ABI_VERSION : BBNET_ABI_VERSION,
+        .app0=game_folder, .serial=game_serial, .title=game_title,
         .app_ver=game_version, .thread_spawn=runtime_thread_spawn,
         .thread_join=runtime_thread_join_spawned,
+        .thread_exit=runtime_thread_exit, .memory_is_mapped=runtime_memory_is_mapped,
     };
     if (!init || !found || init(&host)!=0) {
         printf("Online: %s did not start: offline play\n",path);
         return NULL;
     }
     printf("Online: module %s\n",path);
+    module_handle=module;
     resolve=found;
     return resolve;
 }

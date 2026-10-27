@@ -173,6 +173,10 @@ if (APPLE)
     install(TARGETS bbprobe bb-gpu-capabilities RUNTIME_DEPENDENCY_SET bb-payload
             RUNTIME DESTINATION Contents/MacOS)
     install(TARGETS bbgpu RUNTIME_DEPENDENCY_SET bb-payload LIBRARY DESTINATION Contents/Frameworks)
+    if (TARGET bbnet20)
+        # The online module, beside libbbgpu (runtime_net.c finds it in Frameworks/).
+        install(TARGETS bbnet20 LIBRARY DESTINATION Contents/Frameworks)
+    endif()
     install(RUNTIME_DEPENDENCY_SET bb-payload RUNTIME DESTINATION Contents/MacOS
             LIBRARY DESTINATION Contents/Frameworks)
     install(PROGRAMS ${BB_DEPS}/app-runtime/bin/bash DESTINATION Contents/MacOS)

@@ -32,6 +32,8 @@ void ApplyWindowSettings(SDL_Window* window);
 
 /// Guest thread: a newly persisted unlock, after the edited-save and duplicate checks.
 void TrophyUnlocked(const char* title, int id);
+/// Any thread: the online module's status line under the game's HUD; null or empty clears it.
+void SetBanner(const char* message);
 
 /// Whether anything is drawn this frame (menu, FPS counter or trophy notice).
 bool Visible();

@@ -11,6 +11,7 @@ extern "C" {
 #endif
 
 #define BBNET_ABI_VERSION 1
+#define BBNET20_ABI_VERSION 2
 
 /* What the runtime gives the module: the game's identity (param.sfo, its folder for
  * sce_sys/npbind.dat) and guest threads for the NP libraries' callbacks into the game. */
@@ -24,11 +25,17 @@ typedef struct BbNetHost {
     int32_t (*thread_spawn)(void **thread, void *(__attribute__((sysv_abi)) *entry)(void *),
                             void *argument, uint64_t stack_size, const char *name);
     int32_t (*thread_join)(void *thread, void **result);
+    void (*thread_exit)(void *value);
+    int (*memory_is_mapped)(uintptr_t address, uint64_t size);
 } BbNetHost;
 
 /* Registers the libraries; 0 on success, else the module cannot run (the game stays offline). */
 typedef int (*BbNetInitFn)(const BbNetHost *host);
 int bbnet_init(const BbNetHost *host);
+
+typedef void (*BbNetImageReadyFn)(uint64_t image_base, uint64_t image_size);
+typedef void (*BbNetImageMappedFn)(uint8_t *image, uint64_t image_size);
+typedef void (*BbNetStartFn)(void);
 
 /* The module's function for an imported NID ("NID#lib#mod"), or 0. */
 typedef uintptr_t (*BbNetResolveFn)(const char *scoped_nid);

@@ -93,6 +93,36 @@ bb_pin(ffmpeg n7.1.2
 # bbcpu's x86 decoder. The tag comes with its Zycore submodule, which a tarball would lose.
 bb_git(zydis v4.1.1 https://github.com/zyantific/zydis.git)
 
+# The online module (gpu/bbnet20): shadNet's protocol buffers (protoc too, to generate them), JSON,
+# TLS, UPnP port mapping, and epoll over kqueue. Static: they are linked into the module alone.
+bb_dep(abseil 20260817.0
+    f7e05179df39c45434cad433f5783840bb3788ef322976f9138bc6b72b3a107d
+    https://github.com/abseil/abseil-cpp/archive/refs/tags/@VERSION@.tar.gz
+    -DABSL_PROPAGATE_CXX_STD=ON -DABSL_BUILD_TESTING=OFF -DBUILD_SHARED_LIBS=OFF
+    -DCMAKE_CXX_STANDARD=17 -DCMAKE_POSITION_INDEPENDENT_CODE=ON)
+bb_dep(protobuf 36.2
+    3d9642a662d10e68ebae5e53f14dcce5105684212d5078f8e0d47d1ab3ae6b64
+    https://github.com/protocolbuffers/protobuf/releases/download/v@VERSION@/protobuf-@VERSION@.tar.gz
+    -Dprotobuf_BUILD_TESTS=OFF -Dprotobuf_ABSL_PROVIDER=package -Dprotobuf_BUILD_SHARED_LIBS=OFF
+    -DBUILD_SHARED_LIBS=OFF -Dprotobuf_BUILD_PROTOC_BINARIES=ON -DCMAKE_CXX_STANDARD=17
+    -DCMAKE_POSITION_INDEPENDENT_CODE=ON)
+bb_dep(nlohmann-json 3.12.0
+    4b92eb0c06d10683f7447ce9406cb97cd4b453be18d7279320f7b2f025c10187
+    https://github.com/nlohmann/json/archive/refs/tags/v@VERSION@.tar.gz
+    -DJSON_BuildTests=OFF -DJSON_Install=ON)
+bb_dep(miniupnpc 2.3.3
+    8cf2c833b3e76fc4893ff29c2a376e3394962449e5970e373c0a91421724d222
+    https://github.com/miniupnp/miniupnp/archive/refs/tags/miniupnpc_2_3_3.tar.gz
+    -DUPNPC_BUILD_SHARED=OFF -DUPNPC_BUILD_STATIC=ON -DUPNPC_BUILD_TESTS=OFF -DUPNPC_BUILD_SAMPLE=OFF)
+set(BB_miniupnpc_SOURCE_SUBDIR miniupnpc) # the repository holds the client and the daemon
+bb_dep(epoll-shim 0.0.20240608
+    8f5125217e4a0eeb96ab01f9dfd56c38f85ac3e8f26ef2578e538e72e87862cb
+    https://github.com/jiixyj/epoll-shim/archive/refs/tags/v@VERSION@.tar.gz
+    -DBUILD_SHARED_LIBS=OFF)
+bb_pin(openssl 3.5.9
+    603f5602e2eef00d77fbd429d34dcd5822bb301757a1bc9cdb24c670f1eb859a
+    https://github.com/openssl/openssl/releases/download/openssl-@VERSION@/openssl-@VERSION@.tar.gz)
+
 # The app bundle's own runtime (packaging/macos.sh): run.sh needs bash 4.4 or newer and the
 # start-up scripts need Python 3, so neither is left to the player's system.
 bb_pin(app-bash 5.3

@@ -503,13 +503,20 @@ if (BB_FSR AND NOT APPLE)
         ffx-vulkan::fsr4-v07-assets Vulkan::Vulkan)
 endif()
 
-# bbport online module (gpu/bbnet, libbbnet.so): built when its libraries are there (shell.nix);
-# BB_NET=OFF leaves it out. Without it the port plays offline.
-option(BB_NET "Build the online module (shadNet)" ON)
+# The online module: on macOS libbbnet20 (gpu/bbnet20: shadPS4 0.20's network code and The
+# Hunter's Dream backend; its libraries are in deps/), elsewhere libbbnet (gpu/bbnet: shadp2p's,
+# from shell.nix). BB_NET=OFF leaves it out; without it the port plays offline.
+option(BB_NET "Build the online module" ON)
 if (BB_NET AND APPLE)
-    # This module (shadp2p's network code) does not build on macOS (no epoll); the macOS online
-    # module is shadPS4 0.20's (planned). Without it the port plays offline.
-    message(STATUS "Online module: off (not on macOS yet)")
+    find_package(Protobuf CONFIG REQUIRED)
+    find_package(nlohmann_json CONFIG REQUIRED)
+    set(OPENSSL_USE_STATIC_LIBS TRUE)
+    find_package(OpenSSL REQUIRED)
+    find_package(ZLIB REQUIRED)
+    find_path(MINIUPNPC_INCLUDE miniupnpc.h PATH_SUFFIXES miniupnpc REQUIRED)
+    find_library(MINIUPNPC_LIBRARY NAMES libminiupnpc.a miniupnpc REQUIRED)
+    add_subdirectory(bbnet20)
+    message(STATUS "Online module: on (libbbnet20.dylib)")
 elseif (BB_NET)
     find_package(Protobuf CONFIG QUIET)
     find_package(nlohmann_json CONFIG QUIET)

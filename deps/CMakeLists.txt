@@ -232,13 +232,17 @@ foreach(name IN LISTS BB_PACKAGES)
     endif()
 endforeach()
 
-# Who needs whom installed first: the loader's CMake asks for the headers' package, and the
-# fsr4-native-macos tree is assembled from DXC's and SPIRV-Cross's binaries.
+# Who needs whom installed first: the loader's CMake asks for the headers' package, the
+# fsr4-native-macos tree is assembled from DXC's and SPIRV-Cross's binaries, and Protobuf builds on
+# Abseil.
 if (TARGET vulkan-loader)
     add_dependencies(vulkan-loader vulkan-headers)
 endif()
 if (TARGET fsr4-native-macos)
     add_dependencies(fsr4-native-macos dxc spirv-cross-cli)
+endif()
+if (TARGET protobuf)
+    add_dependencies(protobuf abseil) # protobuf_ABSL_PROVIDER=package: the installed one
 endif()
 
 # After every install: the libraries and the pkg-config files are made relocatable in one pass.

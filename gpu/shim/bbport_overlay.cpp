@@ -160,6 +160,9 @@ ImFont* font_heading = nullptr;
 std::mutex prompt_mutex;
 std::atomic<bool> prompt_active{false};
 std::string prompt_title, prompt_text;
+// The online module's status line (bbgpu_overlay_banner), set from its network threads.
+std::mutex banner_mutex;
+std::string banner_text;
 void (*text_editor)(TextEdit, const char*, void*) = nullptr;
 void* text_editor_context = nullptr;
 // The connected monitors' names (the window thread reads them when the menu opens).
@@ -1246,6 +1249,30 @@ void TestBanner() {
     ImGui::PopStyleVar(2);
 }
 
+/// The online status line, centered above the bottom of the screen while there is one.
+void OnlineBanner() {
+    std::string message;
+    {
+        std::scoped_lock lock{banner_mutex};
+        message = banner_text;
+    }
+    if (message.empty()) return;
+    const ImGuiViewport* viewport = ImGui::GetMainViewport();
+    ImGui::SetNextWindowPos(ImVec2(viewport->WorkPos.x + viewport->WorkSize.x * 0.5f,
+                                   viewport->WorkPos.y + viewport->WorkSize.y - S(80)),
+                            ImGuiCond_Always, ImVec2(0.5f, 1.0f));
+    ImGui::SetNextWindowBgAlpha(0.86f);
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowRounding, S(Theme::Radius));
+    ImGui::PushStyleVar(ImGuiStyleVar_WindowPadding, ImVec2(S(18), S(12)));
+    ImGui::Begin("##online_status", nullptr,
+                 ImGuiWindowFlags_NoDecoration | ImGuiWindowFlags_AlwaysAutoResize |
+                     ImGuiWindowFlags_NoInputs | ImGuiWindowFlags_NoNav |
+                     ImGuiWindowFlags_NoFocusOnAppearing);
+    ImGui::TextUnformatted(message.c_str());
+    ImGui::End();
+    ImGui::PopStyleVar(2);
+}
+
 void FpsCounter() {
     const auto& s = BbSettings::Get();
     const ImGuiViewport* viewport = ImGui::GetMainViewport();
@@ -1741,6 +1768,11 @@ void TrophyToast(std::chrono::steady_clock::time_point now) {
 
 } // namespace
 
+void SetBanner(const char* message) {
+    std::scoped_lock lock{banner_mutex};
+    banner_text = message ? message : "";
+}
+
 void TrophyUnlocked(const char* title, int id) {
     if (!title || std::strcmp(title, "CUSA03173") || id < 0 || id >= 40) return;
     const char* off = std::getenv("BB_TROPHY_OVERLAY");
@@ -2061,8 +2093,10 @@ bool Visible() {
     if (initialized && menu_trigger && std::remove(menu_trigger) == 0) {
         SetOpen(!menu_open);
     }
-    return initialized && (menu_open || prompt_active || BbSettings::Get().show_fps ||
-                           trophy_queue.Pending() || TestTitle());
+    if (!initialized) return false;
+    std::scoped_lock lock{banner_mutex};
+    return menu_open || prompt_active || BbSettings::Get().show_fps || trophy_queue.Pending() ||
+           TestTitle() || !banner_text.empty();
 }
 
 
@@ -2276,6 +2310,7 @@ void BuildUi(std::chrono::steady_clock::time_point now) {
         TextPrompt();
     }
     TrophyToast(now);
+    OnlineBanner();
     if (TestTitle() && !menu_open) {
         TestBanner();
     }

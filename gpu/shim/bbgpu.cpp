@@ -272,6 +272,10 @@ extern "C" void bbgpu_trophy_notification(const char* title, int id) {
     BbOverlay::TrophyUnlocked(title, id);
 }
 
+extern "C" void bbgpu_overlay_banner(const char* message) {
+    BbOverlay::SetBanner(message);
+}
+
 extern "C" int bbgpu_init(const BbGpuConfig* config) {
     BbSettings::Load();
     BbSettings::StartLauncherChannel();
