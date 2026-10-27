@@ -39,12 +39,22 @@ jobs:
       - name: Metal Toolchain
         run: xcodebuild -downloadComponent MetalToolchain || echo "Metal Toolchain unavailable"
 
-      # The libraries build-deps.sh builds (MoltenVK, SDL3, FFmpeg, ...): ~1 h without the cache.
-      - name: Dependency cache
-        uses: actions/cache@v4
+      # The archives the dependency build downloads (deps/packages.cmake): with them a fresh
+      # deps/macos-arm64 takes about five minutes instead of an hour. Restore and save are separate
+      # steps so a failed run keeps the downloads it made.
+      - name: Dependency archives
+        id: deps-archives
+        uses: actions/cache/restore@v4
         with:
-          path: deps/macos-arm64
-          key: deps-macos-arm64-${{ hashFiles('scripts/macos/build-deps.sh') }}
+          path: build/deps-arm64/download
+          key: deps-download-v2-${{ hashFiles('deps/packages.cmake') }}
 
-      - name: Build
-        run: BB_ARCH=arm64 bash build.sh
+      - name: Build and test
+        run: BB_ARCH=arm64 bash build.sh --test
+
+      - name: Save dependency archives
+        if: always() && steps.deps-archives.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/deps-arm64/download
+          key: deps-download-v2-${{ hashFiles('deps/packages.cmake') }}

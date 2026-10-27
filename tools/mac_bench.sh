@@ -7,6 +7,8 @@ set -u
 cd -- "$(dirname -- "$0")/.."
 name=${1:?usage: tools/mac_bench.sh NAME [ENV=VALUE...]}
 shift
+# The game these tests run is the one the sources make: run.sh only runs it.
+bash build.sh
 base=out/bench_${name}_$(date +%m%d_%H%M%S)
 pgrep -x bb-probe > /dev/null && { echo "A game is already running: not starting another." >&2; exit 1; }
 : > out/pad; : > out/test.clock; echo "${BASE_MASK:-0}" > out/toggles

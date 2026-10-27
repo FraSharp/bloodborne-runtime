@@ -29,18 +29,34 @@ bash build.sh                                  # the first run also builds deps/
 BB_GAME_DIR=/path/to/your/game bash run.sh
 ```
 
-- `build.sh` builds `out/bb-probe`, the GPU library and bbcpu (from the `recomp/` submodule).
-  `bash build.sh --test` also runs the native tests.
+- `build.sh` is a wrapper around `CMakeLists.txt`: one preset per configuration in
+  `CMakePresets.json` (`macos-arm64`, `macos-arm64-debug`, `macos-arm64-asan`, `macos-x86_64`,
+  `linux`), Ninja underneath. It builds `out/bb-probe`, the GPU library, bbcpu (from the `recomp/`
+  submodule) and `bb-gpu-capabilities`; `bash build.sh --test` builds the tests and runs them with
+  `ctest`. Everything is built into `build/<preset>/` and then copied to `out/`, which is where
+  `run.sh`, the launcher and the test scripts look (the game's own files live there too).
+  `cmake --preset macos-arm64-asan` and then `--build`/`ctest --preset` is the same build with the
+  address and undefined sanitizers, `BB_SANITIZE` passes them by hand.
 - `deps/` (MoltenVK, SDL3, FFmpeg, ...; for FSR 4.1.1 on Metal also DXC, the spirv-cross command
   and the fsr4-native-macos tree, without AMD's initializers) is built by
-  `scripts/macos/build-deps.sh`. Its libraries
-  record absolute paths: a moved or copied `deps/` must be rebuilt (remove `deps/macos-arm64`,
-  then `BB_ARCH=arm64 bash scripts/macos/build-deps.sh`).
-- On macOS `build.sh` applies `gpu/patches/fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`
-  to the FSR-Vulkan submodule once. It links that library to Vulkan headers, while the native
-  Metal path loads no Vulkan library. The patch is checked before application, so a repeated
-  build leaves the submodule pointer unchanged. Linux uses the existing Vulkan build path and
-  does not apply this macOS patch.
+  `scripts/macos/build-deps.sh`, which runs `deps/CMakeLists.txt`. `deps/packages.cmake` has every
+  version and the SHA256 of its archive; a package whose stamp is there is not touched, and
+  bumping one rebuilds it alone. `cmake --build build/deps-arm64 --target deps-clean` installs
+  everything again (the downloaded archives are kept). The packages are installed with `@rpath`
+  ids and pkg-config files that find their prefix, so moving the checkout costs no rebuild.
+  `deps/macos-<arch>` keeps each package's sources and build tree in `.build/` as well (a few GB):
+  deleting that one directory is what makes everything install again, and nothing outside it
+  decides what is installed.
+- `run.sh` only runs the game and `build.sh` builds it: after pulling a checkout, one
+  `bash build.sh` before `bash run.sh`. The test runners do it themselves (`tools/mac_bench.sh`,
+  and through it `tools/test_run.sh` and the opening video test).
+- A `deps/` from an earlier version is not reused: each package is keyed by its version and by the
+  steps that build it, so the first build after updating installs all of them again (about an hour,
+  the download is the same as before).
+- The port's changes to FSR-Vulkan (`gpu/patches/`) are applied to a copy under the build
+  directory, not to the submodule: the checkout keeps matching the submodule's commit. On macOS
+  it is `fsr-vulkan-macos/0001-use-vulkan-headers-without-loader-on-macos.patch`, which links
+  that library to the Vulkan headers while the native Metal path loads no Vulkan library.
 - From a checkout, saves and caches go to `user/` and settings to `bbport.ini`.
 - The macOS app (launcher, DMG, releases) is
   [bloodborne-mac](https://github.com/bloodborne-native/bloodborne-mac), which builds this
@@ -73,9 +89,14 @@ Switches for single features are listed where the feature is described in
 
 ## Tests
 
-- `bash build.sh --test`: the native tests (settings, the AV player's clock and queue, stable
-  slot storage, texture upload hashing, ...). They need no game or GPU and also run in Linux CI,
-  which is started by hand for now; it compiles the Linux build but does not check its rendering.
+- `bash build.sh --test`: the native tests through `ctest` (settings, the AV player's clock and
+  queue, stable slot storage, texture upload hashing, the runtime's services, ...). They need no
+  game and no GPU. `ctest --preset macos-arm64` runs them again without rebuilding, `-R` picks one,
+  and `ctest --preset macos-arm64 -N` lists them with the two that are disabled on macOS and why
+  (guest TLS executes x86-64 code, the loader test builds 4 KiB pages; under `BB_SANITIZE` three
+  more cannot run, because they map the guest's address space). Five GPU tests stopped compiling
+  when the code moved under them and are not registered (`gpu/CMakeLists.txt` names them).
+  Linux CI is started by hand for now; it compiles the Linux build but does not check its rendering.
 - `cd tests && python3 -m unittest discover -p 'test_*.py'`: the script tests. On macOS the
   Linux-only cases fail (`test_packaged_vulkan`, the Intel tonemap check), and
   `test_probe.LoaderTests` fails (its images use 4 KiB segments; Macs have 16 KiB pages): known,
