@@ -104,42 +104,53 @@ find_program(GLSLANG_COMPILER NAMES glslang glslangValidator REQUIRED)
 set(SIRIT_USE_SYSTEM_SPIRV_HEADERS OFF CACHE BOOL "" FORCE)
 add_subdirectory(third_party/sirit EXCLUDE_FROM_ALL)
 
-# bbport: FSR 3.1 temporal upscaling / frame generation, native Vulkan (MIT, FireBurn/FSR-Vulkan).
+# bbport: FSR 3.1 temporal upscaling / frame generation and FSR 4, native Vulkan (MIT,
+# FireBurn/FSR-Vulkan): the Vulkan backend's upscalers (docs/RENDER_ADAPTER.md, decision 5). Off on
+# iOS, where the Metal backend is the only one and MetalFX its upscaler.
+#
 # The port's changes to it (patches/) go to a copy under the build directory: the submodule keeps
 # matching its commit, two builds cannot fight over one tree, and a checkout updated to a newer
 # FSR-Vulkan always gets the patches of its own version.
-if (APPLE)
-    set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan-macos)
+if (CMAKE_SYSTEM_NAME STREQUAL "iOS")
+    set(BB_FSR_DEFAULT OFF)
 else()
-    set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan)
+    set(BB_FSR_DEFAULT ON)
 endif()
-file(GLOB bb_fsr_patches ${BB_FSR_PATCHES}/*.patch)
-set(bb_fsr_patch_hash "")
-foreach(patch IN LISTS bb_fsr_patches)
-    file(READ ${patch} text)
-    string(SHA256 hash "${text}")
-    string(APPEND bb_fsr_patch_hash "${hash}")
-endforeach()
-string(SHA256 bb_fsr_key "${bb_fsr_patch_hash}")
-string(SUBSTRING "${bb_fsr_key}" 0 8 bb_fsr_key)
-set(BB_FSR_COPY ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan-patched)
-set(BB_FSR_MARKER ${BB_FSR_COPY}/.patched-${bb_fsr_key})
-if (NOT EXISTS ${BB_FSR_MARKER})
-    file(REMOVE_RECURSE ${BB_FSR_COPY})
-    file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/ DESTINATION ${BB_FSR_COPY}
-         PATTERN ".git" EXCLUDE PATTERN "build" EXCLUDE)
+option(BB_FSR "Build FSR 3.1 and FSR 4 (the Vulkan backend's upscalers)" ${BB_FSR_DEFAULT})
+if (BB_FSR)
+    if (APPLE)
+        set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan-macos)
+    else()
+        set(BB_FSR_PATCHES ${CMAKE_CURRENT_SOURCE_DIR}/patches/fsr-vulkan)
+    endif()
+    file(GLOB bb_fsr_patches ${BB_FSR_PATCHES}/*.patch)
+    set(bb_fsr_patch_hash "")
     foreach(patch IN LISTS bb_fsr_patches)
-        execute_process(COMMAND git apply --unidiff-zero ${patch}
-                        WORKING_DIRECTORY ${BB_FSR_COPY} RESULT_VARIABLE bb_patch_result)
-        if (bb_patch_result)
-            message(FATAL_ERROR "${patch} does not apply to the FSR-Vulkan submodule")
-        endif()
+        file(READ ${patch} text)
+        string(SHA256 hash "${text}")
+        string(APPEND bb_fsr_patch_hash "${hash}")
     endforeach()
-    file(TOUCH ${BB_FSR_MARKER})
+    string(SHA256 bb_fsr_key "${bb_fsr_patch_hash}")
+    string(SUBSTRING "${bb_fsr_key}" 0 8 bb_fsr_key)
+    set(BB_FSR_COPY ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan-patched)
+    set(BB_FSR_MARKER ${BB_FSR_COPY}/.patched-${bb_fsr_key})
+    if (NOT EXISTS ${BB_FSR_MARKER})
+        file(REMOVE_RECURSE ${BB_FSR_COPY})
+        file(COPY ${CMAKE_CURRENT_SOURCE_DIR}/third_party/fsr-vulkan/ DESTINATION ${BB_FSR_COPY}
+             PATTERN ".git" EXCLUDE PATTERN "build" EXCLUDE)
+        foreach(patch IN LISTS bb_fsr_patches)
+            execute_process(COMMAND git apply --unidiff-zero ${patch}
+                            WORKING_DIRECTORY ${BB_FSR_COPY} RESULT_VARIABLE bb_patch_result)
+            if (bb_patch_result)
+                message(FATAL_ERROR "${patch} does not apply to the FSR-Vulkan submodule")
+            endif()
+        endforeach()
+        file(TOUCH ${BB_FSR_MARKER})
+    endif()
+    set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
+    set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
+    add_subdirectory(${BB_FSR_COPY} ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan EXCLUDE_FROM_ALL)
 endif()
-set(FFX_VK_PORTABLE_BUILD_TESTS OFF CACHE BOOL "" FORCE)
-set(FFX_VK_PORTABLE_BUILD_PROBE OFF CACHE BOOL "" FORCE)
-add_subdirectory(${BB_FSR_COPY} ${CMAKE_CURRENT_BINARY_DIR}/fsr-vulkan EXCLUDE_FROM_ALL)
 
 # Host shaders -> headers (same scheme as shadPS4's host_shaders/CMakeLists.txt).
 set(SHADER_SRC ${CMAKE_CURRENT_SOURCE_DIR}/shadps4/video_core/host_shaders)
@@ -272,11 +283,13 @@ endif()
 # Runtime symbols (runtime_memory_*, runtime_process_*) resolve against bb-probe.
 if (APPLE)
     target_sources(bbgpu PRIVATE shadps4/video_core/renderer_metal/mtl_vk_c_bridge.cpp)
+    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
+    target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
+endif()
+if (APPLE AND BB_FSR)
     target_sources(bbgpu PRIVATE shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm)
     set_source_files_properties(shadps4/video_core/renderer_vulkan/vk_fsr4_metal.mm PROPERTIES
         COMPILE_FLAGS "-fobjc-arc")
-    target_link_libraries(bbgpu PRIVATE "-framework Metal" "-framework Foundation")
-    target_link_options(bbgpu PRIVATE -Wl,-undefined,dynamic_lookup)
 
     # FSR 4.1.1 on Metal (vk_fsr4_metal.mm): its kernels and model layouts, built here into
     # out/fsr4_metal (gpu/fsr4_metal/build_assets.py) from fsr4-native-macos, DXC and SPIRV-Cross
@@ -323,6 +336,8 @@ if (APPLE)
         message(WARNING "fsr4-native-macos or DXC is not in deps (${BB_FSR4_NATIVE_SRC}): "
                         "FSR 4.1.1 on Metal is not built (scripts/macos/build-deps.sh)")
     endif()
+endif()
+if (APPLE)
     # MetalFX upscaler's Metal side (shim/bbport_metalfx.mm). MetalFX.framework is dlopen'ed
     # at run time, so nothing links against it; ARC is required by the ObjC objects.
     enable_language(OBJCXX)
@@ -368,7 +383,10 @@ if (APPLE)
         "-framework Metal" "-framework QuartzCore" "-framework Foundation")
     target_compile_definitions(bbgpu PRIVATE BB_METAL_BACKEND=1)
 endif()
-target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+if (BB_FSR)
+    target_link_libraries(bbgpu PRIVATE ffx-vulkan::portable ffx-vulkan::fsr4-v07-vulkan)
+endif()
+target_compile_definitions(bbgpu PRIVATE BB_FSR=$<BOOL:${BB_FSR}>)
 target_link_libraries(bbgpu PUBLIC Vulkan::Headers fmt::fmt Boost::headers magic_enum::magic_enum
     tsl::robin_map GPUOpen::VulkanMemoryAllocator PkgConfig::XXHASH PkgConfig::SDL3 PkgConfig::FFMPEG miniz::miniz Zydis::Zydis sirit)
 if (NOT APPLE)
@@ -475,8 +493,8 @@ if (BUILD_TESTING)
 endif()
 
 # The FSR 4 benchmark (tools/fsr4_verify.sh, tools/fsr4cap/): the Vulkan path's provider, so Linux
-# only — it links the Vulkan entry points and macOS has no loader to give it.
-if (NOT APPLE)
+# only — it links the Vulkan entry points, and macOS has no loader to give it.
+if (BB_FSR AND NOT APPLE)
     add_executable(fsr4-bench EXCLUDE_FROM_ALL tools/fsr4_bench.cpp
         shadps4/video_core/renderer_vulkan/fsr411/fsr411.cpp)
     set_target_properties(fsr4-bench PROPERTIES RUNTIME_OUTPUT_DIRECTORY ${BB_BENCH_OUT})
