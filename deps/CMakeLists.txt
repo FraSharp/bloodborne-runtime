@@ -128,6 +128,10 @@ set(BB_DEPS_CMAKE_ARGS
     -DBUILD_TESTING=OFF
     -DCMAKE_POLICY_VERSION_MINIMUM=3.5) # Zydis, Zycore and VMA still ask for CMake 3.10
 
+# Each package downloads into its own directory: ExternalProject names the file after the URL, and
+# two packages can carry the same tag (Vulkan-Headers and Vulkan-Loader are both v1.4.365), which
+# would leave one file where the other's hash is expected.
+#
 # The variables the step scripts get: their directories, the architecture they build for and where
 # the prefix is.
 function(bb_step_args name script out)
@@ -153,7 +157,7 @@ function(bb_archive name)
     bb_step_args(${name} cmake-install install)
     ExternalProject_Add(${name}
         PREFIX "${BB_${name}_DIR}"
-        DOWNLOAD_DIR "${BB_DEPS_DOWNLOAD}"
+        DOWNLOAD_DIR "${BB_DEPS_DOWNLOAD}/${name}"
         URL "${BB_${name}_URL}"
         URL_HASH "SHA256=${BB_${name}_SHA256}"
         SOURCE_DIR "${BB_${name}_SRC}"
@@ -171,7 +175,7 @@ function(bb_steps name)
     bb_step_args(${name} ${name} steps)
     ExternalProject_Add(${name}
         PREFIX "${BB_${name}_DIR}"
-        DOWNLOAD_DIR "${BB_DEPS_DOWNLOAD}"
+        DOWNLOAD_DIR "${BB_DEPS_DOWNLOAD}/${name}"
         URL "${BB_${name}_URL}"
         URL_HASH "SHA256=${BB_${name}_SHA256}"
         SOURCE_DIR "${BB_${name}_SRC}"

@@ -47,7 +47,7 @@ jobs:
         uses: actions/cache/restore@v4
         with:
           path: build/deps-arm64/download
-          key: deps-download-${{ hashFiles('deps/packages.cmake') }}
+          key: deps-download-v2-${{ hashFiles('deps/packages.cmake') }}
 
       - name: Build and test
         run: BB_ARCH=arm64 bash build.sh --test
@@ -57,4 +57,4 @@ jobs:
         uses: actions/cache/save@v4
         with:
           path: build/deps-arm64/download
-          key: deps-download-${{ hashFiles('deps/packages.cmake') }}
+          key: deps-download-v2-${{ hashFiles('deps/packages.cmake') }}
