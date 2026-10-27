@@ -40,12 +40,21 @@ jobs:
         run: xcodebuild -downloadComponent MetalToolchain || echo "Metal Toolchain unavailable"
 
       # The archives the dependency build downloads (deps/packages.cmake): with them a fresh
-      # deps/macos-arm64 takes about five minutes instead of an hour.
+      # deps/macos-arm64 takes about five minutes instead of an hour. Restore and save are separate
+      # steps so a failed run keeps the downloads it made.
       - name: Dependency archives
-        uses: actions/cache@v4
+        id: deps-archives
+        uses: actions/cache/restore@v4
         with:
           path: build/deps-arm64/download
           key: deps-download-${{ hashFiles('deps/packages.cmake') }}
 
       - name: Build and test
         run: BB_ARCH=arm64 bash build.sh --test
+
+      - name: Save dependency archives
+        if: always() && steps.deps-archives.outputs.cache-hit != 'true'
+        uses: actions/cache/save@v4
+        with:
+          path: build/deps-arm64/download
+          key: deps-download-${{ hashFiles('deps/packages.cmake') }}
