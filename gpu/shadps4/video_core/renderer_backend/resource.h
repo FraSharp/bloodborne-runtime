@@ -305,6 +305,7 @@ struct Capabilities {
     u32 max_compute_groups[3]{}; ///< workgroups of one dispatch, per dimension
     bool precise_occlusion{};    ///< occlusion queries count samples (else any or none)
     bool vertex_stores{};        ///< vertex shaders may write storage buffers
+    bool block_texel_views{};    ///< a block-compressed image may have uncompressed views
 };
 
 /// The device's memory as the driver reports it.

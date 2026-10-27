@@ -277,6 +277,10 @@ VkResult ImageFormat(const VkPhysicalDeviceImageFormatInfo2* info, VkImageFormat
     if (!features) {
         return VK_ERROR_FORMAT_NOT_SUPPORTED;
     }
+    // Metal has no uncompressed views of block-compressed textures.
+    if (info->flags & VK_IMAGE_CREATE_BLOCK_TEXEL_VIEW_COMPATIBLE_BIT) {
+        return VK_ERROR_FORMAT_NOT_SUPPORTED;
+    }
     // Metal cannot write a block-compressed texture, extended usage or not.
     if ((info->usage & VK_IMAGE_USAGE_STORAGE_BIT) && info->format >= VK_FORMAT_BC1_RGB_UNORM_BLOCK &&
         info->format <= VK_FORMAT_ASTC_12x12_SRGB_BLOCK) {
