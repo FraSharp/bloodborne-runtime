@@ -74,7 +74,10 @@ if (NOT APPLE)
 endif()
 
 # The GPU library (gpu/CMakeLists.txt): shadPS4's video core, the Metal backend, FSR. It installs
-# itself and its tools in BB_GPU_OUT.
+# itself and its tools in BB_GPU_OUT, and checks its own linkage (tools/check-link.cmake).
+if (APPLE)
+    set(BB_LINK_CHECK ${CMAKE_SOURCE_DIR}/tools/check-link.cmake)
+endif()
 add_subdirectory(gpu)
 
 # bbcpu (recomp/src/cpu, the bloodborne-recomp submodule): runs the game's x86-64 code through the
@@ -136,10 +139,28 @@ if (APPLE)
         INSTALL_RPATH "@executable_path/../Frameworks")
 endif()
 
+# The Metal path's two link checks, after each binary that has to keep it clean
+# (tools/check-link.cmake explains what they guard).
+if (APPLE)
+    function(bb_check_metal_link target)
+        add_custom_command(TARGET ${target} POST_BUILD
+            COMMAND ${CMAKE_COMMAND}
+                -DBB_GPU=$<TARGET_FILE:bbgpu>
+                -DBB_BINARIES=$<TARGET_FILE:${target}>
+                -P ${CMAKE_SOURCE_DIR}/tools/check-link.cmake
+            COMMENT "Checking that ${target} keeps the native Metal path clean"
+            VERBATIM)
+    endfunction()
+endif()
+
 # The GPU check for run.sh (live_resolution=auto) and the launcher's gamepad list (--gamepads).
 add_executable(bb-gpu-capabilities tools/gpu_capabilities.c)
 target_compile_options(bb-gpu-capabilities PRIVATE -std=c11 ${BB_WARNINGS})
 target_link_libraries(bb-gpu-capabilities PRIVATE PkgConfig::SDL3)
+if (APPLE)
+    bb_check_metal_link(bbprobe)
+    bb_check_metal_link(bb-gpu-capabilities)
+endif()
 
 # --- the app bundle's payload ---------------------------------------------------------------
 # cmake --install <build> --prefix <Bloodborne.app> puts what the game runs with in the layout

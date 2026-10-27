@@ -216,6 +216,15 @@ add_library(bbgpu SHARED ${VIDEO_CORE} ${RECOMPILER} ${COMMON} ${SHIM_SOURCES} $
     shadps4/core/libraries/videodec/video_utils.cpp)
 add_dependencies(bbgpu host_shaders)
 set_target_properties(bbgpu PROPERTIES LIBRARY_OUTPUT_DIRECTORY ${BB_GPU_OUT})
+# The native Metal path may not leave a Vulkan entry point unresolved (runtime/tools/check-link.cmake,
+# which the game's build points BB_LINK_CHECK at).
+if (APPLE AND BB_LINK_CHECK)
+    add_custom_command(TARGET bbgpu POST_BUILD
+        COMMAND ${CMAKE_COMMAND} -DBB_GPU=$<TARGET_FILE:bbgpu> -DBB_BINARIES=$<TARGET_FILE:bbgpu>
+                -P ${BB_LINK_CHECK}
+        COMMENT "Checking that the GPU library answers every Vulkan entry point itself"
+        VERBATIM)
+endif()
 # In-game settings menu: Dear ImGui (third_party/imgui, MIT) with its Vulkan backend, and an
 # embedded Cyrillic font (third_party/fonts).
 target_sources(bbgpu PRIVATE third_party/imgui/imgui.cpp third_party/imgui/imgui_draw.cpp
