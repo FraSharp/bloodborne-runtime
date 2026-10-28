@@ -131,16 +131,19 @@ constexpr ImVec4 Hex(unsigned rgb, float alpha = 1.0f) {
     return ImVec4(float((rgb >> 16) & 0xff) / 255.0f, float((rgb >> 8) & 0xff) / 255.0f,
                   float(rgb & 0xff) / 255.0f, alpha);
 }
-constexpr ImVec4 Background = Hex(0x07060a, 0.96f);
-constexpr ImVec4 Foreground = Hex(0xefe6d2);
-constexpr ImVec4 Card = Hex(0x15121c);
-constexpr ImVec4 Primary = Hex(0xb3262b);
-constexpr ImVec4 PrimaryHover = Hex(0xc8333a);
+// The launcher's colours (launcher/src/index.css): blue-slate night, parchment text, rust for what
+// is on or chosen, gold for headings and the focus ring.
+constexpr ImVec4 Background = Hex(0x07090d, 0.96f);
+constexpr ImVec4 Foreground = Hex(0xece4d4);
+constexpr ImVec4 Card = Hex(0x0e1218);
+constexpr ImVec4 Primary = Hex(0x7a2a26);
+constexpr ImVec4 PrimaryHover = Hex(0xa24a3f);
 constexpr ImVec4 PrimaryForeground = Hex(0xf6eedd);
-constexpr ImVec4 Muted = Hex(0x1f1a29);
-constexpr ImVec4 MutedForeground = Hex(0x9a93a6);
-constexpr ImVec4 Accent = Hex(0x2b2438);
-constexpr ImVec4 AccentHover = Hex(0x3a3149);
+constexpr ImVec4 Muted = Hex(0x161b23);
+constexpr ImVec4 MutedForeground = Hex(0x979ba4);
+constexpr ImVec4 Accent = Hex(0x1f2530);
+constexpr ImVec4 AccentHover = Hex(0x2a3242);
+constexpr ImVec4 Gold = Hex(0xc9a265);
 constexpr ImVec4 Border = ImVec4(1.0f, 1.0f, 1.0f, 0.07f);
 constexpr ImVec4 Warning = Hex(0xe0a458);
 constexpr float Radius = 12.0f; // --radius: 0.75rem
@@ -287,7 +290,7 @@ void Help(const char* text) {
 bool BeginCard(const char* id, const char* heading = nullptr) {
     if (heading) {
         ImGui::PushFont(font_heading, ImGui::GetFontSize() * 1.1f);
-        ImGui::PushStyleColor(ImGuiCol_Text, Theme::MutedForeground);
+        ImGui::PushStyleColor(ImGuiCol_Text, Theme::Gold);
         ImGui::TextUnformatted(heading);
         ImGui::PopStyleColor();
         ImGui::PopFont();
@@ -326,7 +329,7 @@ void Row(const char* label, float control_width, bool first = false) {
                              ImGui::GetWindowContentRegionMax().x - control_width));
 }
 
-/// A switch: a pill with a knob, red when on. The item is a frame tall; the pill is centered in it.
+/// A switch: a pill with a knob, rust when on. The item is a frame tall; the pill is centered in it.
 bool Switch(const char* id, bool* value) {
     const float height = ImGui::GetFrameHeight() * 0.85f;
     const float width = height * 1.8f;
@@ -364,7 +367,7 @@ void SwitchSetting(const char* label, std::atomic<bool>& value, const char* help
     ImGui::PopID();
 }
 
-/// Segmented choice: one button per option, the chosen one red. `enabled` may be null.
+/// Segmented choice: one button per option, the chosen one rust. `enabled` may be null.
 bool Segmented(const char* id, const char* const* labels, int count, int* value,
                const bool* enabled = nullptr) {
     bool changed = false;
@@ -987,7 +990,7 @@ void Menu() {
     }
     ImGui::Dummy(ImVec2(0, S(4)));
 
-    // The tab row: the chosen tab bright, with a red line under it.
+    // The tab row: the chosen tab bright, with a gold line under it.
     const char* tab_names[TabCount] = {T("launcher.graphics.title"), T("launcher.game.title"),
                                        T("launcher.advanced.title")};
     {
@@ -1012,7 +1015,7 @@ void Menu() {
                 const ImVec2 a = ImGui::GetItemRectMin(), b = ImGui::GetItemRectMax();
                 ImGui::GetWindowDrawList()->AddRectFilled(ImVec2(a.x, b.y + S(5)),
                                                           ImVec2(b.x, b.y + S(7)),
-                                                          ImGui::GetColorU32(Theme::Primary), S(1));
+                                                          ImGui::GetColorU32(Theme::Gold), S(1));
             }
         }
         const ImVec2 line = ImGui::GetCursorScreenPos();
@@ -1576,7 +1579,7 @@ void TextPrompt() {
                                                             : Theme::Accent),
                                 S(8));
             if (selected) {
-                draw->AddRect(a, b, ImGui::GetColorU32(Theme::PrimaryForeground), S(8), 0, S(2));
+                draw->AddRect(a, b, ImGui::GetColorU32(Theme::Gold), S(8), 0, S(2));
             }
             const ImVec2 size = ImGui::CalcTextSize(label.c_str());
             draw->AddText(ImVec2((a.x + b.x - size.x) * 0.5f, (a.y + b.y - size.y) * 0.5f),
@@ -1691,7 +1694,7 @@ void ApplyTheme() {
     c[ImGuiCol_ScrollbarGrabHovered] = Theme::AccentHover;
     c[ImGuiCol_ScrollbarGrabActive] = Theme::Primary;
     c[ImGuiCol_CheckMark] = Theme::PrimaryForeground;
-    c[ImGuiCol_NavCursor] = Theme::PrimaryForeground;
+    c[ImGuiCol_NavCursor] = Theme::Gold;
 }
 
 void TrophyToast(std::chrono::steady_clock::time_point now) {
